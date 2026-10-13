@@ -1,4 +1,4 @@
-﻿cmake_minimum_required (VERSION 3.10)
+﻿cmake_minimum_required (VERSION 3.13)
 
 
 # Enable Hot Reload for MSVC compilers if supported.
@@ -18,28 +18,19 @@ FetchContent_Declare(
 	GIT_REPOSITORY https://github.com/microsoft/DirectXTK.git
 	GIT_TAG may2026
 )
+FetchContent_MakeAvailable(DirectXTK)
+
 
 FetchContent_Declare(
 	DirectXTex
 	GIT_REPOSITORY https://github.com/microsoft/DirectXTex.git
 	GIT_TAG may2026
 )
-
-
-
-
-
-FetchContent_MakeAvailable(DirectXTK)
 FetchContent_MakeAvailable(DirectXTex)
 
 
 
 
-
-
-
-
-# Include sub-projects.
-add_subdirectory ("Engine")
-add_subdirectory ("Editor")
-add_subdirectory ("Game")
+add_subdirectory ("Engine") # Static Library
+add_subdirectory ("Editor") # executable
+add_subdirectory ("Game")	# executable
