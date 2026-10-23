@@ -1,16 +1,19 @@
 #include "StandartResources/RenderPresets.h"
+#include "ResourceManager.h"
 
 #include <cmath>
 #include <filesystem>
 #include <numbers>
-#include <stdexcept>
 
 namespace {
 
-	void ValidateSize(float value)
+	bool ValidateSize(float value)
 	{
-		if (!std::isfinite(value) || value <= 0.0f)
-			throw std::invalid_argument("Mesh preset dimensions must be finite and positive");
+		if (!std::isfinite(value) || value <= 0.0f) {
+			std::cerr << "Mesh preset dimensions must be finite and positive\n";
+			return false;
+		}
+		return true;
 	}
 
 	constexpr DirectX::XMFLOAT4 white{ 1.0f, 1.0f, 1.0f, 1.0f };
@@ -35,8 +38,7 @@ namespace MeshPresets {
 	MeshData<NormalVertexType> CreateQuad(float height, float width)
 	{
 		MeshData<NormalVertexType> mesh;
-		ValidateSize(height);
-		ValidateSize(width);
+		if (!ValidateSize(height) || !ValidateSize(width)) return mesh;
 		const float x = width * 0.5f;
 		const float y = height * 0.5f;
 		AddFace(mesh, { 0, 0, 1 },
@@ -47,9 +49,7 @@ namespace MeshPresets {
 	MeshData<NormalVertexType> CreateRectangle(float height, float width, float length)
 	{
 		MeshData<NormalVertexType> mesh;
-		ValidateSize(height);
-		ValidateSize(width);
-		ValidateSize(length);
+		if (!ValidateSize(height) || !ValidateSize(width) || !ValidateSize(length)) return mesh;
 		const float x = width * 0.5f;
 		const float y = height * 0.5f;
 		const float z = length * 0.5f;
@@ -75,7 +75,7 @@ namespace MeshPresets {
 	MeshData<NormalVertexType> CreateCircle(float radius)
 	{
 		MeshData<NormalVertexType> mesh;
-		ValidateSize(radius);
+		if (!ValidateSize(radius)) return mesh;
 		constexpr uint32_t segments = 32;
 		constexpr uint32_t stacks = 16;
 		constexpr float pi = std::numbers::pi_v<float>;
@@ -121,6 +121,28 @@ namespace MeshPresets {
 
 namespace RenderItemPresets {
 
+	RenderItem* ImportPreset(ID3D11Device* device, MeshData<NormalVertexType> meshData,
+		ResourceManager& resources)
+	{
+		auto mesh = Mesh::Create(device, meshData);
+		if (!mesh.IsValid()) return nullptr;
+		// Путь к штатному ресурсу не зависит от рабочей папки редактора.
+		const auto path = (std::filesystem::path(__FILE__).parent_path() / L"Default.material.json").u8string();
+		const std::string utf8Path(reinterpret_cast<const char*>(path.data()), path.size());
+		auto* resource = resources.load<MaterialResource>(utf8Path, device);
+		if (!resource) {
+			std::cerr << "ImportPreset: " << resources.GetLastError() << '\n';
+			return nullptr;
+		}
+
+		// Материал остаётся у менеджера; вызывающему коду передаём только mesh и item.
+		auto* meshPtr = new (std::nothrow) Mesh(std::move(mesh));
+		if (!meshPtr) return nullptr;
+		auto* item = new (std::nothrow) RenderItem{ meshPtr, &resource->GetMaterial() };
+		if (!item) delete meshPtr;
+		return item;
+	}
+
 	RenderItem* CreateSimple(ID3D11Device* device, MeshData<NormalVertexType> meshData, bool is_wire_frame)
 	{
 		if (!device)
@@ -137,7 +159,7 @@ namespace RenderItemPresets {
 
 		auto state = is_wire_frame
 			? RenderState::CreateWireframe(*device)
-			: RenderState::CreateSimple(*device);
+			: RenderState::CreateOpaque(*device);
 		if (!state.Raster() || !state.Depth() || !state.Blend())
 			return nullptr;
 

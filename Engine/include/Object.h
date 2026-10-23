@@ -15,5 +15,6 @@ public:
 	// Non-owning: the component must outlive this object's use of it.
 	void addComponent(Component& component) { components.push_back(&component); }
 	void Init(Game& game);
+	void Update(Game& game, double deltaTime);
 	TransformNode& fetTransform() { return transformTree;  }
 };

@@ -28,6 +28,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(DirectXTex)
 
+# Используем только заголовки JSON, без примеров и тестов библиотеки.
+FetchContent_Declare(
+	RapidJSON
+	GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
+	GIT_TAG v1.1.0
+	SOURCE_SUBDIR include
+)
+FetchContent_MakeAvailable(RapidJSON)
+
 
 
 

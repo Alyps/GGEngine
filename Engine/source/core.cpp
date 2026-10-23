@@ -55,8 +55,9 @@ int Game::Run()
 			// physics.Update(fixedTime.get_interval());
 		}
 
-		// Логика, обновляемая один раз за кадр:
-		// current_level->Update(timeManager.get_deltaTime());
+		// Обновляем трансформации до получения матриц камеры рендером.
+		if (current_level)
+			current_level->Update(*this, timeManager.get_deltaTime());
 
 		// Для будущей интерполяции при отрисовке:
 		// const double alpha = fixedTime.get_alpha();
@@ -77,4 +78,10 @@ void Level::Init(Game& game)
 void Level::addObject(GameObject* obj)
 {
 	objects.push_back(obj);
+}
+
+void Level::Update(Game& game, double deltaTime)
+{
+	for (GameObject* object : objects)
+		object->Update(game, deltaTime);
 }

@@ -1,8 +1,9 @@
 #include "RenderServer.h"
+#include "StandartResources/EditorCamera.h"
+#include "TransformTree.h"
 #include <algorithm>
-#include <filesystem>
-#include <cwctype>
 #include <cstring>
+#include <cmath>
 
 namespace {
 ComPtr<ID3DBlob> CompileShaderFromFile(const std::wstring& path,
@@ -106,7 +107,8 @@ RenderState RenderState::CreateOpaque(ID3D11Device& device)
 	D3D11_RASTERIZER_DESC rd{};
 	rd.FillMode = D3D11_FILL_SOLID;
 	rd.CullMode = D3D11_CULL_BACK;
-	rd.FrontCounterClockwise = FALSE;
+	// Пресеты мешей используют обход против часовой стрелки снаружи.
+	rd.FrontCounterClockwise = TRUE;
 	rd.DepthClipEnable = TRUE;
 	device.CreateRasterizerState(&rd, rs.m_raster.ReleaseAndGetAddressOf());
 
@@ -200,68 +202,23 @@ void RenderState::Bind(ID3D11DeviceContext& context) const
 	context.OMSetBlendState(m_blend.Get(), blendFactor, 0xFFFFFFFF);
 }*/
 
-Texture Texture::LoadFromFile(ID3D11Device* device, const std::wstring& path) //ID3D11Device* device,
+Texture Texture::Create(ID3D11Device* device, const DirectX::ScratchImage& image)
 {
-
 	Texture tex;
+	if (!device || !image.GetImages() || image.GetImageCount() == 0) return tex;
 
-	
-	const std::filesystem::path fsPath(path);
-	const std::wstring wpath = fsPath.wstring();
+	const auto& metadata = image.GetMetadata();
+	if (metadata.width > (std::numeric_limits<uint32_t>::max)() ||
+		metadata.height > (std::numeric_limits<uint32_t>::max)()) return tex;
 
-	std::wstring ext = fsPath.extension().wstring();
-	for (auto& c : ext) c = static_cast<wchar_t>(std::towlower(c));
+	const HRESULT hr = DirectX::CreateShaderResourceView(
+		device, image.GetImages(), image.GetImageCount(), metadata,
+		tex.m_srv.GetAddressOf());
+	if (FAILED(hr)) return Texture{};
 
-	DirectX::TexMetadata  metadata{};
-	DirectX::ScratchImage image{};
-
-
-	HRESULT hr = E_FAIL;
-	if (ext == L".dds") hr = DirectX::LoadFromDDSFile(wpath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, image);
-	else if (ext == L".tga") hr = DirectX::LoadFromTGAFile(wpath.c_str(), DirectX::TGA_FLAGS_NONE, &metadata, image);
-	else if (ext == L".hdr") hr = DirectX::LoadFromHDRFile(wpath.c_str(), &metadata, image);
-	else                     hr = DirectX::LoadFromWICFile(wpath.c_str(), DirectX::WIC_FLAGS_NONE, &metadata, image);
-
-	
-
-	const DirectX::ScratchImage* src = &image;
-	DirectX::ScratchImage        mipChain;
-
-	if (metadata.mipLevels <= 1 &&
-		metadata.dimension == DirectX::TEX_DIMENSION_TEXTURE2D)
-	{
-		hr = DirectX::GenerateMipMaps(
-			image.GetImages(),
-			image.GetImageCount(),
-			metadata,
-			DirectX::TEX_FILTER_DEFAULT,
-			0,
-			mipChain);
-
-		if (SUCCEEDED(hr)) {
-			src = &mipChain;
-		}
-		// при неудаче молча используем оригинал
-	}
-
-	ComPtr<ID3D11ShaderResourceView> srv;
-	hr = DirectX::CreateShaderResourceView(
-		device,
-		src->GetImages(),
-		src->GetImageCount(),
-		src->GetMetadata(),
-		srv.ReleaseAndGetAddressOf());
-
-	if (FAILED(hr) || !srv) {
-		return tex;
-	}
-
-	tex.m_srv = std::move(srv);
 	tex.m_width = static_cast<uint32_t>(metadata.width);
 	tex.m_height = static_cast<uint32_t>(metadata.height);
 	return tex;
-
-
 }
 
 /*
@@ -416,9 +373,35 @@ void RenderServer::DrawAll()
 	if (!context || !swapChain || !rtv || !dsv || !frameCB || !objectCB)
 		return;
 
-	//Даём значения константному буферу кадра. Пока что без камеры, поэтому identity.
-	DirectX::XMStoreFloat4x4(&frameCBData.view, DirectX::XMMatrixIdentity()); 
-	DirectX::XMStoreFloat4x4(&frameCBData.projection, DirectX::XMMatrixIdentity());
+	// Изменение рендера: матрицы выбранной камеры вместо постоянных identity.
+	DXMatrix view = DXMatrix::Identity;
+	DXMatrix projection = DXMatrix::Identity;
+	if (activeCamera && mainViewport.Width > 0.0f && mainViewport.Height > 0.0f
+		&& activeCamera->getView(view)) {
+		projection = activeCamera->getProjection(mainViewport.Width / mainViewport.Height);
+	}
+	// Сохраняем существующий контракт column_major в HLSL.
+	DirectX::XMStoreFloat4x4(&frameCBData.view, DirectX::XMMatrixTranspose(view));
+	DirectX::XMStoreFloat4x4(&frameCBData.projection, DirectX::XMMatrixTranspose(projection));
+	// Позиция наблюдателя и фон задаются один раз на кадр.
+	frameCBData.cameraPosition = view.Invert().Translation();
+	frameCBData.ambient = ambientColor;
+	frameCBData.lightCount = 0;
+	bool exceeded = false;
+	for (const LightItem& light : lights) {
+		if (!light.enabled) continue;
+		if (frameCBData.lightCount == MaxLights) {
+			exceeded = true;
+			break;
+		}
+		// Упаковываем только зарегистрированные включённые источники.
+		frameCBData.lights[frameCBData.lightCount++] = {
+			light.position, static_cast<uint32_t>(light.type), light.direction,
+			light.range, light.color, light.intensity, light.extraParams };
+	}
+	if (exceeded && !lightLimitExceeded)
+		std::cerr << "Light limit exceeded: 16\n";
+	lightLimitExceeded = exceeded;
 	if (!UpdateConstantBuffer(frameCB.Get(), &frameCBData, sizeof(frameCBData)))
 		return;
 
@@ -430,7 +413,7 @@ void RenderServer::DrawAll()
 	context->ClearRenderTargetView(target, clearColor); //чистим
 	context->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0); //Чистим Z-буфер
 
-	// Контракт HLSL: b0 = view/projection, b1 = world; матрицы column_major,
+	// Контракт HLSL: b0 = камера/свет, b1 = объект/материал; матрицы column_major,
 	// преобразование через mul(position, matrix). World транспонируется ниже.
 	// Привязываем CB к шейдерам
 	ID3D11Buffer* constantBuffers[] = { frameCB.Get(), objectCB.Get() }; 
@@ -449,8 +432,17 @@ void RenderServer::DrawAll()
 			continue; //тоже проверка
 
 		//Устанавливаем объектный буфер
-		DirectX::XMStoreFloat4x4(&objectCBData.world,
-			DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&item->world)));
+		// Считываем актуальный узел непосредственно при отрисовке.
+		const DXMatrix world = item->transformNode
+			? DXMatrix(item->transformNode->worldMatrix()) : DXMatrix::Identity;
+		DirectX::XMStoreFloat4x4(&objectCBData.world, DirectX::XMMatrixTranspose(world));
+		// Для вырожденного масштаба нормальная матрица не определена.
+		const float determinant = DirectX::XMVectorGetX(DirectX::XMMatrixDeterminant(world));
+		if (!std::isfinite(determinant) || std::abs(determinant) < 1e-8f) continue;
+		// inverse-transpose для нормалей транспонируем ещё раз для column_major.
+		DirectX::XMStoreFloat4x4(&objectCBData.normalMatrix, DirectX::XMMatrixInverse(nullptr, world));
+		objectCBData.specular = { (std::max)(0.0f, material.specularStrength),
+			(std::max)(1.0f, material.shininess), 0.0f, 0.0f };
 		if (!UpdateConstantBuffer(objectCB.Get(), &objectCBData, sizeof(objectCBData)))
 			continue;
 
@@ -492,6 +484,18 @@ void RenderServer::DrawAll()
 void RenderServer::addItem(RenderItem& item)
 {
 	renderList.push_back(&item);
+}
+
+size_t RenderServer::addLight(const LightItem& light)
+{
+	lights.push_back(light);
+	return lights.size() - 1;
+}
+
+void RenderServer::updateLight(size_t index, const LightItem& light)
+{
+	// Компонент до Init ещё не имеет зарегистрированной записи.
+	if (index < lights.size()) lights[index] = light;
 }
 
 void RenderServer::removeItem(RenderItem& item)

@@ -281,6 +281,7 @@ inline Mesh Mesh::Create(ID3D11Device* device, const MeshData<TVertexType>& data
 
 class ShaderPack
 {
+friend class MaterialResource;
 private:
 	ComPtr<ID3D11VertexShader> vertexShader;
 	ComPtr<ID3D11PixelShader> pixelShader;
@@ -306,6 +307,7 @@ public:
 
 
 class RenderState {
+friend class MaterialResource;
 private:
 	ComPtr<ID3D11RasterizerState> m_raster;
 	ComPtr<ID3D11DepthStencilState> m_depth;
@@ -423,6 +425,8 @@ namespace SamplerDescs {
 
 
 class Texture {
+friend class TextureResource;
+
 private:
 	ComPtr<ID3D11ShaderResourceView> m_srv;
 	uint32_t                  m_width = 0;
@@ -431,7 +435,7 @@ private:
 	Texture() = default;
 
 public:
-	static Texture LoadFromFile(ID3D11Device* device, const std::wstring& path);
+	static Texture Create(ID3D11Device* device, const DirectX::ScratchImage& image);
 
 
 	Texture(const Texture&) = delete;
@@ -446,24 +450,25 @@ public:
 	bool                      IsValid() const { return m_srv != nullptr; }
 };
 
-
-
 // МАТЕРИАЛЫ
 
 class Material {
 private:
 	ShaderPack* m_shader = nullptr;
-	Texture* m_diffuse = nullptr;
+	const Texture* m_diffuse = nullptr;
 	ID3D11SamplerState* m_sampler = nullptr;
 	RenderState* m_state = nullptr;
 
 public:
+	// Параметры зеркального блика модели Фонга.
+	float specularStrength = 0.5f;
+	float shininess = 32.0f;
 	Material() = default;
 
 	Material(ShaderPack& shader, RenderState& state)
 		: m_shader(&shader), m_state(&state) {}
 
-	Material(ShaderPack& shader, Texture& diffuse,
+	Material(ShaderPack& shader, const Texture& diffuse,
 		ID3D11SamplerState* sampler, RenderState& state)
 		: m_shader(&shader)
 		, m_diffuse(&diffuse)
@@ -474,7 +479,7 @@ public:
 	//void Bind(ID3D11DeviceContext& ctx);
 
 	ShaderPack* Shader()  const { return m_shader; }
-	Texture* Diffuse() const { return m_diffuse; }
+	const Texture* Diffuse() const { return m_diffuse; }
 	ID3D11SamplerState* Sampler() const { return m_sampler; }
 	RenderState* State()   const { return m_state; }
 };
@@ -483,14 +488,52 @@ public:
 
 // Рендеринг
 
+struct TransformNode;
+
 struct RenderItem {
 	Mesh* mesh = nullptr;
 	Material* material = nullptr;
-	DirectX::XMFLOAT4X4 world = DirectX::XMFLOAT4X4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+	// Узлом владеет объект; он должен жить, пока запись используется рендером.
+	const TransformNode* transformNode = nullptr;
 };
 
+class EditorCamera;
+
+enum class LightType : uint32_t { Directional, Point };
+
+// Независимое от сцены описание света; RenderServer хранит копию записи.
+struct LightItem {
+	LightType type = LightType::Directional;
+	bool enabled = true;
+	DirectX::XMFLOAT3 position{ 0, 0, 0 };
+	DirectX::XMFLOAT3 direction{ 0, 0, -1 };
+	DirectX::XMFLOAT3 color{ 1, 1, 1 };
+	float intensity = 1.0f;
+	float range = 5.0f;
+	DirectX::XMFLOAT4 extraParams{ 0, 0, 0, 0 };
+};
+
+// Каждая строка занимает один 16-байтовый регистр HLSL.
+struct GPULightData {
+	DirectX::XMFLOAT3 position;
+	uint32_t type;
+	DirectX::XMFLOAT3 direction;
+	float range;
+	DirectX::XMFLOAT3 color;
+	float intensity;
+	DirectX::XMFLOAT4 extraParams;
+};
+static_assert(sizeof(GPULightData) == 64);
+
 class RenderServer {
+public:
+	static constexpr uint32_t MaxLights = 16;
 private:
+	std::vector<LightItem> lights;
+	bool lightLimitExceeded = false;
+	DirectX::XMFLOAT3 ambientColor{ 0.03f, 0.03f, 0.03f };
+	// Изменение рендера: камера принадлежит сцене, nullptr отключает её.
+	EditorCamera* activeCamera = nullptr;
 	// GPU Interface
 	ComPtr<ID3D11Device> device;
 	ComPtr<ID3D11DeviceContext> context;
@@ -512,15 +555,29 @@ private:
 	struct FrameCBData {
 		DirectX::XMFLOAT4X4 view;
 		DirectX::XMFLOAT4X4 projection;
+		DirectX::XMFLOAT3 cameraPosition;
+		uint32_t lightCount;
+		DirectX::XMFLOAT3 ambient;
+		float padding = 0.0f;
+		GPULightData lights[MaxLights]{};
 	} frameCBData;
 
 	struct ObjectCBData {
 		DirectX::XMFLOAT4X4 world;
+		DirectX::XMFLOAT4X4 normalMatrix;
+		DirectX::XMFLOAT4 specular;
 	} objectCBData;
 
 
 public:
+	// Индексы стабильны: записи пока только добавляются, удаления нет.
+	size_t addLight(const LightItem& light);
+	void updateLight(size_t index, const LightItem& light);
+	void setAmbientColor(const DirectX::XMFLOAT3& color) { ambientColor = color; }
 	void Init(const DisplayWindow32& target_window);
+	// Камера должна жить до переключения на другую камеру или nullptr.
+	void setCamera(EditorCamera* camera) { activeCamera = camera; }
+	EditorCamera* getCamera() const { return activeCamera; }
 	ID3D11Device* Device() const { return device.Get(); }
 
 	ComPtr<ID3D11Buffer> CreateConstantBuffer(uint32_t byteWidth) const;

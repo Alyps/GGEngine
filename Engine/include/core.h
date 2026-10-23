@@ -16,6 +16,7 @@ private:
 
 public:
 	void Init(Game& game);
+	void Update(Game& game, double deltaTime);
 
 	void addObject(GameObject* obj);
 };
