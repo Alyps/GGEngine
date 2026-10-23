@@ -7,3 +7,4 @@
 #include "StandartResources/EditorCamera.h"
 #include "StandartResources/CameraMovementComponent.h"
 #include "StandartResources/LightComponent.h"
+#include "StandartResources/LuaScriptComponent.h"

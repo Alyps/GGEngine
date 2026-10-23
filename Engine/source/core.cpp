@@ -8,12 +8,17 @@ Game::Game(std::wstring windowTitle, long clientWidth, long clientHeight)
 	windowContext.inputDevice = inputDevice;
 	renderServer = new RenderServer();
 	renderServer->Init(*window);
+	// Ошибка создания Lua не прерывает запуск: скриптовые компоненты сообщат о ней сами.
+	scriptServer = new ScriptServer();
+	scriptServer->Init();
 
 }
 
 Game::~Game() noexcept
 {
+	// Уровень освобождается первым: его LuaScriptComponent используют состояние Lua.
 	delete start_level;
+	delete scriptServer;
 	delete renderServer;
 	delete inputDevice;
 	delete window;

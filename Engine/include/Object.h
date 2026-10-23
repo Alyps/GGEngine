@@ -41,4 +41,6 @@ public:
 	void Init(Game& game);
 	void Update(Game& game, double deltaTime);
 	TransformNode& getTransform() { return transformTree;  }
+	// Список нужен для поиска соседних компонентов (например, из Lua).
+	const std::vector<Component*>& getComponents() const { return components; }
 };

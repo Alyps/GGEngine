@@ -6,6 +6,7 @@
 #include "GGTime.h"
 #include "InputDevice.h"
 #include "Object.h"
+#include "ScriptServer.h"
 
 class Game;
 
@@ -53,6 +54,9 @@ public:
 	RenderServer& getRenderServer() noexcept { return *renderServer; }
 	const RenderServer& getRenderServer() const noexcept { return *renderServer; }
 
+	ScriptServer& getScriptServer() noexcept { return *scriptServer; }
+	const ScriptServer& getScriptServer() const noexcept { return *scriptServer; }
+
 	TimeManager& getTimeManager() noexcept { return timeManager; }
 	const TimeManager& getTimeManager() const noexcept { return timeManager; }
 
@@ -84,6 +88,8 @@ private:
 	DisplayWindow32* window = nullptr;
 	InputDevice* inputDevice = nullptr;
 	RenderServer* renderServer = nullptr;
+	// Уничтожается первым: скриптовые компоненты держат ссылки в его состоянии Lua.
+	ScriptServer* scriptServer = nullptr;
 
 
 
