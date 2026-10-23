@@ -15,6 +15,8 @@ public:
     CameraMovementComponent(const CameraMovementComponent&) = delete;
     CameraMovementComponent& operator=(const CameraMovementComponent&) = delete;
     float speed = 3.0f;
+    // Редактор отключает навигацию при работе с другими панелями.
+    bool enabled = true;
     float mouseSensitivity = 0.003f; // Радианы на единицу относительного движения мыши.
     void Init(Game& game) override;
     void Shutdown(Game& game) override;

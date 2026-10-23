@@ -369,16 +369,23 @@ bool RenderServer::UpdateConstantBuffer(ID3D11Buffer* buffer, const void* data, 
 
 void RenderServer::DrawAll()
 {
+	DrawScene(rtv.Get(), dsv.Get(), mainViewport);
+	Present();
+}
+
+void RenderServer::DrawScene(ID3D11RenderTargetView* target,
+	ID3D11DepthStencilView* depth, const D3D11_VIEWPORT& viewport)
+{
 	//Проверка чтобы всё было
-	if (!context || !swapChain || !rtv || !dsv || !frameCB || !objectCB)
+	if (!context || !target || !depth || !frameCB || !objectCB)
 		return;
 
 	// Изменение рендера: матрицы выбранной камеры вместо постоянных identity.
 	DXMatrix view = DXMatrix::Identity;
 	DXMatrix projection = DXMatrix::Identity;
-	if (activeCamera && mainViewport.Width > 0.0f && mainViewport.Height > 0.0f
+	if (activeCamera && viewport.Width > 0.0f && viewport.Height > 0.0f
 		&& activeCamera->getView(view)) {
-		projection = activeCamera->getProjection(mainViewport.Width / mainViewport.Height);
+		projection = activeCamera->getProjection(viewport.Width / viewport.Height);
 	}
 	// Сохраняем существующий контракт column_major в HLSL.
 	DirectX::XMStoreFloat4x4(&frameCBData.view, DirectX::XMMatrixTranspose(view));
@@ -407,12 +414,11 @@ void RenderServer::DrawAll()
 		return;
 
 	// Устанавливаем RenderTarget (куда записывать итоговый результат) 
-	ID3D11RenderTargetView* target = rtv.Get(); //Зачем создаётся новый?
-	context->OMSetRenderTargets(1, &target, dsv.Get()); //Output Merger выход
-	context->RSSetViewports(1, &mainViewport); // размеры вьюпорта для растеризатора
+	context->OMSetRenderTargets(1, &target, depth);
+	context->RSSetViewports(1, &viewport);
 	const float clearColor[4] = { 0.f, 0.f, 0.f, 1.f }; //Заполняем всё одним цветом
 	context->ClearRenderTargetView(target, clearColor); //чистим
-	context->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0); //Чистим Z-буфер
+	context->ClearDepthStencilView(depth, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
 
 	// Контракт HLSL: b0 = камера/свет, b1 = объект/материал; матрицы column_major,
 	// преобразование через mul(position, matrix). World транспонируется ниже.
@@ -477,9 +483,51 @@ void RenderServer::DrawAll()
 		context->DrawIndexed(mesh.IndexCount(), 0, 0); //Сама отрисовка
 	}
 
-	//Показ кадра
+	// Освобождаем цель перед использованием её текстуры в интерфейсе.
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
+void RenderServer::Present()
+{
+	if (!swapChain) return;
 	if (FAILED(swapChain->Present(1, 0)))
 		OutputDebugStringA("DrawAll: Present failed\n");
+}
+
+void RenderServer::BeginMainPass()
+{
+	if (!context || !rtv) return;
+	ID3D11RenderTargetView* target = rtv.Get();
+	context->OMSetRenderTargets(1, &target, dsv.Get());
+	context->RSSetViewports(1, &mainViewport);
+	const float clear[] = { 0.07f, 0.08f, 0.10f, 1.0f };
+	context->ClearRenderTargetView(target, clear);
+}
+
+bool RenderServer::ResizeMainTarget(UINT width, UINT height)
+{
+	if (!width || !height || !context || !swapChain) return false;
+	if (rtv && dsv && width == static_cast<UINT>(mainViewport.Width)
+		&& height == static_cast<UINT>(mainViewport.Height)) return true;
+	// Swap chain требует освобождения всех ссылок на прежний back buffer.
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+	rtv.Reset();
+	dsv.Reset();
+	depthStencilBuffer.Reset();
+	if (FAILED(swapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0))) return false;
+	ComPtr<ID3D11Texture2D> backBuffer;
+	if (FAILED(swapChain->GetBuffer(0, IID_PPV_ARGS(backBuffer.GetAddressOf())))
+		|| FAILED(device->CreateRenderTargetView(backBuffer.Get(), nullptr, rtv.GetAddressOf()))) return false;
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = width;
+	desc.Height = height;
+	desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+	desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	if (FAILED(device->CreateTexture2D(&desc, nullptr, depthStencilBuffer.GetAddressOf()))
+		|| FAILED(device->CreateDepthStencilView(depthStencilBuffer.Get(), nullptr, dsv.GetAddressOf()))) return false;
+	mainViewport = { 0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1 };
+	return true;
 }
 
 void RenderServer::addItem(RenderItem& item)

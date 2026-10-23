@@ -29,6 +29,8 @@ public:
 	GameObject* createObject();
 	void destroyObject(GameObject* obj);
 	void applyPendingChanges(Game& game);
+	// Уровень владеет объектами; редактор не меняет список напрямую.
+	const std::vector<GameObject*>& getObjects() const { return objects; }
 };
 
 // Owns application systems. Gameplay belongs to a separate GameInstance.

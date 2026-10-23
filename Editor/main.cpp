@@ -1,72 +1,14 @@
 #include <core.h>
 #include "StandartResources/RenderPresets.h"
 #include "ResourceManager.h"
-#include <vector>
-
-namespace {
-// Компонент проверки живёт в исходной сцене и не входит в список удаляемых кубов.
-class SpawnObjectsComponent : public Component {
-    Level& level;
-    ResourceManager& resources;
-    // Объектами владеет уровень; здесь сохраняем только адреса для удаления.
-    std::vector<GameObject*> spawnedObjects;
-    bool spaceWasDown = false;
-    bool escapeWasDown = false;
-
-public:
-    SpawnObjectsComponent(Level& level, ResourceManager& resources)
-        : level(level), resources(resources) {}
-    void Init(Game& game) override {}
-
-    void Update(Game& game, double) override {
-        auto& input = game.getInputDevice();
-        const bool spaceDown = input.IsKeyDown(Keys::Space);
-        const bool escapeDown = input.IsKeyDown(Keys::Escape);
-        // Реагируем на переход в нажатое состояние, а не на удержание клавиши.
-        const bool spawn = spaceDown && !spaceWasDown;
-        const bool clear = escapeDown && !escapeWasDown;
-        spaceWasDown = spaceDown;
-        escapeWasDown = escapeDown;
-        if (GetForegroundWindow() != game.getWindow().getWindow()) return;
-
-        // При одновременном нажатии приоритет у очистки. Исходная сцена остаётся.
-        if (clear) {
-            for (GameObject* object : spawnedObjects) level.destroyObject(object);
-            spawnedObjects.clear();
-            return;
-        }
-        if (!spawn) return;
-
-        GameObject* object = level.createObject();
-        if (!object) return;
-        auto* mesh = object->createComponent<MeshComponent>(resources);
-        // Не оставляем пустой объект при неудачном создании компонента.
-        if (!mesh) {
-            level.destroyObject(object);
-            return;
-        }
-
-        // Небольшие кубы раскладываем рядами над исходной сценой.
-        const size_t index = spawnedObjects.size();
-        object->getTransform().set_position(DXVector3(
-            -1.2f + static_cast<float>(index % 5) * 0.6f,
-            0.8f, -1.5f - static_cast<float>(index / 5) * 0.6f));
-        object->getTransform().set_scale(DXVector3(0.4f, 0.4f, 0.4f));
-        mesh->bind_to_node(&object->getTransform());
-        spawnedObjects.push_back(object);
-    }
-};
-}
+#include "Editor.h"
 
 int main() {
 	// Менеджер уничтожается после Game, сохраняя материал до завершения рендера.
 	ResourceManager resources;
-	Game game(L"Editor - white cube test");
+	Game game(L"GGEngine Editor");
 	Level& testLevel = *new Level();
 	game.setStartLevel(&testLevel);
-	// Пробел создаёт куб; Esc запрашивает удаление всех созданных здесь кубов.
-	GameObject* spawnController = testLevel.createObject();
-	if (spawnController) spawnController->createComponent<SpawnObjectsComponent>(testLevel, resources);
 	GameObject& cube = *testLevel.createObject();
 	MeshComponent& cubeMesh = *cube.createComponent<MeshComponent>();
 	GameObject& floor = *testLevel.createObject();
@@ -104,8 +46,6 @@ int main() {
 	camera.bind_to_node(&cameraObject.getTransform());
 	cameraMovement.bind_to_node(&cameraObject.getTransform());
 
-	// Оба компонента используют одну ветку дерева объекта.
-
 	cubeMesh.bind_to_node(&cube.getTransform());
 
 	// Плоскость XY поворачиваем в пол XZ, лицевая нормаль смотрит вверх.
@@ -127,5 +67,6 @@ int main() {
 	game.getRenderServer().setAmbientColor({ 0.12f, 0.12f, 0.12f });
 	game.getRenderServer().setCamera(&camera);
 	// Game освободит уровень и компоненты перед уничтожением своих систем.
-	return game.Run();
+	Editor editor(game);
+	return editor.Run();
 }

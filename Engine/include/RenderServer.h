@@ -579,6 +579,13 @@ public:
 	void setCamera(EditorCamera* camera) { activeCamera = camera; }
 	EditorCamera* getCamera() const { return activeCamera; }
 	ID3D11Device* Device() const { return device.Get(); }
+	ID3D11DeviceContext* Context() const { return context.Get(); }
+	// Отрисовка в заданную цель не меняет камеру и не вызывает Present.
+	void DrawScene(ID3D11RenderTargetView* target, ID3D11DepthStencilView* depth,
+		const D3D11_VIEWPORT& viewport);
+	bool ResizeMainTarget(UINT width, UINT height);
+	void BeginMainPass();
+	void Present();
 
 	ComPtr<ID3D11Buffer> CreateConstantBuffer(uint32_t byteWidth) const;
 

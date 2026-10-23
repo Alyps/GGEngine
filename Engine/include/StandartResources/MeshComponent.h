@@ -15,4 +15,7 @@ public:
     explicit MeshComponent(ResourceManager& resources);
     explicit MeshComponent(MeshData<NormalVertexType> data);
     void initRenderItem(Game& game) override;
+    // Заимствованные данные для выбора геометрии редактором без чтения GPU-буферов.
+    const MeshData<NormalVertexType>& getMeshData() const { return meshData; }
+    const RenderItem* getRenderItem() const { return renderItem; }
 };
