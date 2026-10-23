@@ -388,7 +388,8 @@ void RenderServer::DrawAll()
 	frameCBData.ambient = ambientColor;
 	frameCBData.lightCount = 0;
 	bool exceeded = false;
-	for (const LightItem& light : lights) {
+	for (const LightItem* entry : lights) {
+		const LightItem& light = *entry;
 		if (!light.enabled) continue;
 		if (frameCBData.lightCount == MaxLights) {
 			exceeded = true;
@@ -483,21 +484,21 @@ void RenderServer::DrawAll()
 
 void RenderServer::addItem(RenderItem& item)
 {
-	renderList.push_back(&item);
+	if (std::find(renderList.begin(), renderList.end(), &item) == renderList.end())
+		renderList.push_back(&item);
 }
 
-size_t RenderServer::addLight(const LightItem& light)
+void RenderServer::addLight(LightItem& light)
 {
-	lights.push_back(light);
-	return lights.size() - 1;
+    if (std::find(lights.begin(), lights.end(), &light) == lights.end())
+        lights.push_back(&light);
 }
 
-void RenderServer::updateLight(size_t index, const LightItem& light)
+void RenderServer::removeLight(LightItem& light)
 {
-	// Компонент до Init ещё не имеет зарегистрированной записи.
-	if (index < lights.size()) lights[index] = light;
+    const auto it = std::find(lights.begin(), lights.end(), &light);
+    if (it != lights.end()) lights.erase(it);
 }
-
 void RenderServer::removeItem(RenderItem& item)
 {
 	const auto it = std::find(renderList.begin(), renderList.end(), &item);

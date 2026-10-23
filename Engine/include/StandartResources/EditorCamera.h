@@ -9,6 +9,7 @@ private:
     float farPlane = 1000.0f;
 public:
     void Init(Game& game) override {}
+    void Shutdown(Game& game) override;
     bool getView(DXMatrix& view) const;
     DXMatrix getProjection(float aspectRatio) const;
 };

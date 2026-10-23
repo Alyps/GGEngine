@@ -13,6 +13,7 @@ Game::Game(std::wstring windowTitle, long clientWidth, long clientHeight)
 
 Game::~Game() noexcept
 {
+	delete start_level;
 	delete renderServer;
 	delete inputDevice;
 	delete window;
@@ -63,25 +64,72 @@ int Game::Run()
 		// const double alpha = fixedTime.get_alpha();
 
 		renderServer->DrawAll();
+		if (current_level) current_level->applyPendingChanges(*this);
 	}
 }
 
+
+Level::~Level()
+{
+    shuttingDown = true;
+    for (GameObject* object : objects) delete object;
+    for (GameObject* object : pendingObjects) delete object;
+}
 
 void Level::Init(Game& game)
 {
-	for (GameObject* obj : objects)
-	{
-		obj->Init(game);
-	}
+    applyPendingChanges(game);
 }
 
-void Level::addObject(GameObject* obj)
+bool Level::addObject(GameObject* obj)
 {
-	objects.push_back(obj);
+    if (!obj || obj->owner || shuttingDown) return false;
+    obj->owner = this;
+    pendingObjects.push_back(obj);
+    return true;
+}
+
+GameObject* Level::createObject()
+{
+    if (shuttingDown) return nullptr;
+    auto* object = new (std::nothrow) GameObject();
+    if (object) addObject(object);
+    return object;
+}
+
+void Level::destroyObject(GameObject* obj)
+{
+    if (obj && obj->owner == this) obj->pendingDestroy = true;
+}
+
+void Level::applyPendingChanges(Game& game)
+{
+    // Запросы, поступившие во время очистки и Init, ждут следующего кадра.
+    std::vector<GameObject*> additions;
+    additions.swap(pendingObjects);
+    for (auto it = objects.begin(); it != objects.end();) {
+        GameObject* object = *it;
+        if (object->pendingDestroy) {
+            it = objects.erase(it);
+            delete object;
+        } else {
+            object->applyPendingChanges(game);
+            ++it;
+        }
+    }
+    objects.insert(objects.end(), additions.begin(), additions.end());
+    for (GameObject* object : additions) {
+        if (object->pendingDestroy) {
+            objects.erase(std::find(objects.begin(), objects.end(), object));
+            delete object;
+        } else {
+            object->Init(game);
+        }
+    }
 }
 
 void Level::Update(Game& game, double deltaTime)
 {
-	for (GameObject* object : objects)
-		object->Update(game, deltaTime);
+    for (GameObject* object : objects)
+        if (!object->pendingDestroy) object->Update(game, deltaTime);
 }

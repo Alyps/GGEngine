@@ -17,5 +17,6 @@ public:
     float speed = 3.0f;
     float mouseSensitivity = 0.003f; // Радианы на единицу относительного движения мыши.
     void Init(Game& game) override;
+    void Shutdown(Game& game) override;
     void Update(Game& game, double deltaTime) override;
 };

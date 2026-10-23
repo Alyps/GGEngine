@@ -4,7 +4,7 @@
 
 class LightComponent : public TransformableComponent {
 private:
-    size_t lightIndex = (std::numeric_limits<size_t>::max)();
+    LightItem lightItem;
 protected:
     // Производные компоненты задают тип и параметры независимой записи.
     virtual LightItem makeLightItem() const = 0;
@@ -15,6 +15,7 @@ public:
     bool enabled = true;
 
     void Init(Game& game) override;
+    void Shutdown(Game& game) override;
     void Update(Game& game, double deltaTime) override;
 };
 

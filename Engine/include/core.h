@@ -12,13 +12,23 @@ class Game;
 class Level {
 private:
 	std::vector<GameObject*> objects;
+	std::vector<GameObject*> pendingObjects;
+	bool shuttingDown = false;
 
 
 public:
+	Level() = default;
+	~Level();
+	Level(const Level&) = delete;
+	Level& operator=(const Level&) = delete;
 	void Init(Game& game);
 	void Update(Game& game, double deltaTime);
 
-	void addObject(GameObject* obj);
+	// При успехе уровень принимает владение объектом, созданным через new.
+	bool addObject(GameObject* obj);
+	GameObject* createObject();
+	void destroyObject(GameObject* obj);
+	void applyPendingChanges(Game& game);
 };
 
 // Owns application systems. Gameplay belongs to a separate GameInstance.
@@ -46,7 +56,12 @@ public:
 	TimeManager& getTimeManager() noexcept { return timeManager; }
 	const TimeManager& getTimeManager() const noexcept { return timeManager; }
 
-	void setStartLevel(Level* level) { start_level = level; }
+	// Game принимает владение стартовым уровнем до Init.
+	void setStartLevel(Level* level) {
+		if (current_level || start_level == level) return;
+		delete start_level;
+		start_level = level;
+	}
 	Level* getLevel() { return current_level; }
 
 	void Init();
@@ -74,7 +89,3 @@ private:
 
 
 };
-
-
-
-

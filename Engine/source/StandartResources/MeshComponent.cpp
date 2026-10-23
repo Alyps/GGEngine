@@ -14,6 +14,7 @@ MeshComponent::MeshComponent(MeshData<NormalVertexType> data)
 void MeshComponent::initRenderItem(Game& game)
 {
     // Импорт включается только для компонентов, которым передан менеджер.
+    ownsMaterial = presetResources == nullptr;
     renderItem = presetResources
         ? RenderItemPresets::ImportPreset(game.getRenderServer().Device(), meshData, *presetResources)
         : RenderItemPresets::CreateSimple(game.getRenderServer().Device(), meshData, false);

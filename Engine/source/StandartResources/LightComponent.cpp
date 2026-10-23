@@ -12,19 +12,20 @@ LightItem LightComponent::commonLightItem() const
 
 void LightComponent::Init(Game& game)
 {
-    // Повторная инициализация обновляет уже зарегистрированный источник.
-    if (lightIndex == (std::numeric_limits<size_t>::max)())
-        lightIndex = game.getRenderServer().addLight(makeLightItem());
-    else
-        game.getRenderServer().updateLight(lightIndex, makeLightItem());
+    lightItem = makeLightItem();
+    game.getRenderServer().addLight(lightItem);
+}
+
+void LightComponent::Shutdown(Game& game)
+{
+    game.getRenderServer().removeLight(lightItem);
 }
 
 void LightComponent::Update(Game& game, double deltaTime)
 {
-    // Рендер получает снимок параметров, не сохраняя ссылок на компонент.
-    game.getRenderServer().updateLight(lightIndex, makeLightItem());
+    // Адрес записи остаётся прежним; рендер читает актуальные данные.
+    lightItem = makeLightItem();
 }
-
 LightItem DirectionalLightComponent::makeLightItem() const
 {
     LightItem item = commonLightItem();

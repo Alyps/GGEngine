@@ -501,7 +501,7 @@ class EditorCamera;
 
 enum class LightType : uint32_t { Directional, Point };
 
-// Независимое от сцены описание света; RenderServer хранит копию записи.
+// Независимое от сцены описание света; компонент владеет записью, RenderServer использует её адрес.
 struct LightItem {
 	LightType type = LightType::Directional;
 	bool enabled = true;
@@ -529,7 +529,7 @@ class RenderServer {
 public:
 	static constexpr uint32_t MaxLights = 16;
 private:
-	std::vector<LightItem> lights;
+	std::vector<LightItem*> lights;
 	bool lightLimitExceeded = false;
 	DirectX::XMFLOAT3 ambientColor{ 0.03f, 0.03f, 0.03f };
 	// Изменение рендера: камера принадлежит сцене, nullptr отключает её.
@@ -570,9 +570,9 @@ private:
 
 
 public:
-	// Индексы стабильны: записи пока только добавляются, удаления нет.
-	size_t addLight(const LightItem& light);
-	void updateLight(size_t index, const LightItem& light);
+	// Компонент сохраняет запись живой до снятия регистрации.
+	void addLight(LightItem& light);
+	void removeLight(LightItem& light);
 	void setAmbientColor(const DirectX::XMFLOAT3& color) { ambientColor = color; }
 	void Init(const DisplayWindow32& target_window);
 	// Камера должна жить до переключения на другую камеру или nullptr.
@@ -594,4 +594,3 @@ public:
 	void removeItem(RenderItem& item);
 
 };
-

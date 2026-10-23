@@ -1,3 +1,4 @@
+#include "core.h"
 #include "StandartResources/EditorCamera.h"
 
 bool EditorCamera::getView(DXMatrix& view) const
@@ -21,4 +22,10 @@ bool EditorCamera::getView(DXMatrix& view) const
 DXMatrix EditorCamera::getProjection(float aspectRatio) const
 {
     return DXMatrix::CreatePerspectiveFieldOfView(verticalFov, aspectRatio, nearPlane, farPlane);
+}
+
+void EditorCamera::Shutdown(Game& game)
+{
+    if (game.getRenderServer().getCamera() == this)
+        game.getRenderServer().setCamera(nullptr);
 }

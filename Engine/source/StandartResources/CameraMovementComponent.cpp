@@ -88,3 +88,9 @@ void CameraMovementComponent::Update(Game& game, double deltaTime)
     direction = DXVector3::Transform(direction, orientation);
     transformNode->move(direction * (speed * static_cast<float>(deltaTime)));
 }
+
+void CameraMovementComponent::Shutdown(Game& game)
+{
+    if (ownerGame) ownerGame->getInputDevice().MouseMove.Remove(mouseMoveHandle);
+    ownerGame = nullptr;
+}
