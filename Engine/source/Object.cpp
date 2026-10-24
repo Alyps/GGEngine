@@ -1,12 +1,17 @@
 #include "Object.h"
 #include "core.h"
 
+Game* GameObject::getGame() const
+{
+    return owner ? owner->getOwner() : nullptr;
+}
+
 GameObject::~GameObject()
 {
     pendingDestroy = true;
     // Сначала компоненты: их Shutdown ещё может использовать Transform.
     for (Component* component : components) {
-        if (component->initialized) component->Shutdown(*ownerGame);
+        if (component->initialized) component->Shutdown(*getGame());
         delete component;
     }
     for (Component* component : pendingComponents) delete component;
@@ -25,9 +30,10 @@ void GameObject::destroyComponent(Component* component)
     if (component && component->owner == this) component->pendingDestroy = true;
 }
 
-void GameObject::applyPendingChanges(Game& game)
+void GameObject::applyPendingChanges()
 {
-    ownerGame = &game;
+    if (!getGame()) return;
+    Game& game = *getGame();
     // Новые запросы из Init/Shutdown остаются в очереди до следующего кадра.
     std::vector<Component*> additions;
     additions.swap(pendingComponents);
@@ -54,15 +60,12 @@ void GameObject::applyPendingChanges(Game& game)
     }
 }
 
-void GameObject::Update(Game& game, double deltaTime)
+void GameObject::Update(double deltaTime)
 {
+    if (!getGame()) return;
+    Game& game = *getGame();
     for (Component* component : components) {
         if (pendingDestroy) break;
         if (!component->pendingDestroy) component->Update(game, deltaTime);
     }
-}
-
-void GameObject::Init(Game& game)
-{
-    applyPendingChanges(game);
 }

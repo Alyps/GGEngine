@@ -1,11 +1,26 @@
+#include <filesystem>
 #include <core.h>
 #include "StandartResources/RenderPresets.h"
-#include "ResourceManager.h"
 #include "Editor.h"
 
 int main() {
-	// Менеджер уничтожается после Game, сохраняя материал до завершения рендера.
-	ResourceManager resources;
+	// Берём AppData через Unicode API, независимо от рабочей папки процесса.
+	const DWORD required = GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
+	if (!required) { std::cerr << "APPDATA is unavailable\n"; return 1; }
+	std::wstring appData(required, L'\0');
+	const DWORD length = GetEnvironmentVariableW(L"APPDATA", appData.data(), required);
+	if (!length || length >= required) { std::cerr << "Cannot read APPDATA\n"; return 1; }
+	appData.resize(length);
+
+	// Создаём всю цепочку каталогов; существующие файлы проекта сохраняются.
+	const std::filesystem::path resourceDirectory = std::filesystem::path(appData) / L"GGEngine" / L"TestProject" / L"res";
+	if (!resourceDirectory.is_absolute()) { std::cerr << "APPDATA must be absolute\n"; return 1; }
+	std::error_code error;
+	std::filesystem::create_directories(resourceDirectory, error);
+	if (error) { std::cerr << "Cannot create resource directory: " << error.message() << '\n'; return 1; }
+	// ContentBrowser по-прежнему получает обычную строку UTF-8 с разделителем /.
+	const auto utf8Root = resourceDirectory.generic_u8string();
+	const std::string resourceRoot(reinterpret_cast<const char*>(utf8Root.data()), utf8Root.size());
 	Game game(L"GGEngine Editor");
 	Level& testLevel = *new Level();
 	game.setStartLevel(&testLevel);
@@ -15,7 +30,7 @@ int main() {
 	MeshComponent& floorMesh = *floor.createComponent<MeshComponent>(MeshPresets::CreateQuad(5.0f, 7.0f));
 	GameObject& secondCube = *testLevel.createObject();
 	// Левый куб использует Default.material.json; центральный — CreateSimple.
-	MeshComponent& secondCubeMesh = *secondCube.createComponent<MeshComponent>(resources);
+	MeshComponent& secondCubeMesh = *secondCube.createComponent<MeshComponent>(true);
 	GameObject& sphere = *testLevel.createObject();
 	MeshComponent& sphereMesh = *sphere.createComponent<MeshComponent>(MeshPresets::CreateCircle(0.5f));
 	GameObject& cameraObject = *testLevel.createObject();
@@ -67,6 +82,6 @@ int main() {
 	game.getRenderServer().setAmbientColor({ 0.12f, 0.12f, 0.12f });
 	game.getRenderServer().setCamera(&camera);
 	// Game освободит уровень и компоненты перед уничтожением своих систем.
-	Editor editor(game);
+	Editor editor(game, resourceRoot);
 	return editor.Run();
 }

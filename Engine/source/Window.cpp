@@ -24,6 +24,12 @@ LRESULT DisplayWindow32::HandleMessage(HWND hwnd, UINT umessage, WPARAM wparam, 
 
 	switch (umessage)
 	{
+	case WM_NCDESTROY:
+		// Окно могли закрыть до уничтожения Game: больше не владеем этим HWND.
+		if (context->window) context->window->win = nullptr;
+		context->window = nullptr;
+		SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+		return DefWindowProc(hwnd, umessage, wparam, lparam);
 	case WM_KILLFOCUS:
 		// Отпускание кнопок вне окна может не прийти через Raw Input.
 		if (context->inputDevice) {
@@ -37,6 +43,8 @@ LRESULT DisplayWindow32::HandleMessage(HWND hwnd, UINT umessage, WPARAM wparam, 
 
 	case WM_INPUT:
 	{
+		if (!context->inputDevice)
+			return DefWindowProc(hwnd, umessage, wparam, lparam);
 
 		if (GET_RAWINPUT_CODE_WPARAM(wparam) == RIM_INPUTSINK) {
 			return 0; // игнорируем фоновый ввод
@@ -98,9 +106,11 @@ bool DisplayWindow32::isInit = false;
 const LPCWSTR DisplayWindow32::winClassName = L"DisplayWindow32";
 HINSTANCE DisplayWindow32::hInstance = GetModuleHandle(nullptr);
 
-DisplayWindow32::DisplayWindow32(long clientWidth, long clientHeight, LPCWSTR header, WindowMessageContext& context) : clientWidth{ clientWidth }, clientHeight{ clientHeight }
+DisplayWindow32::DisplayWindow32(long clientWidth, long clientHeight, LPCWSTR header, WindowMessageContext& context)
+    : clientWidth{ clientWidth }, clientHeight{ clientHeight }, messageContext(context)
 {
 	assert(isInit);
+	messageContext.window = this;
 	RECT windowRect = { 0, 0, static_cast<LONG>(clientWidth), static_cast<LONG>(clientHeight) };
 	AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
@@ -124,6 +134,13 @@ DisplayWindow32::DisplayWindow32(long clientWidth, long clientHeight, LPCWSTR he
 	ShowCursor(true);
 }
 
+
+DisplayWindow32::~DisplayWindow32()
+{
+	// WM_NCDESTROY отвязывает контекст, пока Game ещё хранит его в памяти.
+	if (win) DestroyWindow(win);
+	messageContext.window = nullptr;
+}
 
 void DisplayWindow32::InitWindowClass()
 {

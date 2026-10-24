@@ -49,7 +49,8 @@ namespace {
 	}
 }
 
-Editor::Editor(Game& application) : game(application) {}
+Editor::Editor(Game& application, const std::string& resourceRoot)
+	: game(application), contentBrowser(resourceRoot) {}
 
 CameraMovementComponent* Editor::GetCameraMovement() const
 {
@@ -152,7 +153,7 @@ int Editor::Run()
 			std::cerr << "Cannot resize editor back buffer\n";
 			return 1;
 		}
-		game.getTimeManager().update();
+		game.BeginFrame();
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
@@ -161,6 +162,7 @@ int Editor::Run()
 		if (showHierarchy) DrawHierarchy();
 		if (showInspector) DrawInspector();
 		DrawViewport();
+		contentBrowser.Draw(showContentBrowser);
 		// Закрываем жест также при смене выбора или скрытии панели.
 		if (editingTransform && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing()) FinishTransformEdit();
 		// Общие сочетания регистрируются каждый кадр независимо от выбранной панели.
@@ -169,7 +171,7 @@ int Editor::Run()
 		const bool redoPressed = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal);
 		const bool deletePressed = ImGui::Shortcut(ImGuiKey_Delete, ImGuiInputFlags_RouteGlobal);
 		if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive()
-			&& !ImGuizmo::IsUsing() && !navigating) {
+			&& !ImGuizmo::IsUsing() && !navigating && !contentBrowser.IsFocused()) {
 			if (undoPressed) Undo();
 			if (redoPressed) Redo();
 			if (deletePressed && CanDeleteObject(selectedObject)) requestedDelete = selectedObject;
@@ -184,7 +186,13 @@ int Editor::Run()
 			// История и выбор заимствуют адреса: очищаем их до освобождения объектов.
 			// Без постоянных ID нельзя безопасно хранить Undo через удаление сцены.
 			for (GameObject* object : level->getObjects()) {
-				if (!object || !object->isPendingDestroy()) continue;
+				if (!object) continue;
+                // Удалённый компонент не должен оставлять черновик для повторно занятого адреса.
+                for (Component* component : object->getComponents())
+                    if (component && component->isPendingDestroy())
+                        if (auto* mesh = dynamic_cast<MeshComponent*>(component)) meshPathDrafts.erase(mesh);
+                if (!object->isPendingDestroy()) continue;
+				meshPathDrafts.clear();
 				if (selectedObject == object) {
 					selectedObject = nullptr;
 					selectedNode = nullptr;
@@ -194,8 +202,8 @@ int Editor::Run()
 				editingTransform = editingGizmo = false;
 				pendingEdit = {};
 			}
-			level->applyPendingChanges(game);
 		}
+		game.EndFrame();
 	}
 }
 
@@ -215,6 +223,7 @@ void Editor::DrawDockspace()
 		if (ImGui::BeginMenu("Window")) {
 			ImGui::MenuItem("Hierarchy", nullptr, &showHierarchy);
 			ImGui::MenuItem("Inspector", nullptr, &showInspector);
+			ImGui::MenuItem("Content Browser", nullptr, &showContentBrowser);
 			if (ImGui::MenuItem("Reset layout")) resetLayout = true;
 			ImGui::EndMenu();
 		}
@@ -232,6 +241,8 @@ void Editor::DrawDockspace()
 		ImGuiID center = dock;
 		const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
 		const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, nullptr, &center);
+		const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.30f, nullptr, &center);
+		ImGui::DockBuilderDockWindow("Content Browser", bottom);
 		ImGui::DockBuilderDockWindow("Hierarchy", left);
 		ImGui::DockBuilderDockWindow("Inspector", right);
 		ImGui::DockBuilderDockWindow("Viewport", center);
@@ -300,6 +311,7 @@ void Editor::DrawHierarchy()
 void Editor::DrawCreateMenu()
 {
 	if (ImGui::MenuItem("Empty object")) requestedCreate = ObjectType::Empty;
+	if (ImGui::MenuItem("Mesh object")) requestedCreate = ObjectType::Mesh;
 	if (ImGui::BeginMenu("3D primitives")) {
 		if (ImGui::MenuItem("Cube")) requestedCreate = ObjectType::Cube;
 		if (ImGui::MenuItem("Sphere")) requestedCreate = ObjectType::Sphere;
@@ -331,7 +343,10 @@ void Editor::ApplySceneActions()
 	if (!level || (type == ObjectType::None && !removed)) return;
 	FinishTransformEdit();
 	sceneActionError.clear();
-	if (CanDeleteObject(removed)) level->destroyObject(removed);
+	if (CanDeleteObject(removed)) {
+		meshPathDrafts.clear();
+		level->destroyObject(removed);
+	}
 	if (type == ObjectType::None) return;
 
 	// Владение сразу принимает Level, редактор сохраняет только адрес выбора.
@@ -342,6 +357,9 @@ void Editor::ApplySceneActions()
 	}
 	TransformableComponent* component = nullptr;
 	switch (type) {
+	case ObjectType::Mesh:
+		component = object->createComponent<MeshComponent>(std::string{}, std::string{});
+		break;
 	case ObjectType::Cube: component = object->createComponent<MeshComponent>(); break;
 	case ObjectType::Sphere:
 		component = object->createComponent<MeshComponent>(MeshPresets::CreateCircle(0.5f));
@@ -439,13 +457,104 @@ void Editor::DrawInspector()
 						ImGui::DragFloat("Range", &point->range, 0.1f, 0.01f, 1000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 				} else if (dynamic_cast<EditorCamera*>(component)) ImGui::TextUnformatted("Camera");
 				else if (dynamic_cast<CameraMovementComponent*>(component)) ImGui::TextUnformatted("Camera navigation");
-				else if (dynamic_cast<MeshComponent*>(component)) ImGui::TextUnformatted("Mesh renderer");
+				else if (auto* mesh = dynamic_cast<MeshComponent*>(component)) {
+					DrawMeshInspector(*mesh);
+				}
 				else ImGui::TextUnformatted("Component");
 				ImGui::PopID();
 			}
 		}
 	}
 	ImGui::End();
+}
+
+void Editor::DrawMeshInspector(MeshComponent& mesh)
+{
+	ImGui::TextUnformatted("Mesh renderer");
+	auto [entry, inserted] = meshPathDrafts.try_emplace(&mesh);
+	auto& draft = entry->second;
+	// Смена путей из кода отражается в полях, не сбрасывая незавершённый ввод.
+	if (inserted || draft.appliedMesh != mesh.getMeshPath())
+		draft.mesh = draft.appliedMesh = mesh.getMeshPath();
+	if (inserted || draft.appliedMaterial != mesh.getMaterialPath())
+		draft.material = draft.appliedMaterial = mesh.getMaterialPath();
+
+	auto drawPath = [&](bool isMesh, std::string& text, std::string& inputError) {
+		ImGui::PushID(isMesh ? "MeshPath" : "MaterialPath");
+		const std::string current = isMesh ? mesh.getMeshPath() : mesh.getMaterialPath();
+		auto supported = [&](const std::string& path) {
+			if (path.empty()) return true;
+			std::string lower = path;
+			for (char& c : lower) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+			if (!isMesh) return lower.ends_with(".material.json");
+			const auto dot = lower.find_last_of('.');
+			const auto slash = lower.find_last_of("/\\");
+			return dot != std::string::npos && (slash == std::string::npos || dot > slash)
+				&& MeshResource::SupportsExtension(lower.substr(dot));
+		};
+		auto apply = [&](std::string value) {
+			// Завершаем ввод, чтобы ImGui не восстановил прежний текст после drop или отказа.
+			if (ImGui::GetActiveID() == ImGui::GetID(isMesh ? "Mesh" : "Material"))
+				ImGui::ClearActiveID();
+			if (!supported(value)) {
+				// Неподходящий формат не заменяет путь компонента или видимое значение.
+				text = current;
+				inputError = isMesh ? "Unsupported mesh format." : "Expected a .material.json file.";
+				return;
+			}
+			if (isMesh) mesh.setMeshPath(std::move(value));
+			else mesh.setMaterialPath(std::move(value));
+			text = isMesh ? mesh.getMeshPath() : mesh.getMaterialPath();
+			(isMesh ? draft.appliedMesh : draft.appliedMaterial) = text;
+			inputError.clear();
+		};
+		// Буфер покрывает Windows-пути; длинное перетаскиваемое значение не обрезается.
+		std::vector<char> buffer((std::max)(size_t(32768), text.size() + 1), '\0');
+		std::copy(text.begin(), text.end(), buffer.begin());
+		const char* hint = isMesh ? (mesh.hasProceduralMesh() ? "Procedural geometry" : "Empty mesh")
+			: "Default material";
+		if (isMesh && mesh.getGeometryPreset() == MeshComponent::GeometryPreset::Cube) hint = "cube";
+		if (isMesh && mesh.getGeometryPreset() == MeshComponent::GeometryPreset::Sphere) hint = "sphere";
+		const bool enter = ImGui::InputTextWithHint(isMesh ? "Mesh" : "Material", hint,
+			buffer.data(), buffer.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+		text = buffer.data();
+		if (enter || ImGui::IsItemDeactivatedAfterEdit()) apply(text);
+
+		if (ImGui::BeginDragDropTarget()) {
+			// Проверяем тип до Accept: неподходящий файл не подсвечивает поле как цель.
+			const ImGuiPayload* payload = ImGui::GetDragDropPayload();
+			if (payload && payload->IsDataType("GG_RESOURCE_PATH") && payload->DataSize > 1) {
+				const char* bytes = static_cast<const char*>(payload->Data);
+				if (bytes[payload->DataSize - 1] == '\0') {
+					const std::string value(bytes, payload->DataSize - 1);
+					if (value.find('\0') == std::string::npos && supported(value))
+						if (ImGui::AcceptDragDropPayload("GG_RESOURCE_PATH")) apply(value);
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Clear")) apply("");
+		if (!inputError.empty()) ImGui::TextWrapped("%s", inputError.c_str());
+		const auto& loadError = isMesh ? mesh.getMeshError() : mesh.getMaterialError();
+		if (!loadError.empty()) {
+			ImGui::TextWrapped("%s", loadError.c_str());
+			ImGui::TextDisabled("%s", isMesh ? "Using an empty mesh" : "Using the default material");
+		}
+		ImGui::PopID();
+	};
+	drawPath(true, draft.mesh, draft.meshError);
+	// Сбрасываем и применённый путь, и черновик, чтобы поле показало серую подсказку.
+	auto selectPreset = [&](MeshComponent::GeometryPreset preset) {
+		mesh.setGeometryPreset(preset);
+		draft.mesh.clear();
+		draft.appliedMesh.clear();
+		draft.meshError.clear();
+	};
+	if (ImGui::Button("Cube")) selectPreset(MeshComponent::GeometryPreset::Cube);
+	ImGui::SameLine();
+	if (ImGui::Button("Sphere")) selectPreset(MeshComponent::GeometryPreset::Sphere);
+	drawPath(false, draft.material, draft.materialError);
 }
 
 void Editor::ReleaseViewport()
@@ -523,7 +632,7 @@ void Editor::DrawViewport()
 				|| GetForegroundWindow() != game.getWindow().getWindow()) navigating = false;
 			if (auto* movement = GetCameraMovement())
 				movement->enabled = navigating && !ImGui::GetIO().WantTextInput && !ImGuizmo::IsUsing();
-			if (Level* level = game.getLevel()) level->Update(game, game.getTimeManager().get_deltaTime());
+			game.Update();
 			DrawGizmo(origin, size);
 			// Manipulate сначала обновляет состояние gizmo для текущего положения мыши.
 			if (pickRequested && !navigating && !ImGui::IsAnyItemActive()

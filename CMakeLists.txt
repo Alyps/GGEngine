@@ -13,6 +13,23 @@ project ("GGEngine")
 
 include(FetchContent)
 
+# Настройки статической Assimp ограничены областью функции и не меняют другие библиотеки.
+function(add_mesh_importer)
+	set(BUILD_SHARED_LIBS OFF)
+	set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+	set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+	set(ASSIMP_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+	set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+	set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
+	set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+	FetchContent_Declare(assimp
+		GIT_REPOSITORY https://github.com/assimp/assimp.git
+		GIT_TAG v6.0.5
+		GIT_SHALLOW TRUE)
+	FetchContent_MakeAvailable(assimp)
+endfunction()
+add_mesh_importer()
+
 FetchContent_Declare(
 	DirectXTK
 	GIT_REPOSITORY https://github.com/microsoft/DirectXTK.git

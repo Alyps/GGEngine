@@ -8,6 +8,7 @@ Game::Game(std::wstring windowTitle, long clientWidth, long clientHeight)
 	windowContext.inputDevice = inputDevice;
 	renderServer = new RenderServer();
 	renderServer->Init(*window);
+	resourceManager = new ResourceManager();
 	// Ошибка создания Lua не прерывает запуск: скриптовые компоненты сообщат о ней сами.
 	scriptServer = new ScriptServer();
 	scriptServer->Init();
@@ -17,17 +18,49 @@ Game::Game(std::wstring windowTitle, long clientWidth, long clientHeight)
 Game::~Game() noexcept
 {
 	// Уровень освобождается первым: его LuaScriptComponent используют состояние Lua.
-	delete start_level;
+	delete currentLevel;
 	delete scriptServer;
+	delete resourceManager;
 	delete renderServer;
+	// Оконные сообщения больше не должны обращаться к удаляемому вводу.
+	windowContext.inputDevice = nullptr;
 	delete inputDevice;
 	delete window;
 }
 
+bool Game::setStartLevel(Level* level)
+{
+	if (initialized) return false;
+	if (currentLevel == level) return true;
+	if (level && level->owner) return false;
+	delete currentLevel;
+	currentLevel = level;
+	if (currentLevel) currentLevel->owner = this;
+	return true;
+}
+
 void Game::Init()
 {
-	current_level = start_level;
-	InitCurrentLevel();
+	if (initialized) return;
+	initialized = true;
+	if (currentLevel) currentLevel->applyPendingChanges();
+}
+
+void Game::BeginFrame()
+{
+	timeManager.update();
+}
+
+void Game::Update()
+{
+	if (initialized && currentLevel)
+		currentLevel->Update(timeManager.get_deltaTime());
+}
+
+void Game::EndFrame()
+{
+	// Удаляем компоненты только после завершения обходов и отрисовки.
+	if (initialized && currentLevel) currentLevel->applyPendingChanges();
 }
 
 int Game::Run()
@@ -48,28 +81,10 @@ int Game::Run()
 			DispatchMessageW(&message);
 		}
 
-		timeManager.update();
-
-		const auto& fixedTime = timeManager.get_fixedTime();
-
-		// Catch-up: 0, 1 или несколько фиксированных шагов.
-		for (std::uint64_t step = 0;
-			step < fixedTime.get_steps();
-			++step)
-		{
-			// Будущая физика:
-			// physics.Update(fixedTime.get_interval());
-		}
-
-		// Обновляем трансформации до получения матриц камеры рендером.
-		if (current_level)
-			current_level->Update(*this, timeManager.get_deltaTime());
-
-		// Для будущей интерполяции при отрисовке:
-		// const double alpha = fixedTime.get_alpha();
-
+		BeginFrame();
+		Update();
 		renderServer->DrawAll();
-		if (current_level) current_level->applyPendingChanges(*this);
+		EndFrame();
 	}
 }
 
@@ -79,11 +94,6 @@ Level::~Level()
     shuttingDown = true;
     for (GameObject* object : objects) delete object;
     for (GameObject* object : pendingObjects) delete object;
-}
-
-void Level::Init(Game& game)
-{
-    applyPendingChanges(game);
 }
 
 bool Level::addObject(GameObject* obj)
@@ -107,7 +117,7 @@ void Level::destroyObject(GameObject* obj)
     if (obj && obj->owner == this) obj->pendingDestroy = true;
 }
 
-void Level::applyPendingChanges(Game& game)
+void Level::applyPendingChanges()
 {
     // Запросы, поступившие во время очистки и Init, ждут следующего кадра.
     std::vector<GameObject*> additions;
@@ -118,7 +128,7 @@ void Level::applyPendingChanges(Game& game)
             it = objects.erase(it);
             delete object;
         } else {
-            object->applyPendingChanges(game);
+            object->applyPendingChanges();
             ++it;
         }
     }
@@ -128,13 +138,13 @@ void Level::applyPendingChanges(Game& game)
             objects.erase(std::find(objects.begin(), objects.end(), object));
             delete object;
         } else {
-            object->Init(game);
+            object->applyPendingChanges();
         }
     }
 }
 
-void Level::Update(Game& game, double deltaTime)
+void Level::Update(double deltaTime)
 {
     for (GameObject* object : objects)
-        if (!object->pendingDestroy) object->Update(game, deltaTime);
+        if (!object->pendingDestroy) object->Update(deltaTime);
 }

@@ -74,6 +74,18 @@ public:
 
 };
 
+// Менеджер владеет ресурсом, ресурс — CPU-геометрией; компоненты только заимствуют её.
+class MeshResource final : public Resource {
+friend class ResourceManager;
+private:
+	MeshData<NormalVertexType> meshData;
+	MeshResource() = default;
+	bool load(const std::string& path) override;
+public:
+	const MeshData<NormalVertexType>& GetMeshData() const { return meshData; }
+	static bool SupportsExtension(const std::string& extension);
+};
+
 // Описание не содержит DX11-объектов; пустой diffuse записывается как null.
 // Пути UTF-8; diffuse задаётся относительно корня ресурсов будущего проекта.
 struct MaterialData {

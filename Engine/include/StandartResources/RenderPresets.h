@@ -26,11 +26,11 @@ namespace RenderItemPresets {
 
 	// Заполненные меши используют Phong и Opaque; нормали и обход направлены наружу.
 	// Вызывающий код владеет item, mesh, material, shader и state; при ошибке nullptr.
-	RenderItem* CreateSimple(ID3D11Device* device, MeshData<NormalVertexType> meshData, bool is_wire_frame = false);
+	RenderItem* CreateSimple(ID3D11Device* device, const MeshData<NormalVertexType>& meshData, bool is_wire_frame = false);
 
 	// Читает Default.material.json; режим рендера задаётся в файле материала.
 	// Вызывающий код владеет item и mesh, менеджер — материалом и его зависимостями.
 	// Менеджер должен жить дольше item и использоваться с одним DX11-устройством.
-	RenderItem* ImportPreset(ID3D11Device* device, MeshData<NormalVertexType> meshData,
+	RenderItem* ImportPreset(ID3D11Device* device, const MeshData<NormalVertexType>& meshData,
 		ResourceManager& resources);
 }

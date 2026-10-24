@@ -76,6 +76,8 @@ public:
 	
 	InputDevice(const DisplayWindow32& window);
 	~InputDevice();
+	InputDevice(const InputDevice&) = delete;
+	InputDevice& operator=(const InputDevice&) = delete;
 
 
 	void AddPressedKey(Keys key);

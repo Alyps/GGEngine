@@ -16,7 +16,6 @@ private:
 	std::vector<Component*> components;
 	std::vector<Component*> pendingComponents;
 	Level* owner = nullptr;
-	Game* ownerGame = nullptr;
 	bool pendingDestroy = false;
 
 public:
@@ -36,11 +35,13 @@ public:
 		return component;
 	}
 	void destroyComponent(Component* component);
-	void applyPendingChanges(Game& game);
+	Level* getOwner() const { return owner; }
+	Game* getGame() const;
 	bool isPendingDestroy() const { return pendingDestroy; }
-	void Init(Game& game);
-	void Update(Game& game, double deltaTime);
 	TransformNode& getTransform() { return transformTree;  }
 	// Заимствованный список для инспектора и Lua; компоненты принадлежат объекту.
 	const std::vector<Component*>& getComponents() const { return components; }
+private:
+	void applyPendingChanges();
+	void Update(double deltaTime);
 };

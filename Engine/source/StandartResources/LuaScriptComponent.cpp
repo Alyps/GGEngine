@@ -18,13 +18,6 @@ LuaScriptComponent::~LuaScriptComponent()
     delete impl;
 }
 
-void LuaScriptComponent::bind_to_object(GameObject* object)
-{
-    ownerObject = object;
-    // Узел принадлежит объекту; компонент использует его так же, как остальные.
-    bind_to_node(object ? &object->getTransform() : nullptr);
-}
-
 void LuaScriptComponent::Init(Game& game)
 {
     // Повторная инициализация начинает с чистого экземпляра.
@@ -68,8 +61,11 @@ void LuaScriptComponent::Init(Game& game)
     meta[sol::meta_function::index] = module;
     impl->instance[sol::metatable_key] = meta;
 
-    // Объект и узел передаются указателями без владения; без привязки поля остаются nil.
-    if (ownerObject) impl->instance["object"] = ownerObject;
+    // Владелец берётся из Component; явно выбранную ветку сохраняем.
+    if (GameObject* object = getOwner()) {
+        impl->instance["object"] = object;
+        if (!transformNode) bind_to_node(&object->getTransform());
+    }
     if (transformNode) impl->instance["transform"] = transformNode;
 
     // Функции берём один раз: покадровый вызов не ищет их по имени.

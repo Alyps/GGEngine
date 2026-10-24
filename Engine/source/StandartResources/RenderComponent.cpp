@@ -15,6 +15,11 @@ void RenderComponent::Shutdown(Game& game)
 
 RenderComponent::~RenderComponent()
 {
+    releaseRenderItem();
+}
+
+void RenderComponent::releaseRenderItem()
+{
     if (!renderItem) return;
     // Кешированные материалы не освобождаем вместе с компонентом.
     if (ownsMaterial && renderItem->material) {
@@ -24,4 +29,6 @@ RenderComponent::~RenderComponent()
     }
     delete renderItem->mesh;
     delete renderItem;
+    renderItem = nullptr;
+    ownsMaterial = false;
 }

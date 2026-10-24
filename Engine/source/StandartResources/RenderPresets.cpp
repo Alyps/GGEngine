@@ -121,7 +121,7 @@ namespace MeshPresets {
 
 namespace RenderItemPresets {
 
-	RenderItem* ImportPreset(ID3D11Device* device, MeshData<NormalVertexType> meshData,
+	RenderItem* ImportPreset(ID3D11Device* device, const MeshData<NormalVertexType>& meshData,
 		ResourceManager& resources)
 	{
 		auto mesh = Mesh::Create(device, meshData);
@@ -143,7 +143,7 @@ namespace RenderItemPresets {
 		return item;
 	}
 
-	RenderItem* CreateSimple(ID3D11Device* device, MeshData<NormalVertexType> meshData, bool is_wire_frame)
+	RenderItem* CreateSimple(ID3D11Device* device, const MeshData<NormalVertexType>& meshData, bool is_wire_frame)
 	{
 		if (!device)
 			return nullptr;

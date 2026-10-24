@@ -7,11 +7,14 @@
 #include "InputDevice.h"
 #include "Object.h"
 #include "ScriptServer.h"
+#include "ResourceManager.h"
 
 class Game;
 
 class Level {
+friend class Game;
 private:
+	Game* owner = nullptr;
 	std::vector<GameObject*> objects;
 	std::vector<GameObject*> pendingObjects;
 	bool shuttingDown = false;
@@ -22,24 +25,24 @@ public:
 	~Level();
 	Level(const Level&) = delete;
 	Level& operator=(const Level&) = delete;
-	void Init(Game& game);
-	void Update(Game& game, double deltaTime);
+	Game* getOwner() const { return owner; }
 
 	// При успехе уровень принимает владение объектом, созданным через new.
 	bool addObject(GameObject* obj);
 	GameObject* createObject();
 	void destroyObject(GameObject* obj);
-	void applyPendingChanges(Game& game);
 	// Уровень владеет объектами; редактор не меняет список напрямую.
 	const std::vector<GameObject*>& getObjects() const { return objects; }
+private:
+	// Только владелец запускает жизненный цикл уровня.
+	void Update(double deltaTime);
+	void applyPendingChanges();
 };
 
-// Owns application systems. Gameplay belongs to a separate GameInstance.
+// Владеет уровнем и системами, которые обслуживают его компоненты.
 class Game {
 public:
-	// On success, all systems are ready; initialization failures throw.
 	explicit Game(std::wstring windowTitle, long clientWidth = 1280, long clientHeight = 720);
-	// Define in core.cpp after including InputDevice.h.
 	~Game() noexcept;
 
 	Game(const Game&) = delete;
@@ -59,38 +62,39 @@ public:
 	ScriptServer& getScriptServer() noexcept { return *scriptServer; }
 	const ScriptServer& getScriptServer() const noexcept { return *scriptServer; }
 
+	ResourceManager& getResourceManager() noexcept { return *resourceManager; }
+	const ResourceManager& getResourceManager() const noexcept { return *resourceManager; }
+
 	TimeManager& getTimeManager() noexcept { return timeManager; }
 	const TimeManager& getTimeManager() const noexcept { return timeManager; }
 
-	// Game принимает владение стартовым уровнем до Init.
-	void setStartLevel(Level* level) {
-		if (current_level || start_level == level) return;
-		delete start_level;
-		start_level = level;
-	}
-	Level* getLevel() { return current_level; }
+	// При успехе принимает владение уровнем; при отказе владелец не меняется.
+	bool setStartLevel(Level* level);
+	Level* getLevel() { return initialized ? currentLevel : nullptr; }
 
 	void Init();
 	int Run();
 
-	void InitCurrentLevel() { if (current_level) current_level->Init(*this); else std::cout << "No current level to initialize." << std::endl; }
+	// Общие этапы кадра для приложения игры и редактора.
+	void BeginFrame();
+	void Update();
+	void EndFrame();
 
 private:
 
-	Level* start_level = nullptr;
-	Level* current_level = nullptr;
+	Level* currentLevel = nullptr;
+	bool initialized = false;
 
 	// Its address is stored in HWND; keep it alive through window destruction.
 	WindowMessageContext windowContext{};
 	TimeManager timeManager;
 
-	// Owning pointers: allocate and release explicitly in core.cpp.
-	// Clean up partially created systems if construction throws.
-	// Before destroying inputDevice, disconnect it from windowContext.
+	// Владеющие указатели: освобождаются после уровня в core.cpp.
 	DisplayWindow32* window = nullptr;
 	InputDevice* inputDevice = nullptr;
 	RenderServer* renderServer = nullptr;
-	// Уничтожается первым: скриптовые компоненты держат ссылки в его состоянии Lua.
+	ResourceManager* resourceManager = nullptr;
+	// Состояние Lua живёт до освобождения всех компонентов уровня.
 	ScriptServer* scriptServer = nullptr;
 
 

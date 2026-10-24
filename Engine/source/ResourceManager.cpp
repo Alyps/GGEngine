@@ -3,6 +3,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <assimp/Importer.hpp>
+#include <assimp/config.h>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
 #include <rapidjson/prettywriter.h>
@@ -92,6 +96,68 @@ namespace {
 	}
 
 } // namespace
+
+bool MeshResource::SupportsExtension(const std::string& extension)
+{
+	Assimp::Importer importer;
+	return !extension.empty() && importer.IsExtensionSupported(extension);
+}
+
+bool MeshResource::load(const std::string& path)
+{
+	std::wstring wide;
+	if (!WidePath(path, wide, loadError)) return false;
+	// Importer владеет временной сценой и освобождает её после копирования геометрии.
+	Assimp::Importer importer;
+	// Отдельная обработка экземпляров корректирует обход граней при зеркальном масштабе.
+	importer.SetPropertyBool(AI_CONFIG_PP_PTV_KEEP_HIERARCHY, true);
+	const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate |
+		aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices |
+		aiProcess_ValidateDataStructure | aiProcess_PreTransformVertices);
+	if (!scene) return Fail(loadError, importer.GetErrorString());
+	if (!scene->HasMeshes()) return Fail(loadError, "Model contains no meshes");
+
+	// PreTransformVertices запекает трансформации узлов; сохраняем правую систему и CCW.
+	MeshData<NormalVertexType> loaded;
+	constexpr size_t maxBytes = (std::numeric_limits<UINT>::max)();
+	for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
+		const aiMesh& mesh = *scene->mMeshes[i];
+		if (!mesh.HasPositions() || !mesh.HasNormals())
+			return Fail(loadError, "Mesh has no positions or normals");
+		// Ограничения DX11 проверяем до выделения массивов и сужения индексов.
+		if (mesh.mNumVertices > maxBytes / sizeof(NormalVertexType::Vertex) - loaded.vertices.size() ||
+			mesh.mNumFaces > (maxBytes / sizeof(uint32_t) - loaded.indices.size()) / 3)
+			return Fail(loadError, "Mesh exceeds DX11 buffer size limits");
+		const auto offset = static_cast<uint32_t>(loaded.vertices.size());
+		loaded.vertices.reserve(loaded.vertices.size() + mesh.mNumVertices);
+		loaded.indices.reserve(loaded.indices.size() + size_t(mesh.mNumFaces) * 3);
+		for (unsigned int v = 0; v < mesh.mNumVertices; ++v) {
+			const aiVector3D& p = mesh.mVertices[v];
+			aiVector3D n = mesh.mNormals[v];
+			const aiColor4D c = mesh.HasVertexColors(0) ? mesh.mColors[0][v] : aiColor4D(1, 1, 1, 1);
+			// Неконечные координаты не должны попадать в GPU, picking и границы выбора.
+			if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
+				!std::isfinite(n.x) || !std::isfinite(n.y) || !std::isfinite(n.z) ||
+				!std::isfinite(c.r) || !std::isfinite(c.g) || !std::isfinite(c.b) || !std::isfinite(c.a))
+				return Fail(loadError, "Mesh contains non-finite vertex data");
+			n.NormalizeSafe();
+			loaded.vertices.push_back(NormalVertexType::make({ p.x, p.y, p.z },
+				{ n.x, n.y, n.z }, { c.r, c.g, c.b, c.a }));
+		}
+		for (unsigned int f = 0; f < mesh.mNumFaces; ++f) {
+			const aiFace& face = mesh.mFaces[f];
+			if (face.mNumIndices != 3) return Fail(loadError, "Only triangle meshes are supported");
+			for (unsigned int j = 0; j < 3; ++j) {
+				if (face.mIndices[j] >= mesh.mNumVertices) return Fail(loadError, "Invalid mesh index");
+				loaded.indices.push_back(offset + face.mIndices[j]);
+			}
+		}
+	}
+	// Частично загруженная геометрия не становится доступной компонентам.
+	if (!loaded.IsValid()) return Fail(loadError, "Model contains no valid triangle geometry");
+	meshData = std::move(loaded);
+	return true;
+}
 
 bool MaterialData::Validate(std::string& error) const
 {

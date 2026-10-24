@@ -2,11 +2,13 @@
 #include <core.h>
 #include "imgui.h"
 #include "ImGuizmo.h"
+#include "ContentBrowser.h"
+#include <unordered_map>
 
 // Game и сцена живут дольше редактора; редактор владеет только UI и viewport.
 class Editor {
 public:
-	explicit Editor(Game& game);
+	explicit Editor(Game& game, const std::string& resourceRoot);
 	~Editor();
 	Editor(const Editor&) = delete;
 	Editor& operator=(const Editor&) = delete;
@@ -17,7 +19,7 @@ private:
 	static LRESULT CALLBACK HandleMessage(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 	void DrawDockspace();
 	void DrawHierarchy();
-	enum class ObjectType { None, Empty, Cube, Sphere, Plane, DirectionalLight, PointLight };
+	enum class ObjectType { None, Empty, Cube, Sphere, Plane, DirectionalLight, PointLight, Mesh };
 	void DrawCreateMenu();
 	void ApplySceneActions();
 	bool CanDeleteObject(GameObject* object) const;
@@ -26,6 +28,14 @@ private:
 	std::string sceneActionError;
 	void DrawTransformTree(TransformNode& node, int index);
 	void DrawInspector();
+	void DrawMeshInspector(MeshComponent& mesh);
+	// Черновики ввода принадлежат UI; компонент получает только подтверждённые пути.
+    struct MeshPathDraft {
+        std::string mesh, material;
+        std::string appliedMesh, appliedMaterial;
+        std::string meshError, materialError;
+    };
+    std::unordered_map<MeshComponent*, MeshPathDraft> meshPathDrafts;
 	void DrawViewport();
 	void PickObject(const ImVec2& origin, const ImVec2& size);
 	void DrawSelectionBounds(const ImVec2& origin, const ImVec2& size);
@@ -56,6 +66,8 @@ private:
 	bool editingGizmo = false;
 
 	Game& game;
+	ContentBrowser contentBrowser;
+	bool showContentBrowser = true;
 	ImGuiContext* ui = nullptr;
 	WNDPROC previousProcedure = nullptr;
 	bool platformReady = false;

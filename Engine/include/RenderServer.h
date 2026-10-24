@@ -527,6 +527,10 @@ static_assert(sizeof(GPULightData) == 64);
 
 class RenderServer {
 public:
+	RenderServer() = default;
+	// Регистрации компонентов относятся только к одному экземпляру сервера.
+	RenderServer(const RenderServer&) = delete;
+	RenderServer& operator=(const RenderServer&) = delete;
 	static constexpr uint32_t MaxLights = 16;
 private:
 	std::vector<LightItem*> lights;
