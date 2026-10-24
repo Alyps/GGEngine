@@ -41,6 +41,6 @@ public:
 	void Init(Game& game);
 	void Update(Game& game, double deltaTime);
 	TransformNode& getTransform() { return transformTree;  }
-	// Заимствованный список для инспектора; компоненты принадлежат объекту.
+	// Заимствованный список для инспектора и Lua; компоненты принадлежат объекту.
 	const std::vector<Component*>& getComponents() const { return components; }
 };
