@@ -154,6 +154,8 @@ int Editor::Run()
 			return 1;
 		}
 		game.BeginFrame();
+		// Физика работает также при скрытом viewport.
+		if (!game.StepPhysics()) return 1;
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();

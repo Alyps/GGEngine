@@ -8,10 +8,42 @@ if (POLICY CMP0141)
 endif()
 
 
+# PhysX задаёт CRT через MSVC_RUNTIME_LIBRARY; политика включается до project.
+if(POLICY CMP0091)
+	cmake_policy(SET CMP0091 NEW)
+endif()
 project ("GGEngine")
 
 
 include(FetchContent)
+
+# PhysX собираем из исходников; его настройки не затрагивают остальные зависимости.
+function(add_physics)
+	if(POLICY CMP0135)
+		cmake_policy(SET CMP0135 NEW)
+	endif()
+	FetchContent_Declare(physx
+		URL https://github.com/NVIDIA-Omniverse/PhysX/archive/refs/tags/106.4-physx-5.5.0.tar.gz
+		SOURCE_SUBDIR nonexistent)
+	# Сначала получаем исходники, чтобы передать SDK абсолютный корень.
+	FetchContent_MakeAvailable(physx)
+	set(PHYSX_ROOT_DIR "${physx_SOURCE_DIR}/physx")
+	list(APPEND CMAKE_MODULE_PATH "${PHYSX_ROOT_DIR}/source/compiler/cmake/modules")
+	set(TARGET_BUILD_PLATFORM windows)
+	set(PX_GENERATE_STATIC_LIBRARIES ON CACHE BOOL "" FORCE)
+	# Используем тот же динамический CRT, что и движок, включая Debug.
+	set(NV_USE_STATIC_WINCRT OFF CACHE BOOL "" FORCE)
+	set(NV_USE_DEBUG_WINCRT ON CACHE BOOL "" FORCE)
+	set(PX_GENERATE_GPU_PROJECTS OFF)
+	set(PX_COPY_EXTERNAL_DLL OFF CACHE BOOL "" FORCE)
+	set(PUBLIC_RELEASE OFF)
+	set(PX_OUTPUT_LIB_DIR "${physx_BINARY_DIR}")
+	set(PX_OUTPUT_BIN_DIR "${physx_BINARY_DIR}")
+	set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT ProgramDatabase)
+	# Подключаем только SDK, без оболочки с примерами и копированием GPU DLL.
+	add_subdirectory("${PHYSX_ROOT_DIR}/source/compiler/cmake" "${physx_BINARY_DIR}" EXCLUDE_FROM_ALL)
+endfunction()
+add_physics()
 
 # Настройки статической Assimp ограничены областью функции и не меняют другие библиотеки.
 function(add_mesh_importer)

@@ -8,3 +8,4 @@
 #include "StandartResources/CameraMovementComponent.h"
 #include "StandartResources/LightComponent.h"
 #include "StandartResources/LuaScriptComponent.h"
+#include "StandartResources/PhysicsComponents.h"

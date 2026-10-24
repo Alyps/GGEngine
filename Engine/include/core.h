@@ -8,6 +8,7 @@
 #include "Object.h"
 #include "ScriptServer.h"
 #include "ResourceManager.h"
+#include "PhysicsServer.h"
 
 class Game;
 
@@ -65,6 +66,11 @@ public:
 	ResourceManager& getResourceManager() noexcept { return *resourceManager; }
 	const ResourceManager& getResourceManager() const noexcept { return *resourceManager; }
 
+	PhysicsServer& getPhysicsServer() noexcept { return physicsServer; }
+	const PhysicsServer& getPhysicsServer() const noexcept { return physicsServer; }
+	// Оба приложения выполняют физику после BeginFrame и до Update.
+	bool StepPhysics();
+
 	TimeManager& getTimeManager() noexcept { return timeManager; }
 	const TimeManager& getTimeManager() const noexcept { return timeManager; }
 
@@ -88,6 +94,7 @@ private:
 	// Its address is stored in HWND; keep it alive through window destruction.
 	WindowMessageContext windowContext{};
 	TimeManager timeManager;
+	PhysicsServer physicsServer;
 
 	// Владеющие указатели: освобождаются после уровня в core.cpp.
 	DisplayWindow32* window = nullptr;

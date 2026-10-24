@@ -1,6 +1,11 @@
 
 add_library(Engine STATIC "start.cpp")
 target_link_libraries(Engine PUBLIC DirectXTK DirectXTex)
+target_link_libraries(Engine PRIVATE PhysXExtensions)
+target_sources(Engine PRIVATE
+    "source/PhysicsServer.cpp"
+    "source/StandartResources/PhysicsComponents.cpp"
+)
 target_include_directories(Engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(Engine SYSTEM PRIVATE "${rapidjson_SOURCE_DIR}/include")
 # Lua и sol2 используются только в .cpp движка и не попадают в публичные заголовки.

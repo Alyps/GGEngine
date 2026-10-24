@@ -19,6 +19,7 @@ Game::~Game() noexcept
 {
 	// Уровень освобождается первым: его LuaScriptComponent используют состояние Lua.
 	delete currentLevel;
+	physicsServer.Shutdown();
 	delete scriptServer;
 	delete resourceManager;
 	delete renderServer;
@@ -82,12 +83,23 @@ int Game::Run()
 		}
 
 		BeginFrame();
+		if (!StepPhysics()) return 1;
 		Update();
 		renderServer->DrawAll();
 		EndFrame();
 	}
 }
 
+
+bool Game::StepPhysics()
+{
+	if (!physicsServer.getLastError().empty()) return false;
+	const auto& fixed = timeManager.get_fixedTime();
+	// TimeManager задаёт число шагов, отдельный аккумулятор не нужен.
+	for (std::uint64_t step = 0; step < fixed.get_steps(); ++step)
+		if (!physicsServer.Update(fixed.get_interval())) return false;
+	return true;
+}
 
 Level::~Level()
 {
