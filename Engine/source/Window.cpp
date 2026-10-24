@@ -24,6 +24,13 @@ LRESULT DisplayWindow32::HandleMessage(HWND hwnd, UINT umessage, WPARAM wparam, 
 
 	switch (umessage)
 	{
+	case WM_KILLFOCUS:
+		// Отпускание кнопок вне окна может не прийти через Raw Input.
+		if (context->inputDevice) {
+			context->inputDevice->keys->clear();
+			context->inputDevice->MouseOffset = DirectX::SimpleMath::Vector2::Zero;
+		}
+		return 0;
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		return 0;

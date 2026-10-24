@@ -2,10 +2,12 @@
 
 #include "RenderServer.h"
 
+class ResourceManager;
+
 namespace MeshPresets {
 
 	// Все фигуры центрированы в (0, 0, 0), используют нормали и белый цвет.
-	// Размеры должны быть конечными и положительными, иначе std::invalid_argument.
+	// Размеры должны быть конечными и положительными, иначе возвращается пустой меш.
 	// Пример: auto mesh = Mesh::Create(device, MeshPresets::CreateQuad(2.0f, 3.0f));
 
 	// Прямоугольник в плоскости XY, лицевая сторона направлена по +Z.
@@ -22,6 +24,13 @@ namespace MeshPresets {
 
 namespace RenderItemPresets {
 
-	// Caller owns the item, mesh, material, shader and state. Returns nullptr on creation failure.
+	// Заполненные меши используют Phong и Opaque; нормали и обход направлены наружу.
+	// Вызывающий код владеет item, mesh, material, shader и state; при ошибке nullptr.
 	RenderItem* CreateSimple(ID3D11Device* device, MeshData<NormalVertexType> meshData, bool is_wire_frame = false);
+
+	// Читает Default.material.json; режим рендера задаётся в файле материала.
+	// Вызывающий код владеет item и mesh, менеджер — материалом и его зависимостями.
+	// Менеджер должен жить дольше item и использоваться с одним DX11-устройством.
+	RenderItem* ImportPreset(ID3D11Device* device, MeshData<NormalVertexType> meshData,
+		ResourceManager& resources);
 }

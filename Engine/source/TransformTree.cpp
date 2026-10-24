@@ -2,21 +2,6 @@
 
 #include <algorithm>
 
-TransformBinding::~TransformBinding() { bind_to_node(nullptr); }
-
-void TransformBinding::bind_to_node(TransformNode* node) {
-    if (node == transformNode) return;
-    OnTransformDetached();
-    if (previousBinding) previousBinding->nextBinding = nextBinding;
-    else if (transformNode) transformNode->bindings = nextBinding;
-    if (nextBinding) nextBinding->previousBinding = previousBinding;
-    transformNode = node;
-    previousBinding = nullptr;
-    nextBinding = node ? node->bindings : nullptr;
-    if (nextBinding) nextBinding->previousBinding = this;
-    if (node) node->bindings = this;
-}
-
 TransformNode::TransformNode() = default;
 
 TransformNode::TransformNode(const DXVector3& pos,
@@ -172,7 +157,6 @@ DirectX::XMFLOAT4X4 TransformNode::worldMatrix() const {
 }
 
 TransformNode::~TransformNode() {
-    while (bindings) bindings->bind_to_node(nullptr);
     for (TransformNode* child : children) {
         child->parent = nullptr;
         delete child;

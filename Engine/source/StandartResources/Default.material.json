@@ -1,0 +1,9 @@
+{
+    "version": 1,
+    "shader": "builtin/simple",
+    "render_state": "opaque",
+    "sampler": "wrap_linear",
+    "diffuse": null,
+    "specular_strength": 0.5,
+    "shininess": 32.0
+}

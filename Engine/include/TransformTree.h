@@ -3,28 +3,8 @@
 #include <vector>
 #include <algorithm>
 
-struct TransformNode;
-
-// Intrusive, non-owning binding. Either endpoint can be destroyed first.
-class TransformBinding {
-    friend struct TransformNode;
-    TransformBinding* nextBinding = nullptr;
-    TransformBinding* previousBinding = nullptr;
-protected:
-    TransformNode* transformNode = nullptr;
-    virtual void OnTransformDetached() {}
-public:
-    TransformBinding() = default;
-    TransformBinding(const TransformBinding&) = delete;
-    TransformBinding& operator=(const TransformBinding&) = delete;
-    virtual ~TransformBinding();
-    void bind_to_node(TransformNode* node);
-};
-
 struct TransformNode {
 private:
-    friend class TransformBinding;
-    TransformBinding* bindings = nullptr;
 	DXVector3 position = DXVector3::Zero;
 	bool inherit_position = true;
 

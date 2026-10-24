@@ -1,22 +1,11 @@
 #pragma once
 #include "core.h"
-#include "Physics/PhysicsComponents.h"
-#include "PhysicsTestView.h"
+#include "StandartResources/PhysicsComponents.h"
 
-// Level/GameObject keep non-owning pointers. Declaration order keeps all referents alive.
+// Game владеет уровнем; объекты и компоненты создаются через create.
 class PhysicsTestScene {
     Game game;
-    GameObject floor;
-    GameObject cube;
-    GameObject marker;
-    PhysicsTestBoxComponent floorMesh;
-    PhysicsTestBoxComponent cubeMesh;
-    PhysicsTestBoxComponent markerMesh;
-    BoxColliderComponent floorCollider;
-    BoxColliderComponent cubeCollider;
-    StaticRigidBodyComponent floorBody;
-    DynamicRigidBodyComponent cubeBody;
-    Level level;
+    bool ready = false;
 public:
     PhysicsTestScene();
     int Run();

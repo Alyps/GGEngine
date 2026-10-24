@@ -73,7 +73,9 @@ void InputDevice::OnMouseMove(RawMouseEventArgs args)
 	ScreenToClient(window->getWindow(), &p);
 	
 	MousePosition	= Vector2(p.x, p.y);
-	MouseOffset		= Vector2(args.X, args.Y);
+	// Абсолютные координаты планшета нельзя трактовать как смещение мыши.
+	MouseOffset = (args.Mode & MOUSE_MOVE_ABSOLUTE) ? Vector2::Zero
+		: Vector2(static_cast<float>(args.X), static_cast<float>(args.Y));
 	MouseWheelDelta = args.WheelDelta;
 
 	const MouseMoveEventArgs moveArgs = {MousePosition, MouseOffset, MouseWheelDelta};

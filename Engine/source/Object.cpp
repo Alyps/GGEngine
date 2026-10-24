@@ -1,11 +1,68 @@
 #include "Object.h"
-#include "Components.h"
 #include "core.h"
+
+GameObject::~GameObject()
+{
+    pendingDestroy = true;
+    // Сначала компоненты: их Shutdown ещё может использовать Transform.
+    for (Component* component : components) {
+        if (component->initialized) component->Shutdown(*ownerGame);
+        delete component;
+    }
+    for (Component* component : pendingComponents) delete component;
+}
+
+bool GameObject::addComponent(Component& component)
+{
+    if (pendingDestroy || component.owner) return false;
+    component.owner = this;
+    pendingComponents.push_back(&component);
+    return true;
+}
+
+void GameObject::destroyComponent(Component* component)
+{
+    if (component && component->owner == this) component->pendingDestroy = true;
+}
+
+void GameObject::applyPendingChanges(Game& game)
+{
+    ownerGame = &game;
+    // Новые запросы из Init/Shutdown остаются в очереди до следующего кадра.
+    std::vector<Component*> additions;
+    additions.swap(pendingComponents);
+    for (auto it = components.begin(); it != components.end();) {
+        Component* component = *it;
+        if (!component->pendingDestroy) { ++it; continue; }
+        it = components.erase(it);
+        if (component->initialized) component->Shutdown(game);
+        delete component;
+    }
+    // Сначала переносим весь пакет, чтобы Init не менял текущую очередь.
+    const size_t first = components.size();
+    components.insert(components.end(), additions.begin(), additions.end());
+    for (size_t i = first; i < components.size();) {
+        Component* component = components[i];
+        if (pendingDestroy || component->pendingDestroy) {
+            components.erase(components.begin() + i);
+            delete component;
+            continue;
+        }
+        component->initialized = true;
+        component->Init(game);
+        ++i;
+    }
+}
+
+void GameObject::Update(Game& game, double deltaTime)
+{
+    for (Component* component : components) {
+        if (pendingDestroy) break;
+        if (!component->pendingDestroy) component->Update(game, deltaTime);
+    }
+}
 
 void GameObject::Init(Game& game)
 {
-	for (Component* comp : components)
-	{
-		comp->Init(game);
-	}
+    applyPendingChanges(game);
 }

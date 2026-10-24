@@ -6,19 +6,33 @@
 #include "GGTime.h"
 #include "InputDevice.h"
 #include "Object.h"
-#include "Physics/PhysicsWorld.h"
+#include "ScriptServer.h"
+#include "PhysicsServer.h"
 
 class Game;
 
 class Level {
 private:
 	std::vector<GameObject*> objects;
+	std::vector<GameObject*> pendingObjects;
+	bool shuttingDown = false;
 
 
 public:
+	Level() = default;
+	~Level();
+	Level(const Level&) = delete;
+	Level& operator=(const Level&) = delete;
 	void Init(Game& game);
+	void Update(Game& game, double deltaTime);
 
-	void addObject(GameObject* obj);
+	// При успехе уровень принимает владение объектом, созданным через new.
+	bool addObject(GameObject* obj);
+	GameObject* createObject();
+	void destroyObject(GameObject* obj);
+	void applyPendingChanges(Game& game);
+	// Уровень владеет объектами; редактор не меняет список напрямую.
+	const std::vector<GameObject*>& getObjects() const { return objects; }
 };
 
 // Owns application systems. Gameplay belongs to a separate GameInstance.
@@ -43,15 +57,23 @@ public:
 	RenderServer& getRenderServer() noexcept { return *renderServer; }
 	const RenderServer& getRenderServer() const noexcept { return *renderServer; }
 
+	ScriptServer& getScriptServer() noexcept { return *scriptServer; }
+	const ScriptServer& getScriptServer() const noexcept { return *scriptServer; }
+
+	PhysicsServer& getPhysicsServer() noexcept { return physicsServer; }
+	const PhysicsServer& getPhysicsServer() const noexcept { return physicsServer; }
+	// Оба цикла приложения используют уже рассчитанные шаги TimeManager.
+	bool StepPhysics();
+
 	TimeManager& getTimeManager() noexcept { return timeManager; }
 	const TimeManager& getTimeManager() const noexcept { return timeManager; }
 
-	PhysicsWorld& getPhysicsWorld() noexcept { return physicsWorld; }
-	void reportInitializationFailure() noexcept { initializationFailed = true; }
-	void registerRenderComponent(RenderComponent& component);
-	void unregisterRenderComponent(RenderComponent& component);
-
-	void setStartLevel(Level* level) { start_level = level; }
+	// Game принимает владение стартовым уровнем до Init.
+	void setStartLevel(Level* level) {
+		if (current_level || start_level == level) return;
+		delete start_level;
+		start_level = level;
+	}
 	Level* getLevel() { return current_level; }
 
 	void Init();
@@ -67,9 +89,7 @@ private:
 	// Its address is stored in HWND; keep it alive through window destruction.
 	WindowMessageContext windowContext{};
 	TimeManager timeManager;
-	PhysicsWorld physicsWorld;
-	RenderComponent* renderComponents = nullptr;
-	bool initializationFailed = false;
+	PhysicsServer physicsServer;
 
 	// Owning pointers: allocate and release explicitly in core.cpp.
 	// Clean up partially created systems if construction throws.
@@ -77,12 +97,10 @@ private:
 	DisplayWindow32* window = nullptr;
 	InputDevice* inputDevice = nullptr;
 	RenderServer* renderServer = nullptr;
+	// Уничтожается первым: скриптовые компоненты держат ссылки в его состоянии Lua.
+	ScriptServer* scriptServer = nullptr;
 
 
 
 
 };
-
-
-
-

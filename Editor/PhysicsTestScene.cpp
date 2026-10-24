@@ -1,49 +1,57 @@
 #include "PhysicsTestScene.h"
+#include "PhysicsTestView.h"
+#include "Editor.h"
 
 PhysicsTestScene::PhysicsTestScene()
-    : game(L"PhysicsTestScene - 3D falling cube"),
-      floorMesh(DXColor(0.40f, 0.53f, 0.68f)),
-      cubeMesh(DXColor(1.0f, 0.52f, 0.12f)),
-      markerMesh(DXColor(0.15f, 0.85f, 0.85f)),
-      floorCollider(DXVector3::One), cubeCollider(DXVector3::One),
-      floorBody(floorCollider), cubeBody(cubeCollider, 2.0f)
+    : game(L"PhysicsTestScene - PhysX system")
 {
-    floor.fetTransform().set_position({0, -0.2f, 0});
-    floor.fetTransform().set_scale({8, 0.4f, 8});
-    cube.fetTransform().set_position({-1, 5, 0});
-    cube.fetTransform().set_rotation(DXQuaternion::CreateFromAxisAngle(DXVector3::UnitY, 0.45f));
-    marker.fetTransform().set_position({2, 1, -1});
-    marker.fetTransform().set_scale({0.7f, 0.7f, 0.7f});
-    marker.fetTransform().set_rotation(DXQuaternion::CreateFromAxisAngle(DXVector3::UnitY, -0.4f));
+    auto* level = new (std::nothrow) Level;
+    if (!level) return;
+    game.setStartLevel(level);
 
-    const auto& window = game.getWindow();
-    const DXMatrix viewProjection = PhysicsTestViewProjection(
-        static_cast<float>(window.getWidth()) / static_cast<float>(window.getHeight()));
-    floorMesh.SetViewProjection(viewProjection);
-    cubeMesh.SetViewProjection(viewProjection);
-    markerMesh.SetViewProjection(viewProjection);
+    auto* floor = level->createObject();
+    auto* cube = level->createObject();
+    auto* marker = level->createObject();
+    if (!floor || !cube || !marker) return;
+    // Коллайдеры задаются отдельно от видимой геометрии.
+    floor->getTransform().set_position({0, -0.2f, 0});
+    floor->getTransform().set_scale({8, 0.4f, 8});
+    cube->getTransform().set_position({-1, 5, 0});
+    cube->getTransform().set_rotation(DXQuaternion::CreateFromAxisAngle(DXVector3::UnitY, 0.45f));
+    marker->getTransform().set_position({2, 1, -1});
+    marker->getTransform().set_scale({0.7f, 0.7f, 0.7f});
 
-    floorMesh.bind_to_node(&floor.fetTransform());
-    cubeMesh.bind_to_node(&cube.fetTransform());
-    markerMesh.bind_to_node(&marker.fetTransform());
-    floorBody.bind_to_node(&floor.fetTransform());
-    cubeBody.bind_to_node(&cube.fetTransform());
-    floor.addComponent(floorMesh);
-    floor.addComponent(floorCollider);
-    floor.addComponent(floorBody);
-    cube.addComponent(cubeMesh);
-    cube.addComponent(cubeCollider);
-    cube.addComponent(cubeBody);
-    marker.addComponent(markerMesh);
-    level.addObject(&floor);
-    level.addObject(&cube);
-    level.addObject(&marker);
-    game.setStartLevel(&level);
+    auto* floorMesh = floor->createComponent<MeshComponent>(PhysicsTestBoxMesh(DXColor(0.40f, 0.53f, 0.68f)));
+    auto* cubeMesh = cube->createComponent<MeshComponent>(PhysicsTestBoxMesh(DXColor(1, 0.52f, 0.12f)));
+    auto* markerMesh = marker->createComponent<MeshComponent>(PhysicsTestBoxMesh(DXColor(0.15f, 0.85f, 0.85f)));
+    if (!floorMesh || !cubeMesh || !markerMesh) return;
+    floorMesh->bind_to_node(&floor->getTransform());
+    cubeMesh->bind_to_node(&cube->getTransform());
+    markerMesh->bind_to_node(&marker->getTransform());
+
+    // Локальные указатели заимствованы: объект уже владеет созданным компонентом.
+    if (!floor->createComponent<BoxColliderComponent>() || !floor->createComponent<StaticRigidBodyComponent>()) return;
+    if (!cube->createComponent<DynamicRigidBodyComponent>(2.0f) || !cube->createComponent<BoxColliderComponent>()) return;
+    if (!ConfigurePhysicsTestCamera(game, *level)) return;
+
+    auto* lightObject = level->createObject();
+    auto* light = lightObject ? lightObject->createComponent<DirectionalLightComponent>() : nullptr;
+    if (!light) return;
+    // Камера, свет и материалы используют архитектуру Develop без обхода рендера.
+    lightObject->getTransform().set_rotation(DXQuaternion::CreateFromYawPitchRoll(-DirectX::XM_PIDIV4, -0.6154797f, 0));
+    light->bind_to_node(&lightObject->getTransform());
+    light->color = {1, 0.96f, 0.88f};
+    light->intensity = 1.5f;
+    game.getRenderServer().setAmbientColor({0.25f, 0.25f, 0.25f});
+    ready = true;
 }
 
 int PhysicsTestScene::Run()
 {
-    if (!game.getPhysicsWorld().Init()) return 1;
+    if (!ready) { std::cerr << "Cannot create physics test scene\n"; return 1; }
     game.Init();
-    return game.Run();
+    if (!game.getPhysicsServer().getLastError().empty()) return 1;
+    // Та же оболочка редактора, что у обычной сцены Develop.
+    Editor editor(game);
+    return editor.Run();
 }

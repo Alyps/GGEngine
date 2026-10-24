@@ -8,13 +8,18 @@ Game::Game(std::wstring windowTitle, long clientWidth, long clientHeight)
 	windowContext.inputDevice = inputDevice;
 	renderServer = new RenderServer();
 	renderServer->Init(*window);
+	// Ошибка создания Lua не прерывает запуск: скриптовые компоненты сообщат о ней сами.
+	scriptServer = new ScriptServer();
+	scriptServer->Init();
 
 }
 
 Game::~Game() noexcept
 {
-	physicsWorld.Shutdown();
-	while (renderComponents) renderComponents->Detach();
+	// Уровень освобождается первым: его LuaScriptComponent используют состояние Lua.
+	delete start_level;
+	physicsServer.Shutdown();
+	delete scriptServer;
 	delete renderServer;
 	delete inputDevice;
 	delete window;
@@ -28,7 +33,6 @@ void Game::Init()
 
 int Game::Run()
 {
-	if (initializationFailed) return 1;
 
 	// Не включаем время загрузки уровня в первый кадр.
 	timeManager.reset();
@@ -47,57 +51,92 @@ int Game::Run()
 
 		timeManager.update();
 
-		const auto& fixedTime = timeManager.get_fixedTime();
+		if (!StepPhysics()) return 1;
 
-		// Catch-up: 0, 1 или несколько фиксированных шагов.
-		for (std::uint64_t step = 0;
-			step < fixedTime.get_steps();
-			++step)
-		{
-			if (!physicsWorld.Step(fixedTime.get_interval())) return 1;
-		}
-
-		// Логика, обновляемая один раз за кадр:
-		// current_level->Update(timeManager.get_deltaTime());
+		// Обновляем трансформации до получения матриц камеры рендером.
+		if (current_level)
+			current_level->Update(*this, timeManager.get_deltaTime());
 
 		// Для будущей интерполяции при отрисовке:
 		// const double alpha = fixedTime.get_alpha();
 
-		for (RenderComponent* component = renderComponents; component; component = component->nextRender)
-			component->SyncTransform();
 		renderServer->DrawAll();
+		if (current_level) current_level->applyPendingChanges(*this);
 	}
 }
 
-void Game::registerRenderComponent(RenderComponent& component)
+
+bool Game::StepPhysics()
 {
-	component.registeredGame = this;
-	component.previousRender = nullptr;
-	component.nextRender = renderComponents;
-	if (renderComponents) renderComponents->previousRender = &component;
-	renderComponents = &component;
+	if (!physicsServer.getLastError().empty()) return false;
+	const auto& fixed = timeManager.get_fixedTime();
+	// Собственного аккумулятора нет: TimeManager задаёт число шагов и интервал.
+	for (std::uint64_t step = 0; step < fixed.get_steps(); ++step)
+		if (!physicsServer.Update(fixed.get_interval())) return false;
+	return true;
 }
 
-void Game::unregisterRenderComponent(RenderComponent& component)
+Level::~Level()
 {
-	if (component.registeredGame != this) return;
-	if (component.previousRender) component.previousRender->nextRender = component.nextRender;
-	else renderComponents = component.nextRender;
-	if (component.nextRender) component.nextRender->previousRender = component.previousRender;
-	component.registeredGame = nullptr;
-	component.nextRender = component.previousRender = nullptr;
+    shuttingDown = true;
+    for (GameObject* object : objects) delete object;
+    for (GameObject* object : pendingObjects) delete object;
 }
-
 
 void Level::Init(Game& game)
 {
-	for (GameObject* obj : objects)
-	{
-		obj->Init(game);
-	}
+    applyPendingChanges(game);
 }
 
-void Level::addObject(GameObject* obj)
+bool Level::addObject(GameObject* obj)
 {
-	objects.push_back(obj);
+    if (!obj || obj->owner || shuttingDown) return false;
+    obj->owner = this;
+    pendingObjects.push_back(obj);
+    return true;
+}
+
+GameObject* Level::createObject()
+{
+    if (shuttingDown) return nullptr;
+    auto* object = new (std::nothrow) GameObject();
+    if (object) addObject(object);
+    return object;
+}
+
+void Level::destroyObject(GameObject* obj)
+{
+    if (obj && obj->owner == this) obj->pendingDestroy = true;
+}
+
+void Level::applyPendingChanges(Game& game)
+{
+    // Запросы, поступившие во время очистки и Init, ждут следующего кадра.
+    std::vector<GameObject*> additions;
+    additions.swap(pendingObjects);
+    for (auto it = objects.begin(); it != objects.end();) {
+        GameObject* object = *it;
+        if (object->pendingDestroy) {
+            it = objects.erase(it);
+            delete object;
+        } else {
+            object->applyPendingChanges(game);
+            ++it;
+        }
+    }
+    objects.insert(objects.end(), additions.begin(), additions.end());
+    for (GameObject* object : additions) {
+        if (object->pendingDestroy) {
+            objects.erase(std::find(objects.begin(), objects.end(), object));
+            delete object;
+        } else {
+            object->Init(game);
+        }
+    }
+}
+
+void Level::Update(Game& game, double deltaTime)
+{
+    for (GameObject* object : objects)
+        if (!object->pendingDestroy) object->Update(game, deltaTime);
 }

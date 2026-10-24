@@ -1,8 +1,9 @@
 #include "RenderServer.h"
+#include "StandartResources/EditorCamera.h"
+#include "TransformTree.h"
 #include <algorithm>
-#include <filesystem>
-#include <cwctype>
 #include <cstring>
+#include <cmath>
 
 namespace {
 ComPtr<ID3DBlob> CompileShaderFromFile(const std::wstring& path,
@@ -106,7 +107,8 @@ RenderState RenderState::CreateOpaque(ID3D11Device& device)
 	D3D11_RASTERIZER_DESC rd{};
 	rd.FillMode = D3D11_FILL_SOLID;
 	rd.CullMode = D3D11_CULL_BACK;
-	rd.FrontCounterClockwise = FALSE;
+	// Пресеты мешей используют обход против часовой стрелки снаружи.
+	rd.FrontCounterClockwise = TRUE;
 	rd.DepthClipEnable = TRUE;
 	device.CreateRasterizerState(&rd, rs.m_raster.ReleaseAndGetAddressOf());
 
@@ -200,68 +202,23 @@ void RenderState::Bind(ID3D11DeviceContext& context) const
 	context.OMSetBlendState(m_blend.Get(), blendFactor, 0xFFFFFFFF);
 }*/
 
-Texture Texture::LoadFromFile(ID3D11Device* device, const std::wstring& path) //ID3D11Device* device,
+Texture Texture::Create(ID3D11Device* device, const DirectX::ScratchImage& image)
 {
-
 	Texture tex;
+	if (!device || !image.GetImages() || image.GetImageCount() == 0) return tex;
 
-	
-	const std::filesystem::path fsPath(path);
-	const std::wstring wpath = fsPath.wstring();
+	const auto& metadata = image.GetMetadata();
+	if (metadata.width > (std::numeric_limits<uint32_t>::max)() ||
+		metadata.height > (std::numeric_limits<uint32_t>::max)()) return tex;
 
-	std::wstring ext = fsPath.extension().wstring();
-	for (auto& c : ext) c = static_cast<wchar_t>(std::towlower(c));
+	const HRESULT hr = DirectX::CreateShaderResourceView(
+		device, image.GetImages(), image.GetImageCount(), metadata,
+		tex.m_srv.GetAddressOf());
+	if (FAILED(hr)) return Texture{};
 
-	DirectX::TexMetadata  metadata{};
-	DirectX::ScratchImage image{};
-
-
-	HRESULT hr = E_FAIL;
-	if (ext == L".dds") hr = DirectX::LoadFromDDSFile(wpath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, image);
-	else if (ext == L".tga") hr = DirectX::LoadFromTGAFile(wpath.c_str(), DirectX::TGA_FLAGS_NONE, &metadata, image);
-	else if (ext == L".hdr") hr = DirectX::LoadFromHDRFile(wpath.c_str(), &metadata, image);
-	else                     hr = DirectX::LoadFromWICFile(wpath.c_str(), DirectX::WIC_FLAGS_NONE, &metadata, image);
-
-	
-
-	const DirectX::ScratchImage* src = &image;
-	DirectX::ScratchImage        mipChain;
-
-	if (metadata.mipLevels <= 1 &&
-		metadata.dimension == DirectX::TEX_DIMENSION_TEXTURE2D)
-	{
-		hr = DirectX::GenerateMipMaps(
-			image.GetImages(),
-			image.GetImageCount(),
-			metadata,
-			DirectX::TEX_FILTER_DEFAULT,
-			0,
-			mipChain);
-
-		if (SUCCEEDED(hr)) {
-			src = &mipChain;
-		}
-		// при неудаче молча используем оригинал
-	}
-
-	ComPtr<ID3D11ShaderResourceView> srv;
-	hr = DirectX::CreateShaderResourceView(
-		device,
-		src->GetImages(),
-		src->GetImageCount(),
-		src->GetMetadata(),
-		srv.ReleaseAndGetAddressOf());
-
-	if (FAILED(hr) || !srv) {
-		return tex;
-	}
-
-	tex.m_srv = std::move(srv);
 	tex.m_width = static_cast<uint32_t>(metadata.width);
 	tex.m_height = static_cast<uint32_t>(metadata.height);
 	return tex;
-
-
 }
 
 /*
@@ -412,25 +369,58 @@ bool RenderServer::UpdateConstantBuffer(ID3D11Buffer* buffer, const void* data, 
 
 void RenderServer::DrawAll()
 {
+	DrawScene(rtv.Get(), dsv.Get(), mainViewport);
+	Present();
+}
+
+void RenderServer::DrawScene(ID3D11RenderTargetView* target,
+	ID3D11DepthStencilView* depth, const D3D11_VIEWPORT& viewport)
+{
 	//Проверка чтобы всё было
-	if (!context || !swapChain || !rtv || !dsv || !frameCB || !objectCB)
+	if (!context || !target || !depth || !frameCB || !objectCB)
 		return;
 
-	//Даём значения константному буферу кадра. Пока что без камеры, поэтому identity.
-	DirectX::XMStoreFloat4x4(&frameCBData.view, DirectX::XMMatrixIdentity()); 
-	DirectX::XMStoreFloat4x4(&frameCBData.projection, DirectX::XMMatrixIdentity());
+	// Изменение рендера: матрицы выбранной камеры вместо постоянных identity.
+	DXMatrix view = DXMatrix::Identity;
+	DXMatrix projection = DXMatrix::Identity;
+	if (activeCamera && viewport.Width > 0.0f && viewport.Height > 0.0f
+		&& activeCamera->getView(view)) {
+		projection = activeCamera->getProjection(viewport.Width / viewport.Height);
+	}
+	// Сохраняем существующий контракт column_major в HLSL.
+	DirectX::XMStoreFloat4x4(&frameCBData.view, DirectX::XMMatrixTranspose(view));
+	DirectX::XMStoreFloat4x4(&frameCBData.projection, DirectX::XMMatrixTranspose(projection));
+	// Позиция наблюдателя и фон задаются один раз на кадр.
+	frameCBData.cameraPosition = view.Invert().Translation();
+	frameCBData.ambient = ambientColor;
+	frameCBData.lightCount = 0;
+	bool exceeded = false;
+	for (const LightItem* entry : lights) {
+		const LightItem& light = *entry;
+		if (!light.enabled) continue;
+		if (frameCBData.lightCount == MaxLights) {
+			exceeded = true;
+			break;
+		}
+		// Упаковываем только зарегистрированные включённые источники.
+		frameCBData.lights[frameCBData.lightCount++] = {
+			light.position, static_cast<uint32_t>(light.type), light.direction,
+			light.range, light.color, light.intensity, light.extraParams };
+	}
+	if (exceeded && !lightLimitExceeded)
+		std::cerr << "Light limit exceeded: 16\n";
+	lightLimitExceeded = exceeded;
 	if (!UpdateConstantBuffer(frameCB.Get(), &frameCBData, sizeof(frameCBData)))
 		return;
 
 	// Устанавливаем RenderTarget (куда записывать итоговый результат) 
-	ID3D11RenderTargetView* target = rtv.Get(); //Зачем создаётся новый?
-	context->OMSetRenderTargets(1, &target, dsv.Get()); //Output Merger выход
-	context->RSSetViewports(1, &mainViewport); // размеры вьюпорта для растеризатора
+	context->OMSetRenderTargets(1, &target, depth);
+	context->RSSetViewports(1, &viewport);
 	const float clearColor[4] = { 0.f, 0.f, 0.f, 1.f }; //Заполняем всё одним цветом
 	context->ClearRenderTargetView(target, clearColor); //чистим
-	context->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0); //Чистим Z-буфер
+	context->ClearDepthStencilView(depth, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
 
-	// Контракт HLSL: b0 = view/projection, b1 = world; матрицы column_major,
+	// Контракт HLSL: b0 = камера/свет, b1 = объект/материал; матрицы column_major,
 	// преобразование через mul(position, matrix). World транспонируется ниже.
 	// Привязываем CB к шейдерам
 	ID3D11Buffer* constantBuffers[] = { frameCB.Get(), objectCB.Get() }; 
@@ -449,8 +439,17 @@ void RenderServer::DrawAll()
 			continue; //тоже проверка
 
 		//Устанавливаем объектный буфер
-		DirectX::XMStoreFloat4x4(&objectCBData.world,
-			DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&item->world)));
+		// Считываем актуальный узел непосредственно при отрисовке.
+		const DXMatrix world = item->transformNode
+			? DXMatrix(item->transformNode->worldMatrix()) : DXMatrix::Identity;
+		DirectX::XMStoreFloat4x4(&objectCBData.world, DirectX::XMMatrixTranspose(world));
+		// Для вырожденного масштаба нормальная матрица не определена.
+		const float determinant = DirectX::XMVectorGetX(DirectX::XMMatrixDeterminant(world));
+		if (!std::isfinite(determinant) || std::abs(determinant) < 1e-8f) continue;
+		// inverse-transpose для нормалей транспонируем ещё раз для column_major.
+		DirectX::XMStoreFloat4x4(&objectCBData.normalMatrix, DirectX::XMMatrixInverse(nullptr, world));
+		objectCBData.specular = { (std::max)(0.0f, material.specularStrength),
+			(std::max)(1.0f, material.shininess), 0.0f, 0.0f };
 		if (!UpdateConstantBuffer(objectCB.Get(), &objectCBData, sizeof(objectCBData)))
 			continue;
 
@@ -484,16 +483,70 @@ void RenderServer::DrawAll()
 		context->DrawIndexed(mesh.IndexCount(), 0, 0); //Сама отрисовка
 	}
 
-	//Показ кадра
+	// Освобождаем цель перед использованием её текстуры в интерфейсе.
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
+void RenderServer::Present()
+{
+	if (!swapChain) return;
 	if (FAILED(swapChain->Present(1, 0)))
 		OutputDebugStringA("DrawAll: Present failed\n");
 }
 
-void RenderServer::addItem(RenderItem& item)
+void RenderServer::BeginMainPass()
 {
-	renderList.push_back(&item);
+	if (!context || !rtv) return;
+	ID3D11RenderTargetView* target = rtv.Get();
+	context->OMSetRenderTargets(1, &target, dsv.Get());
+	context->RSSetViewports(1, &mainViewport);
+	const float clear[] = { 0.07f, 0.08f, 0.10f, 1.0f };
+	context->ClearRenderTargetView(target, clear);
 }
 
+bool RenderServer::ResizeMainTarget(UINT width, UINT height)
+{
+	if (!width || !height || !context || !swapChain) return false;
+	if (rtv && dsv && width == static_cast<UINT>(mainViewport.Width)
+		&& height == static_cast<UINT>(mainViewport.Height)) return true;
+	// Swap chain требует освобождения всех ссылок на прежний back buffer.
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+	rtv.Reset();
+	dsv.Reset();
+	depthStencilBuffer.Reset();
+	if (FAILED(swapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0))) return false;
+	ComPtr<ID3D11Texture2D> backBuffer;
+	if (FAILED(swapChain->GetBuffer(0, IID_PPV_ARGS(backBuffer.GetAddressOf())))
+		|| FAILED(device->CreateRenderTargetView(backBuffer.Get(), nullptr, rtv.GetAddressOf()))) return false;
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = width;
+	desc.Height = height;
+	desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+	desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	if (FAILED(device->CreateTexture2D(&desc, nullptr, depthStencilBuffer.GetAddressOf()))
+		|| FAILED(device->CreateDepthStencilView(depthStencilBuffer.Get(), nullptr, dsv.GetAddressOf()))) return false;
+	mainViewport = { 0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1 };
+	return true;
+}
+
+void RenderServer::addItem(RenderItem& item)
+{
+	if (std::find(renderList.begin(), renderList.end(), &item) == renderList.end())
+		renderList.push_back(&item);
+}
+
+void RenderServer::addLight(LightItem& light)
+{
+    if (std::find(lights.begin(), lights.end(), &light) == lights.end())
+        lights.push_back(&light);
+}
+
+void RenderServer::removeLight(LightItem& light)
+{
+    const auto it = std::find(lights.begin(), lights.end(), &light);
+    if (it != lights.end()) lights.erase(it);
+}
 void RenderServer::removeItem(RenderItem& item)
 {
 	const auto it = std::find(renderList.begin(), renderList.end(), &item);
