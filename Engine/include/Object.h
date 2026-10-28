@@ -10,18 +10,20 @@ class Level;
 
 class GameObject {
     friend class Level;
+    friend struct TransformNode;
 private:
 	TransformNode transformTree;
 
+	// Для TransformableComponent эти списки — только индекс жизненного цикла.
 	std::vector<Component*> components;
 	std::vector<Component*> pendingComponents;
 	Level* owner = nullptr;
 	bool pendingDestroy = false;
 
 public:
-	GameObject() = default;
+	GameObject() { transformTree.owner = this; }
 	~GameObject();
-	// Успешное добавление передаёт объекту владение компонентом из new.
+	// Обычным компонентом владеет объект, TransformableComponent передаётся корневому узлу.
 	bool addComponent(Component& component);
 	template<class T, class... Args>
 	T* createComponent(Args&&... args) {
@@ -39,9 +41,10 @@ public:
 	Game* getGame() const;
 	bool isPendingDestroy() const { return pendingDestroy; }
 	TransformNode& getTransform() { return transformTree;  }
-	// Заимствованный список для инспектора и Lua; компоненты принадлежат объекту.
+	// Заимствованный общий индекс для инспектора и Lua, включая компоненты всех узлов.
 	const std::vector<Component*>& getComponents() const { return components; }
 private:
+	void releaseComponent(Component* component);
 	void applyPendingChanges();
 	void Update(double deltaTime);
 };

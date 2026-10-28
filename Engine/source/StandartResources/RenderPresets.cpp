@@ -124,12 +124,19 @@ namespace RenderItemPresets {
 	RenderItem* ImportPreset(ID3D11Device* device, const MeshData<NormalVertexType>& meshData,
 		ResourceManager& resources)
 	{
+		if (resources.GetStandardResourceDirectory().empty()) {
+			std::cerr << "ImportPreset: standard resource directory is not configured\n";
+			return nullptr;
+		}
 		auto mesh = Mesh::Create(device, meshData);
 		if (!mesh.IsValid()) return nullptr;
-		// Путь к штатному ресурсу не зависит от рабочей папки редактора.
-		const auto path = (std::filesystem::path(__FILE__).parent_path() / L"Default.material.json").u8string();
+		const auto& directory = resources.GetStandardResourceDirectory();
+		const std::filesystem::path standardPath(std::u8string(
+			reinterpret_cast<const char8_t*>(directory.data()), directory.size()));
+		const auto path = (standardPath / "Default.material.json").u8string();
 		const std::string utf8Path(reinterpret_cast<const char*>(path.data()), path.size());
-		auto* resource = resources.load<MaterialResource>(utf8Path, device);
+		auto* resource = resources.load<MaterialResource>(
+			utf8Path, device, resources.GetStandardResourceDirectory());
 		if (!resource) {
 			std::cerr << "ImportPreset: " << resources.GetLastError() << '\n';
 			return nullptr;
@@ -143,16 +150,21 @@ namespace RenderItemPresets {
 		return item;
 	}
 
-	RenderItem* CreateSimple(ID3D11Device* device, const MeshData<NormalVertexType>& meshData, bool is_wire_frame)
+	RenderItem* CreateSimple(ID3D11Device* device, const MeshData<NormalVertexType>& meshData,
+		bool is_wire_frame, const std::string& standardResourceDirectory)
 	{
-		if (!device)
+		if (!device || standardResourceDirectory.empty())
 			return nullptr;
 
 		auto mesh = Mesh::Create(device, meshData);
 		if (!mesh.IsValid())
 			return nullptr;
 
-		const auto shaderPath = std::filesystem::path(__FILE__).parent_path() / "Shaders" / "Simple.hlsl";
+		const auto& directory = standardResourceDirectory;
+		const std::filesystem::path standardPath(std::u8string(
+			reinterpret_cast<const char8_t*>(directory.data()), directory.size()));
+		const auto shaderPath = standardPath /
+			"Shaders" / "Simple.hlsl";
 		auto shader = ShaderPack::Create(device, shaderPath.wstring(), mesh.Layout());
 		if (!shader.IsValid())
 			return nullptr;

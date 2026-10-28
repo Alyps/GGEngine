@@ -1,9 +1,22 @@
 #include <filesystem>
+#include <vector>
 #include <core.h>
 #include "StandartResources/RenderPresets.h"
 #include "Editor.h"
 
 int main() {
+	// Путь к папке поставки вычисляется от exe, а не от рабочей директории процесса.
+	std::vector<wchar_t> executablePathBuffer(32768);
+	const DWORD executablePathLength = GetModuleFileNameW(
+		nullptr, executablePathBuffer.data(), static_cast<DWORD>(executablePathBuffer.size()));
+	if (!executablePathLength || executablePathLength >= executablePathBuffer.size()) {
+		std::cerr << "Cannot determine Editor.exe location\n";
+		return 1;
+	}
+	const std::filesystem::path packageResourceDirectory =
+		std::filesystem::path(std::wstring(executablePathBuffer.data(), executablePathLength))
+		.parent_path() / L"res" / L"StandartResources";
+
 	// Берём AppData через Unicode API, независимо от рабочей папки процесса.
 	const DWORD required = GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
 	if (!required) { std::cerr << "APPDATA is unavailable\n"; return 1; }
@@ -18,10 +31,28 @@ int main() {
 	std::error_code error;
 	std::filesystem::create_directories(resourceDirectory, error);
 	if (error) { std::cerr << "Cannot create resource directory: " << error.message() << '\n'; return 1; }
+	const std::filesystem::path standardResourceDirectory = resourceDirectory / L"StandartResources";
+	std::filesystem::create_directories(standardResourceDirectory, error);
+	if (error) { std::cerr << "Cannot create standard resource directory: " << error.message() << '\n'; return 1; }
+	for (const auto& relativePath : { L"Default.material.json", L"Shaders\\Simple.hlsl" }) {
+		const auto source = packageResourceDirectory / relativePath;
+		const auto destination = standardResourceDirectory / relativePath;
+		std::filesystem::create_directories(destination.parent_path(), error);
+		if (error) { std::cerr << "Cannot create standard resource subdirectory: " << error.message() << '\n'; return 1; }
+		std::filesystem::copy_file(source, destination, std::filesystem::copy_options::skip_existing, error);
+		if (error) {
+			std::cerr << "Cannot install standard resource: " << error.message() << '\n';
+			return 1;
+		}
+	}
 	// ContentBrowser по-прежнему получает обычную строку UTF-8 с разделителем /.
 	const auto utf8Root = resourceDirectory.generic_u8string();
 	const std::string resourceRoot(reinterpret_cast<const char*>(utf8Root.data()), utf8Root.size());
+	const auto utf8StandardRoot = standardResourceDirectory.generic_u8string();
+	const std::string standardResourceRoot(
+		reinterpret_cast<const char*>(utf8StandardRoot.data()), utf8StandardRoot.size());
 	Game game(L"GGEngine Editor");
+	game.getResourceManager().SetStandardResourceDirectory(standardResourceRoot);
 	Level& testLevel = *new Level();
 	game.setStartLevel(&testLevel);
 	GameObject& cube = *testLevel.createObject();

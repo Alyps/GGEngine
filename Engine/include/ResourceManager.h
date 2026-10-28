@@ -27,12 +27,17 @@ class ResourceManager {
 private:
 	std::unordered_map<std::string, Resource*> resources;
 	std::string lastError;
+	std::string standardResourceDirectory = "res/StandartResources";
 
 public:
 	ResourceManager() = default;
 	ResourceManager(const ResourceManager&) = delete;
 	ResourceManager& operator=(const ResourceManager&) = delete;
 	const std::string& GetLastError() const { return lastError; }
+	void SetStandardResourceDirectory(std::string directory) {
+		standardResourceDirectory = std::move(directory);
+	}
+	const std::string& GetStandardResourceDirectory() const { return standardResourceDirectory; }
 
 	// The returned pointer is borrowed and remains valid until this manager is destroyed.
 	// Constructor arguments are used only on a cache miss. Paths are UTF-8.
@@ -109,12 +114,13 @@ class MaterialResource final : public Resource {
 friend class ResourceManager;
 private:
 	ID3D11Device* device = nullptr;
+	std::string standardResourceDirectory;
 	MaterialData data;
 	ShaderPack shader;
 	RenderState state;
 	Material material;
 
-	explicit MaterialResource(ID3D11Device* device);
+	MaterialResource(ID3D11Device* device, std::string standardResourceDirectory);
 	bool load(const std::string& path) override;
 
 public:

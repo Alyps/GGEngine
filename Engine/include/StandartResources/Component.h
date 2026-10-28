@@ -4,6 +4,7 @@ class GameObject;
 
 class Component {
     friend class GameObject;
+    friend struct TransformNode;
     GameObject* owner = nullptr;
     bool pendingDestroy = false;
     bool initialized = false;

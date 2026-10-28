@@ -262,7 +262,8 @@ bool MaterialData::Save(const std::string& path, std::string& error) const
 	return WriteFileAtomically(wide, buffer.GetString(), buffer.GetSize(), error);
 }
 
-MaterialResource::MaterialResource(ID3D11Device* sourceDevice) : device(sourceDevice)
+MaterialResource::MaterialResource(ID3D11Device* sourceDevice, std::string standardDirectory)
+	: device(sourceDevice), standardResourceDirectory(std::move(standardDirectory))
 {
 	// Ресурс удерживает устройство; собственные DX11-объекты освобождаются полями класса.
 	if (device) device->AddRef();
@@ -277,10 +278,15 @@ bool MaterialResource::load(const std::string& path)
 {
 	if (!device) return Fail(loadError, "DX11 device is null");
 	if (!data.Load(path, loadError)) return false;
+	if (standardResourceDirectory.empty())
+		return Fail(loadError, "Standard resource directory is not configured");
 	// Simple.hlsl получает цвет вершин и не имеет UV: не игнорируем текстуру молча.
 	if (!data.diffuse.empty()) return Fail(loadError, "builtin/simple does not support diffuse textures yet");
-	const auto shaderPath = std::filesystem::path(__FILE__).parent_path() /
-		L"StandartResources" / L"Shaders" / L"Simple.hlsl";
+	const auto& directory = standardResourceDirectory;
+	const std::filesystem::path standardPath(std::u8string(
+		reinterpret_cast<const char8_t*>(directory.data()), directory.size()));
+	const auto shaderPath = standardPath /
+		"Shaders" / "Simple.hlsl";
 	shader = ShaderPack::Create(device, shaderPath.native(), NormalVertexType::Layout());
 	if (!shader.IsValid()) return Fail(loadError, "Cannot create builtin/simple shader");
 

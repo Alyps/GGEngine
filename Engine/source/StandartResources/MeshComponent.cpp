@@ -87,7 +87,8 @@ void MeshComponent::initRenderItem(Game& game)
     }
     MaterialResource* materialResource = nullptr;
     if (!materialPath.empty()) {
-        materialResource = resources.load<MaterialResource>(materialPath, device);
+        materialResource = resources.load<MaterialResource>(
+            materialPath, device, resources.GetStandardResourceDirectory());
         if (!materialResource) materialError = resources.GetLastError();
     }
     // Пустой меш ничего не рисует, но путь материала всё равно проверяется.
@@ -110,7 +111,8 @@ void MeshComponent::initRenderItem(Game& game)
         ownsMaterial = false;
         if (!renderItem) {
             // При повреждении штатного JSON остаётся встроенный материал.
-            renderItem = RenderItemPresets::CreateSimple(device, data, false);
+            renderItem = RenderItemPresets::CreateSimple(
+                device, data, false, resources.GetStandardResourceDirectory());
             ownsMaterial = renderItem != nullptr;
         }
     }

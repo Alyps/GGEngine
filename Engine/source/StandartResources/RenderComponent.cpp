@@ -1,6 +1,12 @@
 #include "StandartResources/RenderComponent.h"
 #include "core.h"
 
+void RenderComponent::onTransformNodeChanged()
+{
+    // Перепривязка узла должна сразу обновить ссылку уже зарегистрированного Item.
+    if (renderItem) renderItem->transformNode = transformNode;
+}
+
 void RenderComponent::Init(Game& game)
 {
     initRenderItem(game);

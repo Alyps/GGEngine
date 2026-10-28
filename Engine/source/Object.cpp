@@ -12,14 +12,24 @@ GameObject::~GameObject()
     // Сначала компоненты: их Shutdown ещё может использовать Transform.
     for (Component* component : components) {
         if (component->initialized) component->Shutdown(*getGame());
-        delete component;
     }
-    for (Component* component : pendingComponents) delete component;
+    // Все Shutdown завершены, поэтому освобождение не ломает ссылки между компонентами.
+    for (Component* component : components) releaseComponent(component);
+    for (Component* component : pendingComponents) releaseComponent(component);
+}
+
+void GameObject::releaseComponent(Component* component)
+{
+    if (auto* transformable = dynamic_cast<TransformableComponent*>(component))
+        transformable->transformNode->releaseComponent(transformable);
+    else delete component;
 }
 
 bool GameObject::addComponent(Component& component)
 {
-    if (pendingDestroy || component.owner) return false;
+    if (pendingDestroy || component.owner || component.pendingDestroy) return false;
+    if (auto* transformable = dynamic_cast<TransformableComponent*>(&component))
+        return transformTree.add_component(*transformable);
     component.owner = this;
     pendingComponents.push_back(&component);
     return true;
@@ -42,7 +52,7 @@ void GameObject::applyPendingChanges()
         if (!component->pendingDestroy) { ++it; continue; }
         it = components.erase(it);
         if (component->initialized) component->Shutdown(game);
-        delete component;
+        releaseComponent(component);
     }
     // Сначала переносим весь пакет, чтобы Init не менял текущую очередь.
     const size_t first = components.size();
@@ -51,13 +61,14 @@ void GameObject::applyPendingChanges()
         Component* component = components[i];
         if (pendingDestroy || component->pendingDestroy) {
             components.erase(components.begin() + i);
-            delete component;
+            releaseComponent(component);
             continue;
         }
         component->initialized = true;
         component->Init(game);
         ++i;
     }
+    transformTree.applyPendingChanges();
 }
 
 void GameObject::Update(double deltaTime)

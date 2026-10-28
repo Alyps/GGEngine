@@ -4,6 +4,7 @@
 
 class RenderComponent : public TransformableComponent {
 protected:
+    void onTransformNodeChanged() override;
     RenderItem* renderItem = nullptr;
     // Материал из ResourceManager заимствуется, процедурный принадлежит компоненту.
     bool ownsMaterial = false;
