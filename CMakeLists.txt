@@ -1,4 +1,4 @@
-﻿cmake_minimum_required (VERSION 3.13)
+cmake_minimum_required (VERSION 3.13)
 
 
 # Enable Hot Reload for MSVC compilers if supported.
@@ -136,19 +136,7 @@ FetchContent_Declare(imguizmo
     GIT_TAG 1.83)
 FetchContent_MakeAvailable(imguizmo)
 
-add_library(EditorUI STATIC
-    "${imgui_SOURCE_DIR}/imgui.cpp"
-    "${imgui_SOURCE_DIR}/imgui_draw.cpp"
-    "${imgui_SOURCE_DIR}/imgui_tables.cpp"
-    "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
-    "${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp"
-    "${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp"
-    "Editor/ImGuizmo.cpp")
-target_include_directories(EditorUI PUBLIC
-    "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends" "${imguizmo_SOURCE_DIR}")
-target_compile_definitions(EditorUI PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
-target_compile_features(EditorUI PUBLIC cxx_std_20)
-target_link_libraries(EditorUI PRIVATE d3d11 d3dcompiler dwmapi)
+add_subdirectory("Editor/ThirdParty")
 
 add_subdirectory ("Engine") # Static Library
 add_subdirectory ("Editor") # executable
