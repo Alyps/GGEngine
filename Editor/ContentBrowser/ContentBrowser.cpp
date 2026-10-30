@@ -32,6 +32,7 @@ namespace {
     {
         const std::string lower = LowerAscii(name);
         if (lower.ends_with(".material.json")) return "[Material]";
+        if (lower.ends_with(".object.json")) return "[Object]";
         const auto dot = lower.find_last_of('.');
         const std::string extension = dot == std::string::npos ? "" : lower.substr(dot);
         if (extension == ".lua") return "[Lua]";
@@ -265,7 +266,10 @@ void ContentBrowser::Draw(bool& open)
         }
         ImGui::SameLine();
         ImGui::BeginDisabled(!available || selected.empty());
-        if (ImGui::Button("Delete")) {
+        const bool deleteKey = available && !selected.empty() && focused && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive()
+            && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)
+            && ImGui::Shortcut(ImGuiKey_Delete, ImGuiInputFlags_RouteFocused);
+        if (ImGui::Button("Delete") || deleteKey) {
             pendingDelete = selected;
             actionError.clear();
             ImGui::OpenPopup("Delete entry");
@@ -296,6 +300,8 @@ void ContentBrowser::Draw(bool& open)
                     selected = path;
                     if (entry.directory && !entry.link && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                         requestedDirectory = path;
+                    if (!entry.directory && !entry.link && LowerAscii(entry.name).ends_with(".object.json")
+                        && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) objectToOpen = path;
                 }
                 // Payload содержит копию UTF-8 пути, а не адрес временной строки.
                 if (!entry.directory && !entry.link && ImGui::BeginDragDropSource()) {

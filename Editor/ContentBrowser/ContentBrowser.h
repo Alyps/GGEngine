@@ -8,6 +8,7 @@ public:
     explicit ContentBrowser(const std::string& rootPath, const std::string& projectPath = {});
     void Draw(bool& open);
     bool IsFocused() const { return focused; }
+    std::string TakeObjectToOpen() { std::string result; result.swap(objectToOpen); return result; }
 
 private:
     struct Entry {
@@ -27,6 +28,7 @@ private:
     std::string projectRoot;
     std::string current;
     std::string selected;
+    std::string objectToOpen;
     std::string error;
     std::string actionError;
     std::string pendingDelete;

@@ -75,9 +75,12 @@ bool Project::Open(const std::string& file, Project& result, std::string& error)
         || !json.HasMember("name") || !json["name"].IsString()
         || !json.HasMember("resource_directory") || !json["resource_directory"].IsString()
         || !json.HasMember("startup_scene")) return Fail(error, "Unsupported project format.");
-    // Пока нет сериализации уровня, непустую стартовую сцену нельзя молча игнорировать.
-    if (!json["startup_scene"].IsNull()) return Fail(error, "Loading saved scenes is not implemented yet; startup_scene must be null.");
     Project candidate;
+    if (!json["startup_scene"].IsNull()) {
+        if (!json["startup_scene"].IsString()) return Fail(error, "Invalid startup scene path.");
+        candidate.startupScene.assign(json["startup_scene"].GetString(), json["startup_scene"].GetStringLength());
+        if (!RelativeDirectory(candidate.startupScene)) return Fail(error, "Startup scene must be a relative project path without parent traversal.");
+    }
     candidate.name.assign(json["name"].GetString(), json["name"].GetStringLength());
     candidate.resourceDirectory.assign(json["resource_directory"].GetString(), json["resource_directory"].GetStringLength());
     if (!ValidText(candidate.name) || !RelativeDirectory(candidate.resourceDirectory)) return Fail(error, "Invalid project name or relative resource directory.");
@@ -85,6 +88,24 @@ bool Project::Open(const std::string& file, Project& result, std::string& error)
     if (!fs::is_directory(Disk(candidate.ResourceRoot()), ec) || ec) return Fail(error, "Project resource directory is missing or inaccessible.");
     result = std::move(candidate);
     return true;
+}
+
+bool Project::Save(std::string& error) const
+{
+    error.clear();
+    if (!ValidText(filePath) || !ValidText(name) || !RelativeDirectory(resourceDirectory)
+        || (!startupScene.empty() && !RelativeDirectory(startupScene))) return Fail(error, "Invalid project description.");
+    rapidjson::StringBuffer bytes;
+    rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(bytes);
+    writer.StartObject();
+    writer.Key("format_version"); writer.Int(1);
+    writer.Key("name"); writer.String(name.data(), static_cast<rapidjson::SizeType>(name.size()));
+    writer.Key("resource_directory"); writer.String(resourceDirectory.data(), static_cast<rapidjson::SizeType>(resourceDirectory.size()));
+    writer.Key("startup_scene");
+    if (startupScene.empty()) writer.Null();
+    else writer.String(startupScene.data(), static_cast<rapidjson::SizeType>(startupScene.size()));
+    writer.EndObject();
+    return WriteJson(Disk(filePath), bytes, true, error);
 }
 
 bool Project::Create(const std::string& parent, const std::string& name, Project& result, std::string& error, const Project* source)

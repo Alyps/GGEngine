@@ -7,6 +7,8 @@ struct Project {
     std::string name;
     std::string filePath;
     std::string resourceDirectory = "res";
+    std::string startupScene;
+    bool Save(std::string& error) const;
     std::string Root() const;
     std::string ResourceRoot() const;
     static bool Open(const std::string& file, Project& result, std::string& error);

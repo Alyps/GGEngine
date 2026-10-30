@@ -24,10 +24,10 @@ void CameraMovementComponent::OnMouseMove(const InputDevice::MouseMoveEventArgs&
     if (!enabled || !ownerGame || !transformNode) return;
     if (GetForegroundWindow() != ownerGame->getWindow().getWindow()) return;
 
-    // Состояние ПКМ обновляется InputDevice до отправки события движения.
+    // Состояние кнопки обновляется InputDevice до отправки события движения.
     const EditorCamera* camera = ownerGame->getRenderServer().getCamera();
     if (!camera || camera->getTransformNode() != transformNode) return;
-    if (!ownerGame->getInputDevice().IsKeyDown(Keys::RightButton)) return;
+    if (!ownerGame->getInputDevice().IsKeyDown(rotationButton)) return;
     if (args.Offset.x == 0.0f && args.Offset.y == 0.0f) return;
 
     // Мировая ориентация позволяет сохранять горизонт и у дочерней камеры.

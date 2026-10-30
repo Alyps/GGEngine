@@ -22,6 +22,8 @@ public:
     float speed = 3.0f;
     // Редактор отключает навигацию при работе с другими панелями.
     bool enabled = true;
+    // Выбор кнопки — настройка приложения, а не сериализуемого компонента сцены.
+    Keys rotationButton = Keys::RightButton;
     float mouseSensitivity = 0.003f; // Радианы на единицу относительного движения мыши.
     void Init(Game& game) override;
     void Shutdown(Game& game) override;
