@@ -28,6 +28,7 @@ private:
 	std::unordered_map<std::string, Resource*> resources;
 	std::string lastError;
 	std::string standardResourceDirectory = "res/StandartResources";
+	std::string resourceDirectory = "res";
 
 public:
 	ResourceManager() = default;
@@ -38,6 +39,9 @@ public:
 		standardResourceDirectory = std::move(directory);
 	}
 	const std::string& GetStandardResourceDirectory() const { return standardResourceDirectory; }
+	// Корень для ссылок внутри материалов; обычные load(path) используют путь напрямую.
+	void SetResourceDirectory(std::string directory) { resourceDirectory = std::move(directory); }
+	const std::string& GetResourceDirectory() const { return resourceDirectory; }
 
 	// The returned pointer is borrowed and remains valid until this manager is destroyed.
 	// Constructor arguments are used only on a cache miss. Paths are UTF-8.
@@ -83,11 +87,11 @@ public:
 class MeshResource final : public Resource {
 friend class ResourceManager;
 private:
-	MeshData<NormalVertexType> meshData;
+	MeshData<TexturedVertexType> meshData;
 	MeshResource() = default;
 	bool load(const std::string& path) override;
 public:
-	const MeshData<NormalVertexType>& GetMeshData() const { return meshData; }
+	const MeshData<TexturedVertexType>& GetMeshData() const { return meshData; }
 	static bool SupportsExtension(const std::string& extension);
 };
 
@@ -109,18 +113,22 @@ struct MaterialData {
 };
 
 // Менеджер владеет ресурсом; материал заимствует его шейдер и состояние.
-// Версия 1 использует NormalVertexType и builtin/simple без текстур.
+// builtin/simple использует TexturedVertexType; без diffuse поверхность белая.
 class MaterialResource final : public Resource {
 friend class ResourceManager;
 private:
 	ID3D11Device* device = nullptr;
 	std::string standardResourceDirectory;
+	// Менеджер владеет текстурой; ресурс материала владеет своим сэмплером.
+	ResourceManager* resources = nullptr;
+	ID3D11SamplerState* samplerState = nullptr;
 	MaterialData data;
 	ShaderPack shader;
 	RenderState state;
 	Material material;
 
-	MaterialResource(ID3D11Device* device, std::string standardResourceDirectory);
+	MaterialResource(ID3D11Device* device, std::string standardResourceDirectory,
+		ResourceManager* resources = nullptr);
 	bool load(const std::string& path) override;
 
 public:

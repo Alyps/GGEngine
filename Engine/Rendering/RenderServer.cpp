@@ -448,8 +448,11 @@ void RenderServer::DrawScene(ID3D11RenderTargetView* target,
 		if (!std::isfinite(determinant) || std::abs(determinant) < 1e-8f) continue;
 		// inverse-transpose для нормалей транспонируем ещё раз для column_major.
 		DirectX::XMStoreFloat4x4(&objectCBData.normalMatrix, DirectX::XMMatrixInverse(nullptr, world));
+		// Без текстуры шейдер использует белый цвет, а не читает пустой t0.
+		const Texture* diffuse = material.Diffuse();
 		objectCBData.specular = { (std::max)(0.0f, material.specularStrength),
-			(std::max)(1.0f, material.shininess), 0.0f, 0.0f };
+			(std::max)(1.0f, material.shininess),
+			diffuse && diffuse->IsValid() && material.Sampler() ? 1.0f : 0.0f, 0.0f };
 		if (!UpdateConstantBuffer(objectCB.Get(), &objectCBData, sizeof(objectCBData)))
 			continue;
 
@@ -466,7 +469,6 @@ void RenderServer::DrawScene(ID3D11RenderTargetView* target,
 		context->PSSetShader(shader->PixelShader(), nullptr, 0);
 
 		//diffuse это основная текстура объекта. Устанавливаем её. И сэмплер для неё
-		const Texture* diffuse = material.Diffuse();
 		ID3D11ShaderResourceView* srv = diffuse ? diffuse->SRV() : nullptr;
 		ID3D11SamplerState* materialSampler = material.Sampler();
 		// t0/s0 задаются для каждого объекта, включая отсутствие ресурса.

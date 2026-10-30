@@ -22,6 +22,8 @@ int main() {
 	const auto utf8Root = resourceDirectory.generic_u8string();
 	const std::string resourceRoot(reinterpret_cast<const char*>(utf8Root.data()), utf8Root.size());
 	Game game(L"GGEngine Editor");
+	// Diffuse-ссылки материалов используют тот же корень, что и ContentBrowser.
+	game.getResourceManager().SetResourceDirectory(resourceRoot);
 	// Путь задан сборкой; файлы остаются в Engine/StandartResources.
 	game.getResourceManager().SetStandardResourceDirectory(GG_STANDARD_RESOURCE_DIRECTORY);
 	Level& testLevel = *new Level();

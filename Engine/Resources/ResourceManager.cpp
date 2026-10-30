@@ -118,14 +118,14 @@ bool MeshResource::load(const std::string& path)
 	if (!scene->HasMeshes()) return Fail(loadError, "Model contains no meshes");
 
 	// PreTransformVertices запекает трансформации узлов; сохраняем правую систему и CCW.
-	MeshData<NormalVertexType> loaded;
+	MeshData<TexturedVertexType> loaded;
 	constexpr size_t maxBytes = (std::numeric_limits<UINT>::max)();
 	for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
 		const aiMesh& mesh = *scene->mMeshes[i];
 		if (!mesh.HasPositions() || !mesh.HasNormals())
 			return Fail(loadError, "Mesh has no positions or normals");
 		// Ограничения DX11 проверяем до выделения массивов и сужения индексов.
-		if (mesh.mNumVertices > maxBytes / sizeof(NormalVertexType::Vertex) - loaded.vertices.size() ||
+		if (mesh.mNumVertices > maxBytes / sizeof(TexturedVertexType::Vertex) - loaded.vertices.size() ||
 			mesh.mNumFaces > (maxBytes / sizeof(uint32_t) - loaded.indices.size()) / 3)
 			return Fail(loadError, "Mesh exceeds DX11 buffer size limits");
 		const auto offset = static_cast<uint32_t>(loaded.vertices.size());
@@ -134,15 +134,16 @@ bool MeshResource::load(const std::string& path)
 		for (unsigned int v = 0; v < mesh.mNumVertices; ++v) {
 			const aiVector3D& p = mesh.mVertices[v];
 			aiVector3D n = mesh.mNormals[v];
-			const aiColor4D c = mesh.HasVertexColors(0) ? mesh.mColors[0][v] : aiColor4D(1, 1, 1, 1);
+			// Берём первый UV-канал; модели без развёртки получают нулевые UV.
+			const aiVector3D uv = mesh.HasTextureCoords(0) ? mesh.mTextureCoords[0][v] : aiVector3D(0, 0, 0);
 			// Неконечные координаты не должны попадать в GPU, picking и границы выбора.
 			if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
 				!std::isfinite(n.x) || !std::isfinite(n.y) || !std::isfinite(n.z) ||
-				!std::isfinite(c.r) || !std::isfinite(c.g) || !std::isfinite(c.b) || !std::isfinite(c.a))
+				!std::isfinite(uv.x) || !std::isfinite(uv.y))
 				return Fail(loadError, "Mesh contains non-finite vertex data");
 			n.NormalizeSafe();
-			loaded.vertices.push_back(NormalVertexType::make({ p.x, p.y, p.z },
-				{ n.x, n.y, n.z }, { c.r, c.g, c.b, c.a }));
+			loaded.vertices.push_back(TexturedVertexType::make({ p.x, p.y, p.z },
+				{ n.x, n.y, n.z }, { uv.x, uv.y }));
 		}
 		for (unsigned int f = 0; f < mesh.mNumFaces; ++f) {
 			const aiFace& face = mesh.mFaces[f];
@@ -262,8 +263,9 @@ bool MaterialData::Save(const std::string& path, std::string& error) const
 	return WriteFileAtomically(wide, buffer.GetString(), buffer.GetSize(), error);
 }
 
-MaterialResource::MaterialResource(ID3D11Device* sourceDevice, std::string standardDirectory)
-	: device(sourceDevice), standardResourceDirectory(std::move(standardDirectory))
+MaterialResource::MaterialResource(ID3D11Device* sourceDevice, std::string standardDirectory,
+	ResourceManager* resourceManager)
+	: device(sourceDevice), standardResourceDirectory(std::move(standardDirectory)), resources(resourceManager)
 {
 	// Ресурс удерживает устройство; собственные DX11-объекты освобождаются полями класса.
 	if (device) device->AddRef();
@@ -271,6 +273,7 @@ MaterialResource::MaterialResource(ID3D11Device* sourceDevice, std::string stand
 
 MaterialResource::~MaterialResource()
 {
+	if (samplerState) samplerState->Release();
 	if (device) device->Release();
 }
 
@@ -280,14 +283,12 @@ bool MaterialResource::load(const std::string& path)
 	if (!data.Load(path, loadError)) return false;
 	if (standardResourceDirectory.empty())
 		return Fail(loadError, "Standard resource directory is not configured");
-	// Simple.hlsl получает цвет вершин и не имеет UV: не игнорируем текстуру молча.
-	if (!data.diffuse.empty()) return Fail(loadError, "builtin/simple does not support diffuse textures yet");
 	const auto& directory = standardResourceDirectory;
 	const std::filesystem::path standardPath(std::u8string(
 		reinterpret_cast<const char8_t*>(directory.data()), directory.size()));
 	const auto shaderPath = standardPath /
 		"Shaders" / "Simple.hlsl";
-	shader = ShaderPack::Create(device, shaderPath.native(), NormalVertexType::Layout());
+	shader = ShaderPack::Create(device, shaderPath.native(), TexturedVertexType::Layout());
 	if (!shader.IsValid()) return Fail(loadError, "Cannot create builtin/simple shader");
 
 	state = data.renderState == "wireframe"
@@ -295,6 +296,26 @@ bool MaterialResource::load(const std::string& path)
 	if (!state.Raster() || !state.Depth() || !state.Blend())
 		return Fail(loadError, "Cannot create material render state");
 	material = Material(shader, state);
+	if (!data.diffuse.empty()) {
+		if (!resources || resources->GetResourceDirectory().empty())
+			return Fail(loadError, "Resource manager and resource directory are required for diffuse textures");
+		// Ссылки материала считаются от res, независимо от расположения самого JSON.
+		std::wstring root, relative;
+		if (!WidePath(resources->GetResourceDirectory(), root, loadError) ||
+			!WidePath(data.diffuse, relative, loadError)) return false;
+		const auto texturePath = (std::filesystem::path(root) / relative).generic_u8string();
+		auto* texture = resources->load<TextureResource>(
+			std::string(reinterpret_cast<const char*>(texturePath.data()), texturePath.size()), device);
+		if (!texture) return Fail(loadError, resources->GetLastError());
+
+		// Все допустимые значения sampler преобразуются в существующие DX11-описания.
+		const auto& description = data.sampler == "wrap_linear" ? SamplerDescs::WrapLinear :
+			data.sampler == "wrap_point" ? SamplerDescs::WrapPoint :
+			data.sampler == "clamp_linear" ? SamplerDescs::ClampLinear : SamplerDescs::ClampPoint;
+		if (FAILED(device->CreateSamplerState(&description, &samplerState)))
+			return Fail(loadError, "Cannot create material sampler");
+		material = Material(shader, texture->GetTexture(), samplerState, state);
+	}
 	material.specularStrength = data.specularStrength;
 	material.shininess = data.shininess;
 	return true;

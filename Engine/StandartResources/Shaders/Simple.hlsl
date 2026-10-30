@@ -24,14 +24,17 @@ cbuffer ObjectCB : register(b1)
 {
     column_major float4x4 world;
     column_major float4x4 normalMatrix;
-    float4 specular; // x: сила блика, y: показатель блеска.
+    float4 specular; // x: сила блика, y: показатель блеска, z: наличие diffuse.
 };
+
+Texture2D diffuseTexture : register(t0);
+SamplerState diffuseSampler : register(s0);
 
 struct VertexInput
 {
     float3 position : POSITION;
     float3 normal : NORMAL;
-    float4 color : COLOR;
+    float2 uv : TEXCOORD0;
 };
 
 struct VertexOutput
@@ -39,7 +42,7 @@ struct VertexOutput
     float4 position : SV_POSITION;
     float3 worldPosition : TEXCOORD0;
     float3 normal : TEXCOORD1;
-    float4 color : COLOR;
+    float2 uv : TEXCOORD2;
 };
 
 // Нулевой вектор не должен давать NaN в центре точечного источника.
@@ -57,7 +60,7 @@ VertexOutput VSMain(VertexInput input)
 
     // Нормаль переносим в мировой базис без смещения.
     output.normal = mul(float4(input.normal, 0.0f), normalMatrix).xyz;
-    output.color = input.color;
+    output.uv = input.uv;
     return output;
 }
 
@@ -65,7 +68,11 @@ float4 PSMain(VertexOutput input) : SV_TARGET
 {
     float3 normal = SafeNormalize(input.normal);
     float3 toCamera = SafeNormalize(cameraPosition - input.worldPosition);
-    float3 result = ambient * input.color.rgb;
+    // Материал без текстуры остаётся белым и получает обычное освещение.
+    float4 baseColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
+    if (specular.z > 0.5f)
+        baseColor = diffuseTexture.Sample(diffuseSampler, input.uv);
+    float3 result = ambient * baseColor.rgb;
 
     // Фон учитывается один раз; каждый источник добавляет diffuse и specular.
     [loop]
@@ -100,7 +107,7 @@ float4 PSMain(VertexOutput input) : SV_TARGET
         float highlight = 0.0f;
         if (diffuse > 0.0f)
             highlight = specular.x * pow(saturate(dot(reflect(-toLight, normal), toCamera)), specular.y);
-        result += (input.color.rgb * diffuse + highlight) * light.color * light.intensity * attenuation;
+        result += (baseColor.rgb * diffuse + highlight) * light.color * light.intensity * attenuation;
     }
-    return float4(result, input.color.a);
+    return float4(result, baseColor.a);
 }
