@@ -4,6 +4,10 @@
 
 class MeshComponent : public RenderComponent {
 public:
+    const char* GetSerializationType() const override { return "MeshComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    // При успехе вызывающий код принимает владение компонентом до его привязки.
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
     enum class GeometryPreset { None, Cube, Sphere };
 private:
     GeometryPreset geometryPreset = GeometryPreset::None;

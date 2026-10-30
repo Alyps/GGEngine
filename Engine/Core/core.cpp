@@ -189,3 +189,93 @@ void Level::Update(double deltaTime)
     for (GameObject* object : objects)
         if (!object->pendingDestroy) object->Update(deltaTime);
 }
+
+rapidjson::Value Level::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
+{
+    error.clear();
+    if (shuttingDown) { error = "Cannot serialize a level during shutdown"; return {}; }
+    rapidjson::Value json(rapidjson::kObjectType), serializedObjects(rapidjson::kArrayType);
+    json.AddMember("asset_type", "Level", allocator);
+    json.AddMember("version", 1, allocator);
+    // В будущем объект может храниться как путь к ассету; сейчас импорт раскрывается полностью.
+    // Сохраняем и ещё не инициализированные объекты, не меняя очереди уровня.
+    for (const auto* list : { &objects, &pendingObjects }) {
+        for (const auto* object : *list) {
+            if (object->isPendingDestroy()) continue;
+            auto entry = object->Serialize(allocator, error);
+            if (entry.IsNull()) {
+                error = "Object " + std::to_string(serializedObjects.Size()) + ": " + error;
+                return {};
+            }
+            serializedObjects.PushBack(entry, allocator);
+        }
+    }
+    json.AddMember("objects", serializedObjects, allocator);
+    return json;
+}
+
+bool Level::Save(const std::string& path, std::string& error) const
+{
+    rapidjson::Document document;
+    auto json = Serialize(document.GetAllocator(), error);
+    if (json.IsNull()) return false;
+    return Serialization::SaveFile(json, path, error);
+}
+
+Level* Level::Deserialize(const rapidjson::Value& json, const ComponentFactoryMap& factories, std::string& error)
+{
+    if (!Deserialization::Asset(json, "Level", error)) return nullptr;
+    const auto* entries = Deserialization::Array(json, "objects", error);
+    if (!entries) return nullptr;
+    auto* level = new (std::nothrow) Level();
+    if (!level) { error = "Cannot allocate Level"; return nullptr; }
+    // В будущем здесь появится загрузка по пути; пока все объекты полностью вложены.
+    for (rapidjson::SizeType i = 0; i < entries->Size(); ++i) {
+        GameObject* object = GameObject::Deserialize((*entries)[i], factories, error);
+        if (!object) {
+            error = "objects[" + std::to_string(i) + "]: " + error;
+            delete level; return nullptr;
+        }
+        if (!level->addObject(object)) {
+            delete object;
+            delete level;
+            error = "Cannot attach deserialized object to level";
+            return nullptr;
+        }
+    }
+    return level;
+}
+
+bool Game::LoadLevelFromFile(const std::string& path, std::string& error)
+{
+    error.clear();
+    if (initialized) { error = "Start level can only be loaded before Game::Init"; return false; }
+    rapidjson::Document json;
+    if (!Deserialization::LoadFile(path, json, error)) return false;
+    Level* level = Level::Deserialize(json, componentFactories, error);
+    if (!level) { error = path + ": " + error; return false; }
+    // Старый стартовый уровень заменяется только после полного восстановления нового.
+    if (!setStartLevel(level)) {
+        delete level;
+        error = "Cannot attach loaded level to Game";
+        return false;
+    }
+    return true;
+}
+
+GameObject* Level::LoadObjectFromFile(const std::string& path, std::string& error)
+{
+    error.clear();
+    if (!owner || shuttingDown) { error = "Level must belong to a Game and not be shutting down"; return nullptr; }
+    rapidjson::Document json;
+    if (!Deserialization::LoadFile(path, json, error)) return nullptr;
+    GameObject* object = GameObject::Deserialize(json, owner->getComponentFactoryMap(), error);
+    if (!object) { error = path + ": " + error; return nullptr; }
+    // Импорт создаёт независимую копию; дальнейшее сохранение уровня раскрывает её целиком.
+    if (!addObject(object)) {
+        delete object;
+        error = "Cannot attach loaded object to level";
+        return nullptr;
+    }
+    return object;
+}

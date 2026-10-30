@@ -3,6 +3,12 @@
 #include "PhysicsItem.h"
 
 class BoxColliderComponent : public TransformableComponent {
+public:
+    const char* GetSerializationType() const override { return "BoxColliderComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    // При успехе вызывающий код принимает владение компонентом до его привязки.
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
+private:
     ColliderItem colliderItem;
 public:
     explicit BoxColliderComponent(DXVector3 size = DXVector3::One, PhysicsMaterial material = {});
@@ -28,11 +34,19 @@ public:
 // Коллайдер добавляется отдельным компонентом того же объекта/корневого узла.
 class DynamicRigidBodyComponent : public RigidBodyComponent {
 public:
+    const char* GetSerializationType() const override { return "DynamicRigidBodyComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    // При успехе вызывающий код принимает владение компонентом до его привязки.
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
     explicit DynamicRigidBodyComponent(float mass = 1.0f)
         : RigidBodyComponent(PhysicsBodyType::Dynamic, mass) {}
 };
 
 class StaticRigidBodyComponent : public RigidBodyComponent {
 public:
+    const char* GetSerializationType() const override { return "StaticRigidBodyComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    // При успехе вызывающий код принимает владение компонентом до его привязки.
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
     StaticRigidBodyComponent() : RigidBodyComponent(PhysicsBodyType::Static, 0.0f) {}
 };

@@ -22,6 +22,11 @@ private:
 
 public:
 	GameObject() { transformTree.owner = this; }
+	// Полное описание ассета; сериализация не запускает жизненный цикл.
+	rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const;
+	bool Save(const std::string& path, std::string& error) const;
+	// Возвращает новый объект во владение вызывающему коду; Init не вызывается.
+	static GameObject* Deserialize(const rapidjson::Value& json, const ComponentFactoryMap& factories, std::string& error);
 	~GameObject();
 	// Обычным компонентом владеет объект, TransformableComponent передаётся корневому узлу.
 	bool addComponent(Component& component);

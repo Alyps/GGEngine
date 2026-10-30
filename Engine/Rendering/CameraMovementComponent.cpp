@@ -94,3 +94,26 @@ void CameraMovementComponent::Shutdown(Game& game)
     if (ownerGame) ownerGame->getInputDevice().MouseMove.Remove(mouseMoveHandle);
     ownerGame = nullptr;
 }
+
+rapidjson::Value CameraMovementComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
+{
+    auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
+    // enabled управляется фокусом редактора и не является настройкой ассета.
+    json.AddMember("speed", speed, allocator);
+    json.AddMember("mouse_sensitivity", mouseSensitivity, allocator);
+    return Serialization::Finish(std::move(json), error);
+}
+
+Component* CameraMovementComponent::CreateFromJson(const rapidjson::Value& json, std::string& error)
+{
+    error.clear();
+    using namespace Deserialization;
+    float speedValue, sensitivity;
+    if (!Float(json, "speed", speedValue, error) || !Float(json, "mouse_sensitivity", sensitivity, error)) return nullptr;
+    // До привязки созданным компонентом владеет вызывающий код.
+    auto* result = new (std::nothrow) CameraMovementComponent();
+    if (!result) { error = "Cannot allocate component"; return nullptr; }
+    result->speed = speedValue;
+    result->mouseSensitivity = sensitivity;
+    return result;
+}

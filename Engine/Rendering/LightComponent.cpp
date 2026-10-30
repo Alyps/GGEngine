@@ -59,3 +59,59 @@ LightItem PointLightComponent::makeLightItem() const
     }
     return item;
 }
+
+rapidjson::Value DirectionalLightComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
+{
+    auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
+    json.AddMember("color", Serialization::Array({ color.x, color.y, color.z }, allocator), allocator);
+    json.AddMember("intensity", intensity, allocator);
+    json.AddMember("enabled", enabled, allocator);
+    return Serialization::Finish(std::move(json), error);
+}
+
+rapidjson::Value PointLightComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
+{
+    auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
+    json.AddMember("color", Serialization::Array({ color.x, color.y, color.z }, allocator), allocator);
+    json.AddMember("intensity", intensity, allocator);
+    json.AddMember("enabled", enabled, allocator);
+    json.AddMember("range", range, allocator);
+    return Serialization::Finish(std::move(json), error);
+}
+
+Component* DirectionalLightComponent::CreateFromJson(const rapidjson::Value& json, std::string& error)
+{
+    error.clear();
+    using namespace Deserialization;
+    float colorValue[3], intensityValue;
+    bool enabledValue;
+    if (!Floats(json, "color", colorValue, 3, error) || !Float(json, "intensity", intensityValue, error) ||
+        !Bool(json, "enabled", enabledValue, error)) return nullptr;
+    // До привязки созданным компонентом владеет вызывающий код.
+    auto* result = new (std::nothrow) DirectionalLightComponent();
+    if (!result) { error = "Cannot allocate component"; return nullptr; }
+    result->color = { colorValue[0], colorValue[1], colorValue[2] };
+    result->intensity = intensityValue;
+    result->enabled = enabledValue;
+    return result;
+}
+
+Component* PointLightComponent::CreateFromJson(const rapidjson::Value& json, std::string& error)
+{
+    error.clear();
+    using namespace Deserialization;
+    float colorValue[3], intensityValue;
+    bool enabledValue;
+    if (!Floats(json, "color", colorValue, 3, error) || !Float(json, "intensity", intensityValue, error) ||
+        !Bool(json, "enabled", enabledValue, error)) return nullptr;
+    float rangeValue;
+    if (!Float(json, "range", rangeValue, error)) return nullptr;
+    // До привязки созданным компонентом владеет вызывающий код.
+    auto* result = new (std::nothrow) PointLightComponent();
+    if (!result) { error = "Cannot allocate component"; return nullptr; }
+    result->color = { colorValue[0], colorValue[1], colorValue[2] };
+    result->intensity = intensityValue;
+    result->enabled = enabledValue;
+    result->range = rangeValue;
+    return result;
+}

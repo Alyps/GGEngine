@@ -15,6 +15,10 @@ public:
 	Editor& operator=(const Editor&) = delete;
 	bool Init();
 	int Run();
+	// Пути UTF-8; сцена относительно проекта, exe и проект относительно cwd редактора.
+	// true означает создание процесса, а не успешную загрузку его сцены.
+	bool LaunchGame(const std::string& executablePath, const std::string& projectDirectory,
+		const std::string& startLevelPath, std::string& error);
 
 private:
 	static LRESULT CALLBACK HandleMessage(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
