@@ -105,7 +105,13 @@ private:
     std::unordered_map<MeshComponent*, MeshPathDraft> meshPathDrafts;
 	void DrawViewport();
 	void DrawViewportToolbar();
-	void PickObject(const ImVec2& origin, const ImVec2& size);
+	void PickObject(const ImVec2& origin, const ImVec2& size, bool toggle = false, bool context = false);
+	void SelectObject(GameObject* object, bool toggle = false);
+	void SelectContextObject(GameObject* object);
+	std::vector<GameObject*> SelectedObjects() const;
+	bool CanDeleteSelection() const;
+	void SelectNode(TransformNode* node);
+	bool IsObjectSelected(GameObject* object) const;
 	void DrawSelectionBounds(const ImVec2& origin, const ImVec2& size);
 	void DrawGizmo(const ImVec2& origin, const ImVec2& size);
 	bool ResizeViewport(UINT width, UINT height);
@@ -121,8 +127,10 @@ private:
 		DXQuaternion rotation;
 	};
 	using HistoryId = uint64_t;
+	// Выделение заимствует объекты через ID; порядок определяет последний активный объект.
+	std::vector<HistoryId> selectedObjects;
 	enum class TargetKind { Object, Node, Component };
-	enum class HistoryKind { Node, Component, Structure };
+	enum class HistoryKind { Node, Component, Structure, Group };
 	struct TargetIdentity {
 		TargetKind kind = TargetKind::Node;
 		HistoryId id = 0;
@@ -142,6 +150,8 @@ private:
 		std::string name, before, after;
 		ObjectState objectBefore, objectAfter;
 		HistoryId selectionBefore = 0, selectionAfter = 0, cameraBefore = 0, cameraAfter = 0;
+		std::vector<HistoryId> selectedBefore, selectedAfter;
+		std::vector<HistoryEntry> children;
 	};
 	struct DocumentHistory {
 		std::vector<HistoryEntry> entries;
@@ -179,6 +189,9 @@ private:
 	int requestedHistoryStep = 0;
 	void ApplyHistoryStep();
 	bool RestoreObjectState(const ObjectState& state, HistoryId target);
+	bool RestoreObjectStates(std::vector<ObjectState> states);
+	bool ApplyHistoryEntry(const HistoryEntry& entry, bool undo);
+	void RestoreSelectedObjects(const std::vector<HistoryId>& objects, HistoryId active);
 	void RestoreHistorySelection(HistoryId selection, HistoryId camera);
 	TransformState CaptureTransform(GameObject* object, TransformNode* node) const;
 	void TrackTransformEdit(const TransformState& before);
@@ -186,6 +199,11 @@ private:
 	void Undo();
 	void Redo();
 	TransformState pendingEdit;
+	std::vector<TransformState> pendingGroup;
+	void CaptureTransformGroup(const TransformState& before);
+	bool ApplyTransformGroup(const DXMatrix& delta);
+	DXMatrix TransformMatrix(const TransformState& state) const;
+	DXMatrix groupGizmoStart, groupGizmoCurrent;
 	bool editingTransform = false;
 	bool editingGizmo = false;
 

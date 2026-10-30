@@ -418,6 +418,7 @@ int Editor::Run()
                     if (component && component->isPendingDestroy())
                         if (auto* mesh = dynamic_cast<MeshComponent*>(component)) meshPathDrafts.erase(mesh);
                 if (!object->isPendingDestroy()) continue;
+				if (IsObjectSelected(object)) SelectObject(object, true);
 				meshPathDrafts.clear();
 				nameDraftNode = nullptr;
 				if (selectedObject == object) {
@@ -426,6 +427,7 @@ int Editor::Run()
 				}
 				editingTransform = editingGizmo = false;
 				pendingEdit = {};
+				pendingGroup.clear();
 			}
 		}
 		ForgetDeadHistoryTargets();
@@ -623,7 +625,7 @@ void Editor::HandleShortcuts()
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal)) Redo();
 	if (ImGui::Shortcut(ImGuiKey_Delete, ImGuiInputFlags_RouteGlobal)) {
 		if (selectedNode && selectedNode->get_parent()) treeAction = { TreeOperation::Remove, selectedNode };
-		else if (CanDeleteObject(selectedObject)) requestedDelete = selectedObject;
+		else if (CanDeleteSelection()) requestedDelete = selectedObject;
 	}
 }
 
@@ -831,6 +833,73 @@ const char* Editor::ObjectLabel(GameObject& object) const
 	return "Game object";
 }
 
+bool Editor::IsObjectSelected(GameObject* object) const
+{
+	const auto found = objectIds.find(object);
+	return found != objectIds.end() && std::find(selectedObjects.begin(), selectedObjects.end(), found->second) != selectedObjects.end();
+}
+
+void Editor::SelectObject(GameObject* object, bool toggle)
+{
+	FinishTransformEdit(); FinishProperty();
+	if (!object) {
+		selectedObjects.clear(); selectedObject = nullptr; selectedNode = nameDraftNode = nullptr;
+		return;
+	}
+	const HistoryId id = Id(object);
+	const auto found = std::find(selectedObjects.begin(), selectedObjects.end(), id);
+	if (toggle && found != selectedObjects.end()) {
+		selectedObjects.erase(found);
+		if (selectedObject != object) return;
+		selectedObject = nullptr; selectedNode = nameDraftNode = nullptr;
+		// После снятия активного объекта возвращаемся к последнему оставшемуся живому объекту.
+		for (auto it = selectedObjects.rbegin(); it != selectedObjects.rend(); ++it) {
+			const auto target = historyTargets.find(*it);
+			if (target == historyTargets.end() || target->second.kind != TargetKind::Object) continue;
+			auto* candidate = static_cast<GameObject*>(target->second.pointer);
+			if (!candidate->isPendingDestroy()) { selectedObject = candidate; selectedNode = &candidate->getTransform(); break; }
+		}
+		return;
+	}
+	if (!toggle) selectedObjects.clear();
+	selectedObjects.push_back(id);
+	selectedObject = object; selectedNode = &object->getTransform(); nameDraftNode = nullptr;
+}
+
+void Editor::SelectNode(TransformNode* node)
+{
+	SelectObject(node ? node->getOwner() : nullptr);
+	selectedNode = node;
+}
+
+std::vector<GameObject*> Editor::SelectedObjects() const
+{
+	std::vector<GameObject*> objects;
+	for (HistoryId id : selectedObjects) {
+		const auto found = historyTargets.find(id);
+		if (found == historyTargets.end() || found->second.kind != TargetKind::Object) continue;
+		auto* object = static_cast<GameObject*>(found->second.pointer);
+		if (!object->isPendingDestroy()) objects.push_back(object);
+	}
+	return objects;
+}
+
+void Editor::SelectContextObject(GameObject* object)
+{
+	if (!object || !IsObjectSelected(object)) { SelectObject(object); return; }
+	FinishTransformEdit(); FinishProperty();
+	const HistoryId id = Id(object);
+	selectedObjects.erase(std::find(selectedObjects.begin(), selectedObjects.end(), id));
+	selectedObjects.push_back(id);
+	selectedObject = object; selectedNode = &object->getTransform(); nameDraftNode = nullptr;
+}
+
+bool Editor::CanDeleteSelection() const
+{
+	const auto objects = SelectedObjects();
+	return !objects.empty() && std::all_of(objects.begin(), objects.end(), [&](GameObject* object) { return CanDeleteObject(object); });
+}
+
 void Editor::DrawHierarchy()
 {
 	if (ImGui::Begin("Hierarchy", &showHierarchy)) {
@@ -854,20 +923,18 @@ void Editor::DrawHierarchy()
 				if (!object || object->isPendingDestroy()) continue;
 				if (editedObject && object != editedObject) continue;
 				ImGui::PushID(object);
-				const bool selected = selectedObject == object;
+				const bool selected = IsObjectSelected(object);
 				ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
 				if (selected) flags |= ImGuiTreeNodeFlags_Selected;
 				const bool open = ImGui::TreeNodeEx("Object", flags, "%s %d", ObjectLabel(*object), ++index);
 				if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-					selectedObject = object;
-					selectedNode = &object->getTransform();
+					SelectObject(object, ImGui::GetIO().KeyCtrl);
 				}
 				if (ImGui::BeginPopupContextItem("ObjectActions")) {
-					selectedObject = object;
-					selectedNode = &object->getTransform();
-					if (ImGui::MenuItem("Duplicate", nullptr, false, editedObject == nullptr)) requestedDuplicate = object;
-					if (ImGui::MenuItem("Delete", "Del", false, CanDeleteObject(object))) requestedDelete = object;
-					if (!CanDeleteObject(object)) ImGui::TextDisabled("Active editor camera");
+					SelectContextObject(object);
+					if (ImGui::MenuItem("Duplicate selection", nullptr, false, editedObject == nullptr)) requestedDuplicate = object;
+					if (ImGui::MenuItem("Delete selection", "Del", false, CanDeleteSelection())) requestedDelete = object;
+					if (!CanDeleteSelection()) ImGui::TextDisabled("Selection includes the active editor camera");
 					ImGui::EndPopup();
 				}
 				if (open) {
@@ -878,6 +945,8 @@ void Editor::DrawHierarchy()
 				ImGui::PopID();
 			}
 		}
+		if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+			&& !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive()) SelectObject(nullptr);
 	}
 	ImGui::End();
 }
@@ -921,21 +990,37 @@ void Editor::ApplySceneActions()
 	if (editedObject) return;
 	FinishTransformEdit();
 	sceneActionError.clear();
-	if (CanDeleteObject(removed) && BeginStructure(removed, "Delete object")) {
-		meshPathDrafts.clear();
-		level->destroyObject(removed);
-		checkSceneDirty = true;
+	if (removed && CanDeleteSelection()) {
+		const auto targets = IsObjectSelected(removed) ? SelectedObjects() : std::vector<GameObject*>{ removed };
+		const size_t firstRecord = pendingStructures.size();
+		for (auto* target : targets) {
+			if (!CanDeleteObject(target) || !BeginStructure(target, "Delete selection")) {
+				pendingStructures.resize(firstRecord); return;
+			}
+		}
+		for (auto* target : targets) level->destroyObject(target);
+		meshPathDrafts.clear(); checkSceneDirty = true;
 	}
 	if (duplicated && !duplicated->isPendingDestroy()) {
-		// Снимком владеет документ; новый объект передаём уровню только после полной сборки.
-		rapidjson::Document document;
-		auto json = duplicated->Serialize(document.GetAllocator(), sceneActionError);
-		GameObject* copy = json.IsNull() ? nullptr : GameObject::Deserialize(json, game.getComponentFactoryMap(), sceneActionError);
-		if (copy && !level->addObject(copy)) { delete copy; copy = nullptr; sceneActionError = "Cannot attach duplicated object."; }
-		if (copy) {
-			BeginStructure(copy, "Duplicate object", true);
-			selectedObject = copy; selectedNode = &copy->getTransform(); checkSceneDirty = true;
+		const auto sources = IsObjectSelected(duplicated) ? SelectedObjects() : std::vector<GameObject*>{ duplicated };
+		std::vector<GameObject*> copies;
+		// Все копии полностью собираются до передачи владения уровню.
+		for (auto* source : sources) {
+			rapidjson::Document document;
+			auto json = source->Serialize(document.GetAllocator(), sceneActionError);
+			auto* copy = json.IsNull() ? nullptr : GameObject::Deserialize(json, game.getComponentFactoryMap(), sceneActionError);
+			if (!copy) { for (auto* pending : copies) delete pending; return; }
+			copies.push_back(copy);
 		}
+		for (size_t i = 0; i < copies.size(); ++i) {
+			if (level->addObject(copies[i])) continue;
+			for (size_t j = 0; j < i; ++j) level->destroyObject(copies[j]);
+			for (size_t j = i; j < copies.size(); ++j) delete copies[j];
+			sceneActionError = "Cannot attach duplicated objects."; return;
+		}
+		for (auto* copy : copies) BeginStructure(copy, "Duplicate selection", true);
+		for (size_t i = 0; i < copies.size(); ++i) SelectObject(copies[i], i != 0);
+		checkSceneDirty = true;
 	}
 	if (type == ObjectType::None) return;
 
@@ -974,14 +1059,14 @@ void Editor::ApplySceneActions()
 	object->getTransform().set_position(DXVector3::Zero);
 	BeginStructure(object, "Create object", true);
 	// Компоненты будут инициализированы общим applyPendingChanges в конце кадра.
-	selectedObject = object;
-	selectedNode = &object->getTransform();
+	SelectObject(object);
 	checkSceneDirty = true;
 }
 
 void Editor::ResetSceneReferences()
 {
 	ClearDocumentHistory();
+	selectedObjects.clear();
 	selectedObject = nullptr; selectedNode = nameDraftNode = nullptr;
 	meshPathDrafts.clear(); treeAction = {};
 	requestedCreate = ObjectType::None; requestedDelete = requestedDuplicate = requestedObjectExport = nullptr;
@@ -1124,7 +1209,7 @@ void Editor::ApplyObjectActions()
 		parkedHistory = std::move(previousHistory);
 	}
 	objectFile = std::move(pendingObjectFile); savedScene = baseline;
-	selectedObject = object; selectedNode = &object->getTransform();
+	SelectObject(object);
 	RefreshSceneDirty();
 	game.getTimeManager().reset();
 }
@@ -1136,6 +1221,7 @@ void Editor::ClearDocumentHistory()
 	objectIds.clear(); nodeIds.clear(); componentIds.clear(); historyTargets.clear();
 	pendingStructures.clear(); requestedHistoryStep = 0;
 	pendingEdit = {}; editingTransform = editingGizmo = false;
+	pendingGroup.clear();
 }
 
 void Editor::ApplyTreeAction()
@@ -1164,7 +1250,7 @@ void Editor::ApplyTreeAction()
 	bool changed = false;
 	switch (action.operation) {
 	case TreeOperation::Add:
-		if (auto* child = node->add_child()) { selectedNode = child; selectedObject = node->getOwner(); changed = true; }
+		if (auto* child = node->add_child()) { SelectNode(child); changed = true; }
 		else sceneActionError = "Cannot create a child branch.";
 		break;
 	case TreeOperation::Rename:
@@ -1185,7 +1271,7 @@ void Editor::ApplyTreeAction()
 			sceneActionError = "The root and branches containing the active editor camera cannot be deleted."; break;
 		}
 		// Выбор и черновики очищаются до освобождения поддерева; история хранит его описание.
-		selectedObject = node->getOwner(); selectedNode = node->get_parent();
+		SelectNode(node->get_parent());
 		meshPathDrafts.clear(); nameDraftNode = nullptr;
 		changed = node->get_parent()->remove_child(node);
 		break;
@@ -1319,12 +1405,7 @@ void Editor::DrawTransformTree(TransformNode& node, int index)
 	if (node.get_children().empty()) flags |= ImGuiTreeNodeFlags_Leaf;
 	const bool open = ImGui::TreeNodeEx(&node, flags, "%s", node.get_name().c_str());
 	if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-		selectedNode = &node;
-		// Находим объект-владельца для узла, выбранного под другим объектом.
-		TransformNode* root = &node;
-		while (root->get_parent()) root = root->get_parent();
-		for (GameObject* object : game.getLevel()->getObjects())
-			if (object && &object->getTransform() == root) selectedObject = object;
+		SelectNode(&node);
 	}
 	if (node.get_parent() && ImGui::BeginDragDropSource()) {
 		TransformNode* source = &node;
@@ -1350,6 +1431,7 @@ void Editor::DrawInspector()
 		scenePanelFocused |= ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 		if (!selectedObject || !selectedNode) ImGui::TextDisabled("Select an object in Hierarchy");
 		else {
+			if (selectedObjects.size() > 1) ImGui::TextDisabled("%zu selected | Group transform", selectedObjects.size());
 			ImGui::TextUnformatted(ObjectLabel(*selectedObject));
 			DrawTreeInspector();
 			ImGui::SeparatorText("Local transform");
@@ -1377,13 +1459,18 @@ void Editor::DrawInspector()
 			if (ImGui::Button("Reset transform")) {
 				FinishTransformEdit(); FinishProperty();
 				pendingEdit = before;
+				CaptureTransformGroup(before);
 				editingTransform = true;
 				selectedNode->set_position(DXVector3::Zero);
 				selectedNode->set_rotation(DXQuaternion::Identity);
 				selectedNode->set_scale(DXVector3::One);
+				if (!pendingGroup.empty() && !ApplyTransformGroup(TransformMatrix(before).Invert() * TransformMatrix(CaptureTransform(selectedObject, selectedNode)))) {
+					selectedNode->set_position(before.position); selectedNode->set_rotation(before.rotation); selectedNode->set_scale(before.scale);
+				}
 				FinishTransformEdit();
 			}
 			ImGui::SeparatorText("Components");
+			if (selectedObjects.size() > 1) ImGui::TextDisabled("Component properties: active object");
 			if (ImGui::Button("Add component")) ImGui::OpenPopup("Add component");
 			if (ImGui::BeginPopup("Add component")) {
 				const char* labels[] = { "Mesh", "Directional light", "Point light", "Camera", "Camera movement", "Box collider", "Static body", "Dynamic body" };
@@ -1656,7 +1743,7 @@ void Editor::DrawViewport()
 	if (ImGui::Begin("Viewport")) {
 		scenePanelFocused |= ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 		DrawViewportToolbar();
-		const char* shortcuts = "LMB: select | MMB: look | MMB + WASD: move | MMB + Q / E: down / up | RMB: menu";
+		const char* shortcuts = "LMB: select | Ctrl+LMB: toggle selection | MMB: look | MMB + WASD: move | MMB + Q / E: down / up | RMB: menu";
 		ImVec2 size = ImGui::GetContentRegionAvail();
 		// Полоска занимает место вне изображения: на ней нельзя выбрать объект или вращать камеру.
 		const float footerHeight = ImGui::CalcTextSize(shortcuts, nullptr, false, (std::max)(1.0f, size.x)).y
@@ -1686,11 +1773,12 @@ void Editor::DrawViewport()
 			if (pickRequested && !navigating && !ImGui::IsAnyItemActive()
 				&& GetForegroundWindow() == game.getWindow().getWindow()
 				&& !ImGui::IsMouseDown(ImGuiMouseButton_Middle)
-				&& !(selectedNode && (ImGuizmo::IsOver() || ImGuizmo::IsUsing()))) PickObject(origin, size);
+				&& (ImGui::GetIO().KeyCtrl || !(selectedNode && (ImGuizmo::IsOver() || ImGuizmo::IsUsing()))))
+				PickObject(origin, size, ImGui::GetIO().KeyCtrl);
 			if (sceneHovered && !navigating && !popup && !ImGui::IsAnyItemActive()
 				&& !ImGuizmo::IsUsing() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
 				FinishTransformEdit();
-				PickObject(origin, size);
+				PickObject(origin, size, false, true);
 				ImGui::OpenPopup("Viewport actions");
 			}
 			DrawSelectionBounds(origin, size);
@@ -1712,8 +1800,8 @@ void Editor::DrawViewport()
 	} else navigating = false;
 	if (ImGui::BeginPopup("Viewport actions")) {
 		if (selectedObject && !selectedObject->isPendingDestroy()) {
-			if (ImGui::MenuItem("Duplicate object", nullptr, false, editedObject == nullptr)) requestedDuplicate = selectedObject;
-			if (ImGui::MenuItem("Delete object", "Del", false, CanDeleteObject(selectedObject))) requestedDelete = selectedObject;
+			if (ImGui::MenuItem("Duplicate selection", nullptr, false, editedObject == nullptr)) requestedDuplicate = selectedObject;
+			if (ImGui::MenuItem("Delete selection", "Del", false, CanDeleteSelection())) requestedDelete = selectedObject;
 		} else if (ImGui::BeginMenu("Create object", game.getLevel() != nullptr && !editedObject)) {
 			DrawCreateMenu(); ImGui::EndMenu();
 		}
@@ -1734,38 +1822,42 @@ void Editor::DrawSelectionBounds(const ImVec2& origin, const ImVec2& size)
 	};
 	ImDrawList* draw = ImGui::GetWindowDrawList();
 	draw->PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
-	for (Component* component : selectedObject->getComponents()) {
-		auto* mesh = dynamic_cast<MeshComponent*>(component);
-		if (!mesh || mesh->isPendingDestroy() || !mesh->getRenderItem()) continue;
-		const auto& vertices = mesh->getMeshData().vertices;
-		if (vertices.empty()) continue;
-		DXVector3 minimum(vertices.front().position), maximum = minimum;
-		for (const auto& vertex : vertices) {
-			minimum = DXVector3::Min(minimum, DXVector3(vertex.position));
-			maximum = DXVector3::Max(maximum, DXVector3(vertex.position));
-		}
-		// Локальные габариты поворачиваются и масштабируются вместе с компонентом.
-		const TransformNode* node = mesh->getRenderItem()->transformNode;
-		const DXMatrix matrix = (node ? DXMatrix(node->worldMatrix()) : DXMatrix::Identity) * viewProjection;
-		Vector4 corners[8];
-		for (int index = 0; index < 8; ++index)
-			corners[index] = Vector4::Transform(Vector4(
-				(index & 1) ? maximum.x : minimum.x, (index & 2) ? maximum.y : minimum.y,
-				(index & 4) ? maximum.z : minimum.z, 1.0f), matrix);
-		for (const auto& edge : edges) {
-			Vector4 a = corners[edge[0]], b = corners[edge[1]];
-			if (!ClipSelectionEdge(a, b)) continue;
-			const ImVec2 first(origin.x + (a.x / a.w + 1) * size.x * 0.5f,
-				origin.y + (1 - a.y / a.w) * size.y * 0.5f);
-			const ImVec2 last(origin.x + (b.x / b.w + 1) * size.x * 0.5f,
-				origin.y + (1 - b.y / b.w) * size.y * 0.5f);
-			draw->AddLine(first, last, IM_COL32(255, 170, 45, 230), 1.5f);
+	for (auto* object : game.getLevel()->getObjects()) {
+		if (!object || object->isPendingDestroy() || !IsObjectSelected(object)) continue;
+		const ImU32 color = object == selectedObject ? IM_COL32(255, 170, 45, 230) : IM_COL32(100, 185, 255, 230);
+		for (Component* component : object->getComponents()) {
+			auto* mesh = dynamic_cast<MeshComponent*>(component);
+			if (!mesh || mesh->isPendingDestroy() || !mesh->getRenderItem()) continue;
+			const auto& vertices = mesh->getMeshData().vertices;
+			if (vertices.empty()) continue;
+			DXVector3 minimum(vertices.front().position), maximum = minimum;
+			for (const auto& vertex : vertices) {
+				minimum = DXVector3::Min(minimum, DXVector3(vertex.position));
+				maximum = DXVector3::Max(maximum, DXVector3(vertex.position));
+			}
+			// Локальные габариты поворачиваются и масштабируются вместе с компонентом.
+			const TransformNode* node = mesh->getRenderItem()->transformNode;
+			const DXMatrix matrix = (node ? DXMatrix(node->worldMatrix()) : DXMatrix::Identity) * viewProjection;
+			Vector4 corners[8];
+			for (int index = 0; index < 8; ++index)
+				corners[index] = Vector4::Transform(Vector4(
+					(index & 1) ? maximum.x : minimum.x, (index & 2) ? maximum.y : minimum.y,
+					(index & 4) ? maximum.z : minimum.z, 1.0f), matrix);
+			for (const auto& edge : edges) {
+				Vector4 a = corners[edge[0]], b = corners[edge[1]];
+				if (!ClipSelectionEdge(a, b)) continue;
+				const ImVec2 first(origin.x + (a.x / a.w + 1) * size.x * 0.5f,
+					origin.y + (1 - a.y / a.w) * size.y * 0.5f);
+				const ImVec2 last(origin.x + (b.x / b.w + 1) * size.x * 0.5f,
+					origin.y + (1 - b.y / b.w) * size.y * 0.5f);
+				draw->AddLine(first, last, color, 1.5f);
+			}
 		}
 	}
 	draw->PopClipRect();
 }
 
-void Editor::PickObject(const ImVec2& origin, const ImVec2& size)
+void Editor::PickObject(const ImVec2& origin, const ImVec2& size, bool toggle, bool context)
 {
 	Level* level = game.getLevel();
 	EditorCamera* camera = game.getRenderServer().getCamera();
@@ -1826,20 +1918,32 @@ void Editor::PickObject(const ImVec2& origin, const ImVec2& size)
 			}
 		}
 	}
-	FinishTransformEdit();
-	selectedObject = hit;
-	selectedNode = hit ? &hit->getTransform() : nullptr;
+	if (context) SelectContextObject(hit); else SelectObject(hit, toggle);
 }
 
 void Editor::DrawGizmo(const ImVec2& origin, const ImVec2& size)
 {
 	EditorCamera* camera = game.getRenderServer().getCamera();
 	if (!selectedNode || !camera || navigating
+		|| (ImGui::GetIO().KeyCtrl && !editingGizmo)
 		|| ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
 	DXMatrix view;
 	if (!camera->getView(view)) return;
 	const DXMatrix projection = camera->getProjection(size.x / size.y);
 	DXMatrix world = selectedNode->worldMatrix();
+	const bool group = selectedObjects.size() > 1 && !selectedNode->get_parent();
+	if (group) {
+		if (!editingGizmo) {
+			DXVector3 center = DXVector3::Zero;
+			const auto objects = SelectedObjects();
+			for (auto* object : objects) center += object->getTransform().get_position();
+			if (objects.empty()) return;
+			center /= static_cast<float>(objects.size());
+			groupGizmoStart = DXMatrix::CreateFromQuaternion(selectedNode->get_rotation()) * DXMatrix::CreateTranslation(center);
+			groupGizmoCurrent = groupGizmoStart;
+		}
+		world = groupGizmoCurrent;
+	}
 	ImGuizmo::SetOrthographic(false);
 	ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
 	ImGuizmo::SetRect(origin.x, origin.y, size.x, size.y);
@@ -1851,10 +1955,15 @@ void Editor::DrawGizmo(const ImVec2& origin, const ImVec2& size)
 	if (ImGuizmo::IsUsing() && !editingGizmo) {
 		FinishTransformEdit(); FinishProperty();
 		pendingEdit = before;
+		CaptureTransformGroup(before);
 		editingTransform = editingGizmo = true;
 	}
 	if (!ImGuizmo::IsUsing() && editingGizmo) FinishTransformEdit();
 	if (!changed) return;
+	if (group) {
+		if (ApplyTransformGroup(groupGizmoStart.Invert() * world)) groupGizmoCurrent = world;
+		return;
+	}
 	DXMatrix parent;
 	if (!ParentMatrix(*selectedNode, parent)) return;
 	// Gizmo меняет мировую матрицу, узел хранит локальные значения.
@@ -1957,7 +2066,12 @@ void Editor::RegisterObjectState(GameObject* object, const ObjectState& state)
     historyTargets[state.id] = { TargetKind::Object, object };
     std::vector<Component*> ordinary;
     for (auto* component : object->getComponents())
+    {
         if (!dynamic_cast<TransformableComponent*>(component)) ordinary.push_back(component);
+        if (auto* movement = dynamic_cast<CameraMovementComponent*>(component)) {
+            movement->enabled = false; movement->rotationButton = Keys::MiddleButton;
+        }
+    }
     for (const auto& identity : state.identities) {
         auto* node = &object->getTransform();
         for (size_t index : identity.branch) {
@@ -2045,7 +2159,8 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
         if (!node->set_name(name)) return false;
         node->set_position(DXVector3(p)); node->set_rotation(DXQuaternion(r[0], r[1], r[2], r[3])); node->set_scale(DXVector3(s));
         node->set_inherit_position(ip); node->set_inherit_rotation(ir); node->set_inherit_scale(is);
-        selectedObject = node->getOwner(); selectedNode = node;
+        if (!IsObjectSelected(node->getOwner())) SelectNode(node);
+        else { selectedObject = node->getOwner(); selectedNode = node; }
         return true;
     }
     if (entry.kind == HistoryKind::Component && found->second.kind == TargetKind::Component) {
@@ -2070,7 +2185,8 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 
 void Editor::PushHistory(HistoryEntry entry)
 {
-    if (entry.kind == HistoryKind::Structure ? entry.objectBefore.json == entry.objectAfter.json : entry.before == entry.after) return;
+    if (entry.kind == HistoryKind::Group ? entry.children.empty()
+        : entry.kind == HistoryKind::Structure ? entry.objectBefore.json == entry.objectAfter.json : entry.before == entry.after) return;
     auto& entries = documentHistory.entries;
     entries.erase(entries.begin() + documentHistory.position, entries.end());
     entries.push_back(std::move(entry));
@@ -2080,14 +2196,17 @@ void Editor::PushHistory(HistoryEntry entry)
         for (const auto& identity : state.identities) bytes += identity.branch.size() * sizeof(size_t);
         return bytes;
     };
-    const auto entryBytes = [&](const HistoryEntry& action) {
-        return sizeof(HistoryEntry) + action.name.size() + action.before.size() + action.after.size()
+    const auto entryBytes = [&](const auto& self, const HistoryEntry& action) -> size_t {
+        size_t bytes = sizeof(HistoryEntry) + action.name.size() + action.before.size() + action.after.size()
+            + (action.selectedBefore.size() + action.selectedAfter.size()) * sizeof(HistoryId)
             + objectBytes(action.objectBefore) + objectBytes(action.objectAfter);
+        for (const auto& child : action.children) bytes += self(self, child);
+        return bytes;
     };
     size_t bytes = 0;
-    for (const auto& action : entries) bytes += entryBytes(action);
+    for (const auto& action : entries) bytes += entryBytes(entryBytes, action);
     while (entries.size() > 1 && (entries.size() > 128 || bytes > 64ull * 1024 * 1024)) {
-        bytes -= entryBytes(entries.front());
+        bytes -= entryBytes(entryBytes, entries.front());
         entries.erase(entries.begin());
     }
     documentHistory.position = entries.size();
@@ -2138,6 +2257,7 @@ bool Editor::BeginStructure(GameObject* object, const char* name, bool creating)
         if (entry.objectBefore.json.empty()) return false;
     }
     entry.selectionBefore = Id(selectedNode);
+    entry.selectedBefore = selectedObjects;
     entry.cameraBefore = Id(static_cast<Component*>(game.getRenderServer().getCamera()));
     pendingStructures.push_back(std::move(entry));
     return true;
@@ -2145,47 +2265,133 @@ bool Editor::BeginStructure(GameObject* object, const char* name, bool creating)
 void Editor::FinishStructures()
 {
     auto records = std::move(pendingStructures); pendingStructures.clear();
+    HistoryEntry group; group.kind = HistoryKind::Group;
+    if (!records.empty()) {
+        group.name = records.front().name;
+        group.selectedBefore = records.front().selectedBefore;
+        group.selectionBefore = records.front().selectionBefore;
+        group.cameraBefore = records.front().cameraBefore;
+    }
     for (auto& entry : records) {
         entry.objectAfter.id = entry.target;
         const auto found = historyTargets.find(entry.target);
         if (found != historyTargets.end()) {
-            entry.objectAfter = CaptureObjectState(static_cast<GameObject*>(found->second.pointer));
+            auto* object = static_cast<GameObject*>(found->second.pointer);
+            for (auto* component : object->getComponents()) if (auto* movement = dynamic_cast<CameraMovementComponent*>(component)) {
+                movement->enabled = false; movement->rotationButton = Keys::MiddleButton;
+            }
+            entry.objectAfter = CaptureObjectState(object);
             if (entry.objectAfter.json.empty()) { documentError = "Cannot record the changed object."; continue; }
         }
         entry.selectionAfter = Id(selectedNode);
+        entry.selectedAfter = selectedObjects;
         entry.cameraAfter = Id(static_cast<Component*>(game.getRenderServer().getCamera()));
-        PushHistory(std::move(entry));
+        if (records.size() == 1) PushHistory(std::move(entry));
+        else if (entry.objectBefore.json != entry.objectAfter.json) group.children.push_back(std::move(entry));
+    }
+    if (records.size() > 1) {
+        group.selectedAfter = selectedObjects; group.selectionAfter = Id(selectedNode);
+        group.cameraAfter = Id(static_cast<Component*>(game.getRenderServer().getCamera()));
+        PushHistory(std::move(group));
     }
 }
 
 bool Editor::RestoreObjectState(const ObjectState& state, HistoryId target)
 {
+    ObjectState description = state; description.id = target;
+    return RestoreObjectStates({ std::move(description) });
+}
+
+bool Editor::RestoreObjectStates(std::vector<ObjectState> states)
+{
     auto* level = game.getLevel();
-    GameObject* previous = nullptr;
-    if (const auto found = historyTargets.find(target); found != historyTargets.end())
-        previous = static_cast<GameObject*>(found->second.pointer);
-    GameObject* restored = nullptr;
-    if (!state.json.empty()) {
-        rapidjson::Document json; json.Parse(state.json.data(), state.json.size());
-        if (json.HasParseError()) return false;
-        restored = GameObject::Deserialize(json, game.getComponentFactoryMap(), documentError);
-        if (!restored) return false;
-        if (!level->addObjectAt(restored, state.position)) { delete restored; documentError = "Cannot restore object ownership."; return false; }
+    // Сначала готовим весь пакет: ошибка десериализации не должна менять ни один объект.
+    std::stable_sort(states.begin(), states.end(), [](const auto& a, const auto& b) { return a.position < b.position; });
+    std::vector<GameObject*> restored(states.size(), nullptr);
+    for (size_t i = 0; i < states.size(); ++i) {
+        if (states[i].json.empty()) continue;
+        rapidjson::Document json; json.Parse(states[i].json.data(), states[i].json.size());
+        if (!json.HasParseError()) restored[i] = GameObject::Deserialize(json, game.getComponentFactoryMap(), documentError);
+        if (!restored[i]) {
+            for (auto* object : restored) delete object;
+            return false;
+        }
     }
-    selectedObject = nullptr; selectedNode = nameDraftNode = nullptr;
+    for (size_t i = 0; i < states.size(); ++i) {
+        if (!restored[i] || level->addObjectAt(restored[i], states[i].position)) continue;
+        // Уровень уже владеет предыдущими элементами очереди; удаляем их через его API.
+        for (size_t j = 0; j < i; ++j) if (restored[j]) level->destroyObject(restored[j]);
+        for (size_t j = i; j < restored.size(); ++j) delete restored[j];
+        game.EndFrame(); documentError = "Cannot restore object ownership."; return false;
+    }
+    selectedObject = nullptr; selectedNode = nameDraftNode = nullptr; selectedObjects.clear();
     requestedObjectExport = nullptr;
     meshPathDrafts.clear(); treeAction = {}; ImGui::ClearActiveID(); ImGui::ClearDragDrop();
-    if (previous) { ForgetObjectHistoryTargets(previous); level->destroyObject(previous); }
-    if (editedObject == previous && previous) editedObject = restored;
-    // Init/Shutdown нужны только для структурного восстановления, не для редактирования свойств.
+    for (size_t i = 0; i < states.size(); ++i) {
+        const auto found = historyTargets.find(states[i].id);
+        if (found == historyTargets.end() || found->second.kind != TargetKind::Object) continue;
+        auto* previous = static_cast<GameObject*>(found->second.pointer);
+        if (editedObject == previous) editedObject = restored[i];
+        ForgetObjectHistoryTargets(previous); level->destroyObject(previous);
+    }
+    // Весь пакет удаляется и возвращается за один EndFrame с сохранением авторского порядка.
     game.EndFrame();
-    if (restored) RegisterObjectState(restored, state);
+    for (size_t i = 0; i < states.size(); ++i) if (restored[i]) RegisterObjectState(restored[i], states[i]);
     return true;
+}
+
+void Editor::RestoreSelectedObjects(const std::vector<HistoryId>& objects, HistoryId active)
+{
+    selectedObjects.clear(); selectedObject = nullptr; selectedNode = nameDraftNode = nullptr;
+    for (HistoryId id : objects) {
+        const auto found = historyTargets.find(id);
+        if (found == historyTargets.end() || found->second.kind != TargetKind::Object) continue;
+        auto* object = static_cast<GameObject*>(found->second.pointer);
+        if (!object->isPendingDestroy()) { selectedObjects.push_back(id); selectedObject = object; selectedNode = &object->getTransform(); }
+    }
+    const auto found = historyTargets.find(active);
+    if (found != historyTargets.end() && found->second.kind == TargetKind::Node) {
+        auto* node = static_cast<TransformNode*>(found->second.pointer);
+        if (IsObjectSelected(node->getOwner())) { selectedNode = node; selectedObject = node->getOwner(); }
+    }
+}
+
+bool Editor::ApplyHistoryEntry(const HistoryEntry& entry, bool undo)
+{
+    bool applied = false;
+    if (entry.kind == HistoryKind::Group) {
+        if (entry.children.empty()) return false;
+        if (entry.children.front().kind == HistoryKind::Structure) {
+            std::vector<ObjectState> states;
+            for (const auto& child : entry.children) states.push_back(undo ? child.objectBefore : child.objectAfter);
+            applied = RestoreObjectStates(std::move(states));
+        } else {
+            // Проверяем все адресаты до изменения первой позы; откат готовится из живых значений.
+            std::vector<std::string> rollback;
+            for (const auto& child : entry.children) {
+                const auto found = historyTargets.find(child.target);
+                if (found == historyTargets.end() || found->second.kind != TargetKind::Node) return false;
+                rollback.push_back(NodeProperties(*static_cast<TransformNode*>(found->second.pointer)));
+            }
+            size_t changed = 0;
+            for (; changed < entry.children.size(); ++changed)
+                if (!ApplyProperties(entry.children[changed], undo ? entry.children[changed].before : entry.children[changed].after)) break;
+            applied = changed == entry.children.size();
+            if (!applied) for (size_t i = 0; i < changed; ++i) ApplyProperties(entry.children[i], rollback[i]);
+        }
+    } else if (entry.kind == HistoryKind::Structure) {
+        applied = RestoreObjectState(undo ? entry.objectBefore : entry.objectAfter, entry.target);
+    } else return ApplyProperties(entry, undo ? entry.before : entry.after);
+    if (applied) {
+        RestoreHistorySelection(undo ? entry.selectionBefore : entry.selectionAfter, undo ? entry.cameraBefore : entry.cameraAfter);
+        RestoreSelectedObjects(undo ? entry.selectedBefore : entry.selectedAfter, undo ? entry.selectionBefore : entry.selectionAfter);
+    }
+    return applied;
 }
 void Editor::RestoreHistorySelection(HistoryId selection, HistoryId camera)
 {
     if (const auto found = historyTargets.find(selection); found != historyTargets.end() && found->second.kind == TargetKind::Node) {
-        selectedNode = static_cast<TransformNode*>(found->second.pointer); selectedObject = selectedNode->getOwner();
+        SelectNode(static_cast<TransformNode*>(found->second.pointer));
     }
     const auto found = historyTargets.find(camera);
     if (found != historyTargets.end() && found->second.kind == TargetKind::Component)
@@ -2200,12 +2406,7 @@ void Editor::ApplyHistoryStep()
     if (!direction || (direction < 0 ? context.position == 0 : context.position >= context.entries.size())) return;
     const size_t index = direction < 0 ? context.position - 1 : context.position;
     const auto& entry = context.entries[index];
-    bool applied = false;
-    if (entry.kind == HistoryKind::Structure) {
-        applied = RestoreObjectState(direction < 0 ? entry.objectBefore : entry.objectAfter, entry.target);
-        if (applied) RestoreHistorySelection(direction < 0 ? entry.selectionBefore : entry.selectionAfter,
-            direction < 0 ? entry.cameraBefore : entry.cameraAfter);
-    } else applied = ApplyProperties(entry, direction < 0 ? entry.before : entry.after);
+    const bool applied = ApplyHistoryEntry(entry, direction < 0);
     if (!applied) { if (documentError.empty()) documentError = "Cannot apply history operation."; return; }
     context.position = direction < 0 ? index : index + 1;
     meshPathDrafts.clear(); nameDraftNode = nullptr; checkSceneDirty = true; game.getTimeManager().reset();
@@ -2215,24 +2416,87 @@ Editor::TransformState Editor::CaptureTransform(GameObject* object, TransformNod
 {
     return { object, node, node->get_position(), node->get_scale(), node->get_rotation() };
 }
+DXMatrix Editor::TransformMatrix(const TransformState& state) const
+{
+    return DXMatrix::CreateScale(state.scale) * DXMatrix::CreateFromQuaternion(state.rotation) * DXMatrix::CreateTranslation(state.position);
+}
+
+void Editor::CaptureTransformGroup(const TransformState& before)
+{
+    pendingGroup.clear();
+    if (selectedObjects.size() < 2 || before.node->get_parent()) return;
+    for (auto* object : SelectedObjects())
+        pendingGroup.push_back(object == before.object ? before : CaptureTransform(object, &object->getTransform()));
+}
+
+bool Editor::ApplyTransformGroup(const DXMatrix& delta)
+{
+    std::vector<TransformState> poses;
+    for (const auto& before : pendingGroup) {
+        TransformState pose = before;
+        DXMatrix matrix = TransformMatrix(before) * delta;
+        if (!matrix.Decompose(pose.scale, pose.rotation, pose.position)
+            || std::abs(pose.scale.x * pose.scale.y * pose.scale.z) < 1e-8f) return false;
+        pose.rotation.Normalize();
+        const DXMatrix rebuilt = TransformMatrix(pose);
+        // Не применяем приближённую S/R/T, если общий масштаб создаёт сдвиг осей.
+        for (int row = 0; row < 4; ++row) for (int column = 0; column < 4; ++column)
+            if (!std::isfinite(matrix.m[row][column]) || std::abs(matrix.m[row][column] - rebuilt.m[row][column])
+                > 0.0001f * (1.0f + std::abs(matrix.m[row][column]))) {
+                sceneActionError = "Group transform would introduce shear. Use uniform scale for rotated objects.";
+                return false;
+            }
+        poses.push_back(pose);
+    }
+    // Сначала проверены все позы; только теперь меняем исходные объекты.
+    for (const auto& pose : poses) {
+        pose.node->set_position(pose.position); pose.node->set_rotation(pose.rotation); pose.node->set_scale(pose.scale);
+    }
+    sceneActionError.clear(); checkSceneDirty = true;
+    return true;
+}
+
 void Editor::TrackTransformEdit(const TransformState& before)
 {
     if (ImGui::IsItemActivated() || (ImGui::IsItemActive() && !editingTransform)) {
-        FinishTransformEdit(); FinishProperty(); pendingEdit = before; editingTransform = true;
+        FinishTransformEdit(); FinishProperty(); pendingEdit = before;
+        CaptureTransformGroup(before); editingTransform = true;
     }
-    if (before.node && (before.position != before.node->get_position()
-        || before.rotation != before.node->get_rotation() || before.scale != before.node->get_scale())) checkSceneDirty = true;
+    const bool changed = before.node && (before.position != before.node->get_position()
+        || before.rotation != before.node->get_rotation() || before.scale != before.node->get_scale());
+    if (changed) {
+        checkSceneDirty = true;
+        if (!pendingGroup.empty() && !ApplyTransformGroup(TransformMatrix(pendingEdit).Invert()
+            * TransformMatrix(CaptureTransform(before.object, before.node)))) {
+            before.node->set_position(before.position); before.node->set_rotation(before.rotation); before.node->set_scale(before.scale);
+        }
+    }
     if (ImGui::IsItemDeactivated()) FinishTransformEdit();
 }
 void Editor::FinishTransformEdit()
 {
     if (!editingTransform) return;
     editingTransform = editingGizmo = false;
-    if (!pendingEdit.object || pendingEdit.object->isPendingDestroy() || pendingEdit.node->isPendingDestroy()) { pendingEdit = {}; return; }
-    HistoryEntry entry; entry.kind = HistoryKind::Node; entry.target = Id(pendingEdit.node); entry.name = "Transform";
-    entry.before = NodeProperties(*pendingEdit.node, &pendingEdit); entry.after = NodeProperties(*pendingEdit.node);
-    pendingEdit = {};
-    PushHistory(std::move(entry));
+    if (!pendingEdit.object || pendingEdit.object->isPendingDestroy() || pendingEdit.node->isPendingDestroy()) {
+        pendingEdit = {}; pendingGroup.clear(); return;
+    }
+    const auto record = [&](const TransformState& before) {
+        HistoryEntry entry; entry.kind = HistoryKind::Node; entry.target = Id(before.node); entry.name = "Transform";
+        entry.before = NodeProperties(*before.node, &before); entry.after = NodeProperties(*before.node);
+        return entry;
+    };
+    if (pendingGroup.empty()) PushHistory(record(pendingEdit));
+    else {
+        HistoryEntry group; group.kind = HistoryKind::Group; group.name = "Transform selection";
+        group.selectedBefore = group.selectedAfter = selectedObjects;
+        group.selectionBefore = group.selectionAfter = Id(pendingEdit.node);
+        for (const auto& before : pendingGroup) {
+            auto entry = record(before);
+            if (entry.before != entry.after) group.children.push_back(std::move(entry));
+        }
+        PushHistory(std::move(group));
+    }
+    pendingEdit = {}; pendingGroup.clear();
 }
 void Editor::Undo()
 {
