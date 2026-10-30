@@ -17,6 +17,7 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
 using DirectX::SimpleMath::Vector4;
+using EditorAction = EditorSettings::Action;
 
 namespace {
 	constexpr wchar_t EditorProperty[] = L"GGEngine.Editor";
@@ -290,7 +291,7 @@ Editor::~Editor()
 	if (previousProcedure && IsWindow(window))
 		SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousProcedure));
 	RemovePropW(window, EditorProperty);
-	if (auto* movement = GetCameraMovement()) movement->enabled = true;
+	if (auto* movement = GetCameraMovement()) { movement->enabled = true; movement->useDefaultMovementInput(); }
 	ReleaseViewport();
 	if (ui) {
 		ImGui::SetCurrentContext(ui);
@@ -308,9 +309,12 @@ bool Editor::Init()
 	if (!ui) return false;
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
+	// Клик без движения включает ввод числа; перетаскивание с ЛКМ меняет значение.
+	io.ConfigDragClickToInputText = true;
 	// Пока нет проекта сцены, не создаём imgui.ini в исходниках.
 	io.IniFilename = nullptr;
 	ImGui::StyleColorsDark();
+	settings.Load(settingsError);
 	ImGui::GetStyle().WindowRounding = 3.0f;
 	ImGui::GetStyle().FrameRounding = 3.0f;
 
@@ -383,13 +387,14 @@ int Editor::Run()
 		ImGuizmo::BeginFrame();
 		scenePanelFocused = false;
 		saveShortcut = false;
-		// Ctrl+S доступен в полях инспектора; текст пути подтверждается до записи сцены.
-		if (!navigating && GetForegroundWindow() == window
+		// Назначенное сохранение доступно и в полях инспектора до записи сцены.
+		if (!navigating && !settings.Held(EditorAction::Navigate) && GetForegroundWindow() == window
 			&& !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
-			saveShortcut = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal);
+			saveShortcut = settings.Shortcut(EditorAction::Save);
 		if (saveShortcut) requestedSave = true;
 		DrawDockspace();
 		DrawProjectDialogs();
+		DrawSettings();
 		if (showHierarchy) DrawHierarchy();
 		if (showInspector) DrawInspector();
 		DrawViewport();
@@ -445,7 +450,7 @@ void Editor::DrawDockspace()
 	if (ImGui::BeginMainMenuBar()) {
 		if (ImGui::BeginMenu("File")) {
 			if (editedObject && ImGui::MenuItem("Return to Scene")) { pendingAction = PendingAction::ReturnScene; checkPendingAction = true; }
-			if (ImGui::MenuItem(editedObject ? "Save Object" : "Save Scene", "Ctrl+S", false, game.getLevel() != nullptr)) requestedSave = true;
+			if (ImGui::MenuItem(editedObject ? "Save Object" : "Save Scene", settings.Label(EditorAction::Save).c_str(), false, game.getLevel() != nullptr)) requestedSave = true;
 			if (ImGui::MenuItem("Save selected object as...", nullptr, false, selectedObject != nullptr)) {
 				if (PickObjectSavePath(game.getWindow().getWindow(), exportObjectPath, documentError)) requestedObjectExport = selectedObject;
 				game.getTimeManager().reset();
@@ -486,8 +491,10 @@ void Editor::DrawDockspace()
 			const size_t position = documentHistory.position;
 			const std::string undo = position ? "Undo: " + entries[position - 1].name : "Undo";
 			const std::string redo = position < entries.size() ? "Redo: " + entries[position].name : "Redo";
-			if (ImGui::MenuItem(undo.c_str(), "Ctrl+Z", false, !editingTransform && !editingProperty && position > 0)) Undo();
-			if (ImGui::MenuItem(redo.c_str(), "Ctrl+Y", false, !editingTransform && !editingProperty && position < entries.size())) Redo();
+			if (ImGui::MenuItem(undo.c_str(), settings.Label(EditorAction::Undo).c_str(), false, !editingTransform && !editingProperty && position > 0)) Undo();
+			if (ImGui::MenuItem(redo.c_str(), settings.Label(EditorAction::Redo).c_str(), false, !editingTransform && !editingProperty && position < entries.size())) Redo();
+			ImGui::Separator();
+			if (ImGui::MenuItem("Editor settings...")) openSettings = true;
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Window")) {
@@ -522,6 +529,75 @@ void Editor::DrawDockspace()
 		ImGui::DockBuilderDockWindow("Viewport", center);
 		ImGui::DockBuilderFinish(dock);
 	}
+}
+
+Keys Editor::NavigationButton() const
+{
+	return settings.Get(EditorAction::Navigate).key == ImGuiKey_MouseRight ? Keys::RightButton : Keys::MiddleButton;
+}
+
+void Editor::DrawSettings()
+{
+	if (openSettings) {
+		openSettings = false; settingsDraft = settings; capturingBinding = -1;
+		FinishTransformEdit(); FinishProperty();
+		ImGui::OpenPopup("Editor settings");
+	}
+	ImGui::SetNextWindowSize(ImVec2(640, 540), ImGuiCond_FirstUseEver);
+	if (!ImGui::BeginPopupModal("Editor settings", nullptr, ImGuiWindowFlags_NoDocking)) return;
+	ImGui::TextUnformatted("Click a binding, then press the new key combination.");
+	bool beginCapture = false;
+	ImGui::BeginChild("Bindings", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 4));
+	if (ImGui::BeginTable("Shortcuts", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+		ImGui::TableSetupColumn("Action"); ImGui::TableSetupColumn("Binding"); ImGui::TableHeadersRow();
+		for (size_t i = 0; i < EditorSettings::ActionCount; ++i) {
+			const auto action = static_cast<EditorAction>(i);
+			ImGui::PushID(static_cast<int>(i)); ImGui::TableNextRow(); ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted(EditorSettings::Name(action));
+			ImGui::TableNextColumn();
+			if (ImGui::Button(settingsDraft.Label(action).c_str(), ImVec2(-1, 0))) {
+				capturingBinding = static_cast<int>(i); bindingCaptureFrame = ImGui::GetFrameCount(); beginCapture = true;
+			}
+			ImGui::PopID();
+		}
+		ImGui::EndTable();
+	}
+	const char* modifier = settingsDraft.selectionModifier == ImGuiMod_Ctrl ? "Ctrl" : settingsDraft.selectionModifier == ImGuiMod_Shift ? "Shift" : "Alt";
+	if (ImGui::BeginCombo("Multi-selection modifier", modifier)) {
+		if (ImGui::Selectable("Ctrl", settingsDraft.selectionModifier == ImGuiMod_Ctrl)) settingsDraft.selectionModifier = ImGuiMod_Ctrl;
+		if (ImGui::Selectable("Shift", settingsDraft.selectionModifier == ImGuiMod_Shift)) settingsDraft.selectionModifier = ImGuiMod_Shift;
+		if (ImGui::Selectable("Alt", settingsDraft.selectionModifier == ImGuiMod_Alt)) settingsDraft.selectionModifier = ImGuiMod_Alt;
+		ImGui::EndCombo();
+	}
+	ImGui::TextDisabled("Camera directions are active while holding the navigation binding.");
+	ImGui::EndChild();
+	if (!settingsError.empty()) ImGui::TextWrapped("%s", settingsError.c_str());
+	if (ImGui::Button("Save and apply")) {
+		// Применяем только после проверки конфликтов и успешной записи файла.
+		if (settingsDraft.Save(settingsError)) { settings = settingsDraft; navigating = false; ImGui::CloseCurrentPopup(); }
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Reset defaults")) { settingsDraft = EditorSettings(); settingsError.clear(); }
+	ImGui::SameLine();
+	if (ImGui::Button("Cancel")) { capturingBinding = -1; ImGui::CloseCurrentPopup(); }
+	if (beginCapture) ImGui::OpenPopup("Assign binding");
+	if (ImGui::BeginPopupModal("Assign binding", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		const auto action = static_cast<EditorAction>(capturingBinding);
+		ImGui::TextUnformatted(EditorSettings::Name(action));
+		ImGui::TextUnformatted(action == EditorAction::Navigate || action == EditorAction::ContextMenu
+			? "Press MMB or RMB, optionally with modifiers. Escape cancels." : "Press a key with optional modifiers. Escape cancels.");
+		// Клик, открывший захват, не становится новым назначением.
+		if (ImGui::GetFrameCount() > bindingCaptureFrame + 1) {
+			for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key) {
+				if (!EditorSettings::AcceptsKey(action, static_cast<ImGuiKey>(key)) || !ImGui::IsKeyPressed(static_cast<ImGuiKey>(key), false)) continue;
+				settingsDraft.Get(action) = { static_cast<ImGuiKey>(key), ImGui::GetIO().KeyMods };
+				settingsError.clear(); capturingBinding = -1; ImGui::CloseCurrentPopup(); break;
+			}
+		}
+		if (ImGui::Button("Cancel binding") || ImGui::IsKeyPressed(ImGuiKey_Escape)) { capturingBinding = -1; ImGui::CloseCurrentPopup(); }
+		ImGui::EndPopup();
+	}
+	ImGui::EndPopup();
 }
 
 void Editor::QueueProjectOpen(const std::string& file)
@@ -621,9 +697,13 @@ void Editor::HandleShortcuts()
 		|| ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive()
 		|| ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
 	if (!scenePanelFocused || contentBrowser.IsFocused()) return;
-	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) Undo();
-	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal)) Redo();
-	if (ImGui::Shortcut(ImGuiKey_Delete, ImGuiInputFlags_RouteGlobal)) {
+	if (settings.Shortcut(EditorAction::Undo)) Undo();
+	if (settings.Shortcut(EditorAction::Redo)) Redo();
+	if (settings.Shortcut(EditorAction::Duplicate) && !editedObject && selectedObject) requestedDuplicate = selectedObject;
+	if (settings.Shortcut(EditorAction::Move)) { FinishTransformEdit(); operation = ImGuizmo::TRANSLATE; }
+	if (settings.Shortcut(EditorAction::Rotate)) { FinishTransformEdit(); operation = ImGuizmo::ROTATE; }
+	if (settings.Shortcut(EditorAction::Scale)) { FinishTransformEdit(); operation = ImGuizmo::SCALE; }
+	if (settings.Shortcut(EditorAction::Delete)) {
 		if (selectedNode && selectedNode->get_parent()) treeAction = { TreeOperation::Remove, selectedNode };
 		else if (CanDeleteSelection()) requestedDelete = selectedObject;
 	}
@@ -807,7 +887,7 @@ void Editor::ApplyProjectAction()
 			if (!camera) camera = dynamic_cast<EditorCamera*>(component);
 			if (auto* navigation = dynamic_cast<CameraMovementComponent*>(component)) {
 				navigation->enabled = false;
-				navigation->rotationButton = Keys::MiddleButton;
+				navigation->rotationButton = NavigationButton();
 			}
 		}
 	game.getRenderServer().setCamera(camera);
@@ -928,12 +1008,12 @@ void Editor::DrawHierarchy()
 				if (selected) flags |= ImGuiTreeNodeFlags_Selected;
 				const bool open = ImGui::TreeNodeEx("Object", flags, "%s %d", ObjectLabel(*object), ++index);
 				if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-					SelectObject(object, ImGui::GetIO().KeyCtrl);
+					SelectObject(object, settings.SelectionHeld());
 				}
 				if (ImGui::BeginPopupContextItem("ObjectActions")) {
 					SelectContextObject(object);
-					if (ImGui::MenuItem("Duplicate selection", nullptr, false, editedObject == nullptr)) requestedDuplicate = object;
-					if (ImGui::MenuItem("Delete selection", "Del", false, CanDeleteSelection())) requestedDelete = object;
+					if (ImGui::MenuItem("Duplicate selection", settings.Label(EditorAction::Duplicate).c_str(), false, editedObject == nullptr)) requestedDuplicate = object;
+					if (ImGui::MenuItem("Delete selection", settings.Label(EditorAction::Delete).c_str(), false, CanDeleteSelection())) requestedDelete = object;
 					if (!CanDeleteSelection()) ImGui::TextDisabled("Selection includes the active editor camera");
 					ImGui::EndPopup();
 				}
@@ -1087,7 +1167,7 @@ bool Editor::ReplaceEditorLevel(Level* level, EditorCamera* camera, std::string&
 	for (auto* object : level->getObjects()) for (auto* component : object->getComponents()) {
 		if (!camera) camera = dynamic_cast<EditorCamera*>(component);
 		if (auto* movement = dynamic_cast<CameraMovementComponent*>(component)) {
-			movement->enabled = false; movement->rotationButton = Keys::MiddleButton;
+			movement->enabled = false; movement->rotationButton = NavigationButton();
 		}
 	}
 	game.getRenderServer().setCamera(camera);
@@ -1435,18 +1515,21 @@ void Editor::DrawInspector()
 			ImGui::TextUnformatted(ObjectLabel(*selectedObject));
 			DrawTreeInspector();
 			ImGui::SeparatorText("Local transform");
-			const TransformState before = CaptureTransform(selectedObject, selectedNode);
+			TransformState before = CaptureTransform(selectedObject, selectedNode);
 			DXVector3 position = selectedNode->get_position();
 			DXVector3 scale = selectedNode->get_scale();
 			if (ImGui::DragFloat3("Position", &position.x, 0.02f)) selectedNode->set_position(position);
 			TrackTransformEdit(before);
 			// Инспектор показывает градусы; TransformNode хранит кватернион.
+			before = CaptureTransform(selectedObject, selectedNode);
 			DXVector3 angles = selectedNode->get_rotation().ToEuler() * (180.0f / DirectX::XM_PI);
 			if (ImGui::DragFloat3("Rotation", &angles.x, 0.5f)) {
 				angles *= DirectX::XM_PI / 180.0f;
 				selectedNode->set_rotation(DXQuaternion::CreateFromYawPitchRoll(angles.y, angles.x, angles.z));
 			}
 			TrackTransformEdit(before);
+			before = CaptureTransform(selectedObject, selectedNode);
+			scale = before.scale;
 			if (ImGui::DragFloat3("Scale", &scale.x, 0.01f)) {
 				// Не допускаем вырожденную матрицу при редактировании масштаба.
 				for (int axis = 0; axis < 3; ++axis) {
@@ -1458,13 +1541,14 @@ void Editor::DrawInspector()
 			TrackTransformEdit(before);
 			if (ImGui::Button("Reset transform")) {
 				FinishTransformEdit(); FinishProperty();
+				before = CaptureTransform(selectedObject, selectedNode);
 				pendingEdit = before;
 				CaptureTransformGroup(before);
 				editingTransform = true;
 				selectedNode->set_position(DXVector3::Zero);
 				selectedNode->set_rotation(DXQuaternion::Identity);
 				selectedNode->set_scale(DXVector3::One);
-				if (!pendingGroup.empty() && !ApplyTransformGroup(TransformMatrix(before).Invert() * TransformMatrix(CaptureTransform(selectedObject, selectedNode)))) {
+				if (!pendingGroup.empty() && !ApplyTransformGroupStep(before)) {
 					selectedNode->set_position(before.position); selectedNode->set_rotation(before.rotation); selectedNode->set_scale(before.scale);
 				}
 				FinishTransformEdit();
@@ -1687,6 +1771,10 @@ void Editor::DrawViewportToolbar()
 		if (selected) ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[ImGuiCol_ButtonActive]);
 		if (ImGui::Button(label)) { FinishTransformEdit(); operation = tool; }
 		if (selected) ImGui::PopStyleColor();
+		if (ImGui::IsItemHovered()) {
+			const auto action = tool == ImGuizmo::TRANSLATE ? EditorAction::Move : tool == ImGuizmo::ROTATE ? EditorAction::Rotate : EditorAction::Scale;
+			ImGui::SetTooltip("%s (%s)", label, settings.Label(action).c_str());
+		}
 	};
 	const auto drawOptions = [&]() {
 		if (ImGui::Button("...")) ImGui::OpenPopup("Viewport options");
@@ -1704,9 +1792,9 @@ void Editor::DrawViewportToolbar()
 	if (compact) {
 		if (ImGui::Button("Tools")) ImGui::OpenPopup("Viewport tools");
 		if (ImGui::BeginPopup("Viewport tools")) {
-			if (ImGui::MenuItem("Move", nullptr, operation == ImGuizmo::TRANSLATE)) operation = ImGuizmo::TRANSLATE;
-			if (ImGui::MenuItem("Rotate", nullptr, operation == ImGuizmo::ROTATE)) operation = ImGuizmo::ROTATE;
-			if (ImGui::MenuItem("Scale", nullptr, operation == ImGuizmo::SCALE)) operation = ImGuizmo::SCALE;
+			if (ImGui::MenuItem("Move", settings.Label(EditorAction::Move).c_str(), operation == ImGuizmo::TRANSLATE)) operation = ImGuizmo::TRANSLATE;
+			if (ImGui::MenuItem("Rotate", settings.Label(EditorAction::Rotate).c_str(), operation == ImGuizmo::ROTATE)) operation = ImGuizmo::ROTATE;
+			if (ImGui::MenuItem("Scale", settings.Label(EditorAction::Scale).c_str(), operation == ImGuizmo::SCALE)) operation = ImGuizmo::SCALE;
 			ImGui::EndPopup();
 		}
 	} else {
@@ -1737,16 +1825,78 @@ void Editor::DrawViewportToolbar()
 	ImGui::Separator();
 }
 
+bool Editor::DrawSelectionTransformPanel(const ImVec2& origin, const ImVec2& size)
+{
+	if (selectedObjects.size() < 2 || !selectedObject || !selectedNode || selectedNode->get_parent()
+		|| size.x < 220 || size.y < 60) return false;
+	const ImVec2 cursor = ImGui::GetCursorScreenPos();
+	const float width = (std::min)(320.0f, size.x - 16.0f);
+	ImGui::SetCursorScreenPos(ImVec2(origin.x + size.x - width - 8, origin.y + 8));
+	ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(width, size.y - 16));
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+	ImGui::BeginChild("Selection transform panel", ImVec2(width, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+	scenePanelFocused |= ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+	if (ImGui::CollapsingHeader("Selection transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::TextDisabled("%zu objects | %s", selectedObjects.size(), groupFromCenter ? "Shared center" : "Active object");
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Position follows the selected pivot. Rotation and scale use the active object's values and transform the whole group around that pivot.");
+		ImGui::BeginDisabled(navigating || editingGizmo);
+		// Общий pivot мини-панели и гизмо; инспектор использует активный объект.
+		if (ImGui::Checkbox("From group center", &groupFromCenter)) { FinishTransformEdit(); FinishProperty(); }
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pivot for this panel and gizmo: selection center when checked, active object when unchecked.");
+		if (ImGui::BeginTable("Transform values", 2, ImGuiTableFlags_SizingStretchProp)) {
+			ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Rotation").x);
+			ImGui::TableSetupColumn("XYZ", ImGuiTableColumnFlags_WidthStretch);
+			const char* labels[] = { "Position", "Rotation", "Scale" };
+			for (int field = 0; field < 3; ++field) {
+				ImGui::PushID(field); ImGui::TableNextRow(); ImGui::TableNextColumn();
+				ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted(labels[field]); ImGui::TableNextColumn();
+				const auto before = CaptureTransform(selectedObject, selectedNode);
+				const DXVector3 center = groupFromCenter ? SelectionCenter() : before.position;
+				DXVector3 value = field == 0 ? center : field == 2 ? before.scale
+					: before.rotation.ToEuler() * (180.0f / DirectX::XM_PI);
+				ImGui::SetNextItemWidth(-1);
+				const float speed = field == 0 ? 0.02f : field == 1 ? 0.5f : 0.01f;
+				if (ImGui::DragFloat3("##XYZ", &value.x, speed, 0.0f, 0.0f, "%.3f")) {
+					if (field == 0) selectedNode->set_position(before.position + value - center);
+					else if (field == 1) {
+						value *= DirectX::XM_PI / 180.0f;
+						selectedNode->set_rotation(DXQuaternion::CreateFromYawPitchRoll(value.y, value.x, value.z));
+					} else {
+						for (int axis = 0; axis < 3; ++axis)
+							if (std::abs((&value.x)[axis]) < 0.001f) (&value.x)[axis] = std::copysign(0.001f, (&value.x)[axis]);
+						selectedNode->set_scale(value);
+					}
+				}
+				// Тот же жест и составная история, что у полей основного инспектора.
+				TrackTransformEdit(before, groupFromCenter);
+				ImGui::PopID();
+			}
+			ImGui::EndTable();
+		}
+		ImGui::EndDisabled();
+		if (!sceneActionError.empty()) ImGui::TextWrapped("%s", sceneActionError.c_str());
+	}
+	// Весь прямоугольник панели перехватывает мышь, включая фон и свёрнутый заголовок.
+	const ImVec2 panelPosition = ImGui::GetWindowPos(), panelSize = ImGui::GetWindowSize();
+	const bool hovered = ImGui::IsMouseHoveringRect(panelPosition, ImVec2(panelPosition.x + panelSize.x, panelPosition.y + panelSize.y), false);
+	ImGui::EndChild(); ImGui::PopStyleColor();
+	ImGui::SetCursorScreenPos(cursor);
+	return hovered;
+}
+
 void Editor::DrawViewport()
 {
 	if (auto* movement = GetCameraMovement()) movement->enabled = false;
 	if (ImGui::Begin("Viewport")) {
 		scenePanelFocused |= ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 		DrawViewportToolbar();
-		const char* shortcuts = "LMB: select | Ctrl+LMB: toggle selection | MMB: look | MMB + WASD: move | MMB + Q / E: down / up | RMB: menu";
+		const auto selectionHints = settings.ViewportHints(false), cameraHints = settings.ViewportHints(true);
+		const auto& shortcuts = navigating ? cameraHints : selectionHints;
 		ImVec2 size = ImGui::GetContentRegionAvail();
 		// Полоска занимает место вне изображения: на ней нельзя выбрать объект или вращать камеру.
-		const float footerHeight = ImGui::CalcTextSize(shortcuts, nullptr, false, (std::max)(1.0f, size.x)).y
+		// Высота остаётся постоянной при переключении подсказок, чтобы не пересоздавать render target.
+		const float footerHeight = (std::max)(ImGui::CalcTextSize(selectionHints.c_str(), nullptr, false, (std::max)(1.0f, size.x)).y,
+			ImGui::CalcTextSize(cameraHints.c_str(), nullptr, false, (std::max)(1.0f, size.x)).y)
 			+ ImGui::GetStyle().ItemSpacing.y * 2 + 1.0f;
 		size.y = (std::max)(0.0f, size.y - footerHeight);
 		const float footerY = ImGui::GetCursorPosY() + size.y + ImGui::GetStyle().ItemSpacing.y;
@@ -1754,29 +1904,39 @@ void Editor::DrawViewport()
 			const ImVec2 origin = ImGui::GetCursorScreenPos();
 			ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(colorView)), size);
 			// Обычные hover-проверки учитывают перекрывающие окна, popup и активные UI-элементы.
-			const bool sceneHovered = ImGui::IsWindowHovered() && ImGui::IsItemHovered();
+			const bool imageHovered = ImGui::IsWindowHovered() && ImGui::IsItemHovered();
+			const bool panelHovered = DrawSelectionTransformPanel(origin, size);
+			const bool sceneHovered = imageHovered && !panelHovered;
 			const bool pickRequested = sceneHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-			// СКМ начинает навигацию только над изображением, без активного ввода или popup.
+			// Назначенная кнопка начинает навигацию только над изображением, без активного UI.
 			const bool popup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-			if (sceneHovered && !popup && !ImGui::IsAnyItemActive() && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) navigating = true;
-			if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle) || popup || ImGui::GetIO().WantTextInput
+			if (sceneHovered && !popup && !ImGui::IsAnyItemActive() && settings.Pressed(EditorAction::Navigate)) navigating = true;
+			if (!settings.Held(EditorAction::Navigate) || popup || ImGui::GetIO().WantTextInput
 				|| GetForegroundWindow() != game.getWindow().getWindow()) navigating = false;
-			if (auto* movement = GetCameraMovement())
+			if (auto* movement = GetCameraMovement()) {
+				movement->rotationButton = NavigationButton();
+				const auto modifiers = settings.Get(EditorAction::Navigate).modifiers;
+				// Компонент получает направление по значению, без зависимости движка от ImGui.
+				movement->setMovementInput(DXVector3(
+					float(settings.Held(EditorAction::Right, modifiers)) - float(settings.Held(EditorAction::Left, modifiers)),
+					float(settings.Held(EditorAction::Up, modifiers)) - float(settings.Held(EditorAction::Down, modifiers)),
+					float(settings.Held(EditorAction::Backward, modifiers)) - float(settings.Held(EditorAction::Forward, modifiers))));
 				movement->enabled = navigating && !ImGui::GetIO().WantTextInput && !ImGuizmo::IsUsing();
+			}
 			if (navigating) checkSceneDirty = true;
 			if (!ImGui::GetTopMostPopupModal()) {
 				if (!editedObject) game.Update();
 				else if (auto* movement = GetCameraMovement()) movement->Update(game, game.getTimeManager().get_deltaTime());
 			}
-			DrawGizmo(origin, size);
+			DrawGizmo(origin, size, panelHovered);
 			// Manipulate сначала обновляет состояние gizmo для текущего положения мыши.
 			if (pickRequested && !navigating && !ImGui::IsAnyItemActive()
 				&& GetForegroundWindow() == game.getWindow().getWindow()
-				&& !ImGui::IsMouseDown(ImGuiMouseButton_Middle)
-				&& (ImGui::GetIO().KeyCtrl || !(selectedNode && (ImGuizmo::IsOver() || ImGuizmo::IsUsing()))))
-				PickObject(origin, size, ImGui::GetIO().KeyCtrl);
+				&& !settings.Held(EditorAction::Navigate)
+				&& (settings.SelectionHeld() || !(selectedNode && (ImGuizmo::IsOver() || ImGuizmo::IsUsing()))))
+				PickObject(origin, size, settings.SelectionHeld());
 			if (sceneHovered && !navigating && !popup && !ImGui::IsAnyItemActive()
-				&& !ImGuizmo::IsUsing() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+				&& !ImGuizmo::IsUsing() && settings.Pressed(EditorAction::ContextMenu)) {
 				FinishTransformEdit();
 				PickObject(origin, size, false, true);
 				ImGui::OpenPopup("Viewport actions");
@@ -1794,14 +1954,14 @@ void Editor::DrawViewport()
 		ImGui::Separator();
 		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 		ImGui::PushTextWrapPos(0.0f);
-		ImGui::TextUnformatted(shortcuts);
+		ImGui::TextUnformatted(shortcuts.c_str());
 		ImGui::PopTextWrapPos();
 		ImGui::PopStyleColor();
 	} else navigating = false;
 	if (ImGui::BeginPopup("Viewport actions")) {
 		if (selectedObject && !selectedObject->isPendingDestroy()) {
-			if (ImGui::MenuItem("Duplicate selection", nullptr, false, editedObject == nullptr)) requestedDuplicate = selectedObject;
-			if (ImGui::MenuItem("Delete selection", "Del", false, CanDeleteSelection())) requestedDelete = selectedObject;
+			if (ImGui::MenuItem("Duplicate selection", settings.Label(EditorAction::Duplicate).c_str(), false, editedObject == nullptr)) requestedDuplicate = selectedObject;
+			if (ImGui::MenuItem("Delete selection", settings.Label(EditorAction::Delete).c_str(), false, CanDeleteSelection())) requestedDelete = selectedObject;
 		} else if (ImGui::BeginMenu("Create object", game.getLevel() != nullptr && !editedObject)) {
 			DrawCreateMenu(); ImGui::EndMenu();
 		}
@@ -1921,11 +2081,11 @@ void Editor::PickObject(const ImVec2& origin, const ImVec2& size, bool toggle, b
 	if (context) SelectContextObject(hit); else SelectObject(hit, toggle);
 }
 
-void Editor::DrawGizmo(const ImVec2& origin, const ImVec2& size)
+void Editor::DrawGizmo(const ImVec2& origin, const ImVec2& size, bool blocked)
 {
 	EditorCamera* camera = game.getRenderServer().getCamera();
-	if (!selectedNode || !camera || navigating
-		|| (ImGui::GetIO().KeyCtrl && !editingGizmo)
+	if (!selectedNode || !camera || navigating || (blocked && !editingGizmo)
+		|| (settings.SelectionHeld() && !editingGizmo)
 		|| ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
 	DXMatrix view;
 	if (!camera->getView(view)) return;
@@ -1934,11 +2094,7 @@ void Editor::DrawGizmo(const ImVec2& origin, const ImVec2& size)
 	const bool group = selectedObjects.size() > 1 && !selectedNode->get_parent();
 	if (group) {
 		if (!editingGizmo) {
-			DXVector3 center = DXVector3::Zero;
-			const auto objects = SelectedObjects();
-			for (auto* object : objects) center += object->getTransform().get_position();
-			if (objects.empty()) return;
-			center /= static_cast<float>(objects.size());
+			const DXVector3 center = groupFromCenter ? SelectionCenter() : selectedNode->get_position();
 			groupGizmoStart = DXMatrix::CreateFromQuaternion(selectedNode->get_rotation()) * DXMatrix::CreateTranslation(center);
 			groupGizmoCurrent = groupGizmoStart;
 		}
@@ -2069,7 +2225,7 @@ void Editor::RegisterObjectState(GameObject* object, const ObjectState& state)
     {
         if (!dynamic_cast<TransformableComponent*>(component)) ordinary.push_back(component);
         if (auto* movement = dynamic_cast<CameraMovementComponent*>(component)) {
-            movement->enabled = false; movement->rotationButton = Keys::MiddleButton;
+            movement->enabled = false; movement->rotationButton = NavigationButton();
         }
     }
     for (const auto& identity : state.identities) {
@@ -2278,7 +2434,7 @@ void Editor::FinishStructures()
         if (found != historyTargets.end()) {
             auto* object = static_cast<GameObject*>(found->second.pointer);
             for (auto* component : object->getComponents()) if (auto* movement = dynamic_cast<CameraMovementComponent*>(component)) {
-                movement->enabled = false; movement->rotationButton = Keys::MiddleButton;
+                movement->enabled = false; movement->rotationButton = NavigationButton();
             }
             entry.objectAfter = CaptureObjectState(object);
             if (entry.objectAfter.json.empty()) { documentError = "Cannot record the changed object."; continue; }
@@ -2396,7 +2552,7 @@ void Editor::RestoreHistorySelection(HistoryId selection, HistoryId camera)
     const auto found = historyTargets.find(camera);
     if (found != historyTargets.end() && found->second.kind == TargetKind::Component)
         game.getRenderServer().setCamera(dynamic_cast<EditorCamera*>(static_cast<Component*>(found->second.pointer)));
-    if (auto* movement = GetCameraMovement()) { movement->enabled = false; movement->rotationButton = Keys::MiddleButton; }
+    if (auto* movement = GetCameraMovement()) { movement->enabled = false; movement->rotationButton = NavigationButton(); }
 }
 
 void Editor::ApplyHistoryStep()
@@ -2421,9 +2577,34 @@ DXMatrix Editor::TransformMatrix(const TransformState& state) const
     return DXMatrix::CreateScale(state.scale) * DXMatrix::CreateFromQuaternion(state.rotation) * DXMatrix::CreateTranslation(state.position);
 }
 
+DXVector3 Editor::SelectionCenter(const TransformState* before) const
+{
+    const auto objects = SelectedObjects();
+    DXVector3 center = DXVector3::Zero;
+    for (auto* object : objects) center += before && before->object == object ? before->position : object->getTransform().get_position();
+    return objects.empty() ? center : center / static_cast<float>(objects.size());
+}
+
+bool Editor::ApplyTransformGroupStep(const TransformState& before, bool fromGroupCenter)
+{
+    const auto after = CaptureTransform(before.object, before.node);
+    DXMatrix original = TransformMatrix(before), changed = TransformMatrix(after);
+    original.Translation(DXVector3::Zero); changed.Translation(DXVector3::Zero);
+    if (std::abs(original.Determinant()) < 1e-8f) return false;
+    const DXVector3 center = fromGroupCenter ? SelectionCenter(&before) : before.position;
+    // Pivot выбирается вызывающей панелью; сдвиг остаётся в мировых координатах.
+    const DXMatrix step = DXMatrix::CreateTranslation(-center) * original.Invert() * changed
+        * DXMatrix::CreateTranslation(center + after.position - before.position);
+    const DXMatrix delta = groupEditDelta * step;
+    if (!ApplyTransformGroup(delta)) return false;
+    groupEditDelta = delta;
+    return true;
+}
+
 void Editor::CaptureTransformGroup(const TransformState& before)
 {
     pendingGroup.clear();
+    groupEditDelta = DXMatrix::Identity;
     if (selectedObjects.size() < 2 || before.node->get_parent()) return;
     for (auto* object : SelectedObjects())
         pendingGroup.push_back(object == before.object ? before : CaptureTransform(object, &object->getTransform()));
@@ -2456,7 +2637,7 @@ bool Editor::ApplyTransformGroup(const DXMatrix& delta)
     return true;
 }
 
-void Editor::TrackTransformEdit(const TransformState& before)
+void Editor::TrackTransformEdit(const TransformState& before, bool fromGroupCenter)
 {
     if (ImGui::IsItemActivated() || (ImGui::IsItemActive() && !editingTransform)) {
         FinishTransformEdit(); FinishProperty(); pendingEdit = before;
@@ -2466,8 +2647,7 @@ void Editor::TrackTransformEdit(const TransformState& before)
         || before.rotation != before.node->get_rotation() || before.scale != before.node->get_scale());
     if (changed) {
         checkSceneDirty = true;
-        if (!pendingGroup.empty() && !ApplyTransformGroup(TransformMatrix(pendingEdit).Invert()
-            * TransformMatrix(CaptureTransform(before.object, before.node)))) {
+        if (!pendingGroup.empty() && !ApplyTransformGroupStep(before, fromGroupCenter)) {
             before.node->set_position(before.position); before.node->set_rotation(before.rotation); before.node->set_scale(before.scale);
         }
     }

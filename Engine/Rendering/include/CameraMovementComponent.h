@@ -13,6 +13,9 @@ private:
     Game* ownerGame = nullptr;
     DelegateHandle mouseMoveHandle;
     void OnMouseMove(const InputDevice::MouseMoveEventArgs& args);
+    // Приложение может передать направление по значению; стандартная игра использует WASD/QE.
+    DXVector3 movementInput = DXVector3::Zero;
+    bool externalMovementInput = false;
 public:
     CameraMovementComponent() = default;
     ~CameraMovementComponent() override;
@@ -25,6 +28,8 @@ public:
     // Выбор кнопки — настройка приложения, а не сериализуемого компонента сцены.
     Keys rotationButton = Keys::RightButton;
     float mouseSensitivity = 0.003f; // Радианы на единицу относительного движения мыши.
+    void setMovementInput(const DXVector3& direction) { movementInput = direction; externalMovementInput = true; }
+    void useDefaultMovementInput() { externalMovementInput = false; }
     void Init(Game& game) override;
     void Shutdown(Game& game) override;
     void Update(Game& game, double deltaTime) override;

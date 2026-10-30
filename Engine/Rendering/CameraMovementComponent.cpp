@@ -73,7 +73,7 @@ void CameraMovementComponent::Update(Game& game, double deltaTime)
     InputDevice& input = game.getInputDevice();
 
     // W направлено вдоль -Z, Q опускает камеру, E поднимает.
-    DXVector3 direction(
+    DXVector3 direction = externalMovementInput ? movementInput : DXVector3(
         float(input.IsKeyDown(Keys::D)) - float(input.IsKeyDown(Keys::A)),
         float(input.IsKeyDown(Keys::E)) - float(input.IsKeyDown(Keys::Q)),
         float(input.IsKeyDown(Keys::S)) - float(input.IsKeyDown(Keys::W)));

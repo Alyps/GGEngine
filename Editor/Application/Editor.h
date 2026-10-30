@@ -4,6 +4,7 @@
 #include "ImGuizmo.h"
 #include "ContentBrowser.h"
 #include "Project.h"
+#include "EditorSettings.h"
 #include <unordered_map>
 
 // Game и сцена живут дольше редактора; редактор владеет только UI и viewport.
@@ -24,6 +25,12 @@ private:
 	static LRESULT CALLBACK HandleMessage(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 	void DrawDockspace();
 	void DrawProjectDialogs();
+	void DrawSettings();
+	EditorSettings settings, settingsDraft;
+	std::string settingsError;
+	bool openSettings = false;
+	int capturingBinding = -1, bindingCaptureFrame = 0;
+	Keys NavigationButton() const;
 	void QueueProjectOpen(const std::string& file);
 	void ApplyProjectAction();
 	void RequestClose();
@@ -105,6 +112,8 @@ private:
     std::unordered_map<MeshComponent*, MeshPathDraft> meshPathDrafts;
 	void DrawViewport();
 	void DrawViewportToolbar();
+	bool DrawSelectionTransformPanel(const ImVec2& origin, const ImVec2& size);
+	bool groupFromCenter = true;
 	void PickObject(const ImVec2& origin, const ImVec2& size, bool toggle = false, bool context = false);
 	void SelectObject(GameObject* object, bool toggle = false);
 	void SelectContextObject(GameObject* object);
@@ -113,7 +122,7 @@ private:
 	void SelectNode(TransformNode* node);
 	bool IsObjectSelected(GameObject* object) const;
 	void DrawSelectionBounds(const ImVec2& origin, const ImVec2& size);
-	void DrawGizmo(const ImVec2& origin, const ImVec2& size);
+	void DrawGizmo(const ImVec2& origin, const ImVec2& size, bool blocked = false);
 	bool ResizeViewport(UINT width, UINT height);
 	void ReleaseViewport();
 	const char* ObjectLabel(GameObject& object) const;
@@ -194,7 +203,7 @@ private:
 	void RestoreSelectedObjects(const std::vector<HistoryId>& objects, HistoryId active);
 	void RestoreHistorySelection(HistoryId selection, HistoryId camera);
 	TransformState CaptureTransform(GameObject* object, TransformNode* node) const;
-	void TrackTransformEdit(const TransformState& before);
+	void TrackTransformEdit(const TransformState& before, bool fromGroupCenter = false);
 	void FinishTransformEdit();
 	void Undo();
 	void Redo();
@@ -203,6 +212,9 @@ private:
 	void CaptureTransformGroup(const TransformState& before);
 	bool ApplyTransformGroup(const DXMatrix& delta);
 	DXMatrix TransformMatrix(const TransformState& state) const;
+	DXVector3 SelectionCenter(const TransformState* before = nullptr) const;
+	bool ApplyTransformGroupStep(const TransformState& before, bool fromGroupCenter = false);
+	DXMatrix groupEditDelta;
 	DXMatrix groupGizmoStart, groupGizmoCurrent;
 	bool editingTransform = false;
 	bool editingGizmo = false;
