@@ -3,12 +3,13 @@
 #include "imgui.h"
 #include "ImGuizmo.h"
 #include "ContentBrowser.h"
+#include "Project.h"
 #include <unordered_map>
 
 // Game и сцена живут дольше редактора; редактор владеет только UI и viewport.
 class Editor {
 public:
-	explicit Editor(Game& game, const std::string& resourceRoot);
+	explicit Editor(Game& game);
 	~Editor();
 	Editor(const Editor&) = delete;
 	Editor& operator=(const Editor&) = delete;
@@ -18,6 +19,24 @@ public:
 private:
 	static LRESULT CALLBACK HandleMessage(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 	void DrawDockspace();
+	void DrawProjectDialogs();
+	void QueueProjectOpen(const std::string& file);
+	void ApplyProjectAction();
+	void RequestClose();
+	bool closeRequested = false;
+	Project project, pendingProject;
+	ProjectHistory recentProjects;
+	std::string projectError;
+	std::string projectCreationError;
+	bool projectCreationCompleted = false;
+	bool initializeDemo = false;
+	bool temporaryProject = false;
+	char newProjectName[128] = "NewProject";
+	char newProjectParent[2048]{};
+	bool showNewProject = false;
+	bool confirmProjectSwitch = false;
+	bool requestedProjectSwitch = false;
+	bool requestedProjectCreation = false;
 	void DrawHierarchy();
 	enum class ObjectType { None, Empty, Cube, Sphere, Plane, DirectionalLight, PointLight, Mesh };
 	void DrawCreateMenu();

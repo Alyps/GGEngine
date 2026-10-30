@@ -5,6 +5,12 @@
 #include "RenderPresets.h"
 #include <cmath>
 #include <DirectXCollision.h>
+#include <filesystem>
+#include <shobjidl.h>
+#include <shellapi.h>
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "uuid.lib")
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -12,6 +18,83 @@ using DirectX::SimpleMath::Vector4;
 
 namespace {
 	constexpr wchar_t EditorProperty[] = L"GGEngine.Editor";
+
+	bool PopulateDemoScene(Level& level)
+	{
+		// Уровень владеет объектами и освободит частично созданную сцену при отказе.
+		GameObject* objects[6]{};
+		for (auto& object : objects) {
+			object = level.createObject();
+			if (!object) return false;
+		}
+		auto* cube = objects[0]->createComponent<MeshComponent>();
+		auto* floor = objects[1]->createComponent<MeshComponent>(MeshPresets::CreateQuad(5.0f, 7.0f));
+		auto* secondCube = objects[2]->createComponent<MeshComponent>(true);
+		auto* sphere = objects[3]->createComponent<MeshComponent>(MeshPresets::CreateCircle(0.5f));
+		auto* directional = objects[4]->createComponent<DirectionalLightComponent>();
+		auto* point = objects[5]->createComponent<PointLightComponent>();
+		if (!cube || !floor || !secondCube || !sphere || !directional || !point) return false;
+
+		// Повторяем расстановку прежней демонстрации: два куба, шар и пол XZ.
+		objects[1]->getTransform().set_position(DXVector3(0.0f, -0.5f, 0.0f));
+		objects[1]->getTransform().set_rotation(
+			DXQuaternion::CreateFromAxisAngle(DXVector3::UnitX, -DirectX::XM_PIDIV2));
+		objects[2]->getTransform().set_position(DXVector3(-1.5f, 0.0f, 0.0f));
+		objects[3]->getTransform().set_position(DXVector3(1.5f, 0.0f, 0.0f));
+		cube->bind_to_node(&objects[0]->getTransform());
+		floor->bind_to_node(&objects[1]->getTransform());
+		secondCube->bind_to_node(&objects[2]->getTransform());
+		sphere->bind_to_node(&objects[3]->getTransform());
+
+		// Синий направленный и зелёный точечный свет сохраняют вид исходной сцены.
+		objects[4]->getTransform().set_rotation(
+			DXQuaternion::CreateFromYawPitchRoll(-DirectX::XM_PIDIV4, -0.6154797f, 0.0f));
+		directional->color = { 0.0f, 0.0f, 1.0f };
+		directional->intensity = 0.6f;
+		directional->bind_to_node(&objects[4]->getTransform());
+		objects[5]->getTransform().set_position(DXVector3(2.0f, 2.0f, -2.0f));
+		point->color = { 0.0f, 1.0f, 0.0f };
+		point->intensity = 12.0f;
+		point->range = 5.0f;
+		point->bind_to_node(&objects[5]->getTransform());
+		return true;
+	}
+
+	std::filesystem::path ProjectDiskPath(const std::string& text) {
+		return std::filesystem::path(std::u8string(text.begin(), text.end()));
+	}
+	bool PickProjectPath(HWND owner, bool folder, std::string& path, std::string& error)
+	{
+		// Диалог владеет COM-ссылками только до возвращения; отмена не является ошибкой.
+		const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+		if (FAILED(apartment) && apartment != RPC_E_CHANGED_MODE) { error = "Cannot initialize file dialog."; return false; }
+		IFileOpenDialog* dialog = nullptr;
+		HRESULT status = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+		if (SUCCEEDED(status)) {
+			DWORD options = 0;
+			status = dialog->GetOptions(&options);
+			if (SUCCEEDED(status)) status = dialog->SetOptions(options | FOS_FORCEFILESYSTEM | (folder ? FOS_PICKFOLDERS : FOS_FILEMUSTEXIST));
+			const COMDLG_FILTERSPEC filter{ L"GGEngine project", L"*.ggproject" };
+			if (SUCCEEDED(status) && !folder) status = dialog->SetFileTypes(1, &filter);
+			if (SUCCEEDED(status)) status = dialog->Show(owner);
+			IShellItem* item = nullptr;
+			if (SUCCEEDED(status)) status = dialog->GetResult(&item);
+			if (item) {
+				PWSTR text = nullptr;
+				status = item->GetDisplayName(SIGDN_FILESYSPATH, &text);
+				if (SUCCEEDED(status)) {
+					const auto utf8 = std::filesystem::path(text).generic_u8string();
+					path.assign(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+				}
+				CoTaskMemFree(text);
+				item->Release();
+			}
+			dialog->Release();
+		}
+		if (SUCCEEDED(apartment)) CoUninitialize();
+		if (FAILED(status) && status != HRESULT_FROM_WIN32(ERROR_CANCELLED)) error = "Cannot open file dialog (HRESULT " + std::to_string(status) + ").";
+		return SUCCEEDED(status);
+	}
 
 	bool ClipSelectionEdge(Vector4& a, Vector4& b)
 	{
@@ -49,8 +132,17 @@ namespace {
 	}
 }
 
-Editor::Editor(Game& application, const std::string& resourceRoot)
-	: game(application), contentBrowser(resourceRoot) {}
+Editor::Editor(Game& application)
+	: game(application), contentBrowser("")
+{
+	recentProjects.Load(projectError);
+	// Демо и ресурсы доступны сразу, до выбора постоянного места проекта.
+	std::string error;
+	if (Project::CreateTemporary(pendingProject, error)) {
+		initializeDemo = true;
+		requestedProjectSwitch = true;
+	} else projectError = error;
+}
 
 CameraMovementComponent* Editor::GetCameraMovement() const
 {
@@ -115,6 +207,8 @@ LRESULT CALLBACK Editor::HandleMessage(HWND window, UINT message, WPARAM wparam,
 {
 	auto* editor = static_cast<Editor*>(GetPropW(window, EditorProperty));
 	if (!editor) return DefWindowProcW(window, message, wparam, lparam);
+	// Не передаём WM_CLOSE в движок: окно должно жить до решения пользователя.
+	if (message == WM_CLOSE) { editor->RequestClose(); return 0; }
 	ImGui::SetCurrentContext(editor->ui);
 	ImGui_ImplWin32_WndProcHandler(window, message, wparam, lparam);
 	// WM_INPUT доходит до движка, чтобы отпускания клавиш не терялись.
@@ -131,6 +225,7 @@ int Editor::Run()
 		std::cerr << "Editor UI initialization failed\n";
 		return 1;
 	}
+	ApplyProjectAction();
 	game.getTimeManager().reset();
 	for (;;) {
 		MSG message{};
@@ -161,6 +256,7 @@ int Editor::Run()
 		ImGui::NewFrame();
 		ImGuizmo::BeginFrame();
 		DrawDockspace();
+		DrawProjectDialogs();
 		if (showHierarchy) DrawHierarchy();
 		if (showInspector) DrawInspector();
 		DrawViewport();
@@ -206,6 +302,7 @@ int Editor::Run()
 			}
 		}
 		game.EndFrame();
+		ApplyProjectAction();
 	}
 }
 
@@ -213,7 +310,29 @@ void Editor::DrawDockspace()
 {
 	if (ImGui::BeginMainMenuBar()) {
 		if (ImGui::BeginMenu("File")) {
-			if (ImGui::MenuItem("Exit")) PostQuitMessage(0);
+			if (ImGui::MenuItem("New Project...")) showNewProject = true;
+			if (ImGui::MenuItem("Open Project...")) {
+				std::string file;
+				if (PickProjectPath(game.getWindow().getWindow(), false, file, projectError)) QueueProjectOpen(file);
+				game.getTimeManager().reset();
+			}
+			if (ImGui::BeginMenu("Recent Projects", !recentProjects.Entries().empty())) {
+				for (const auto& file : recentProjects.Entries()) {
+					ImGui::PushID(file.c_str());
+					// Путь рисуется отдельно: ## внутри имени файла не меняет подпись.
+					if (ImGui::MenuItem("Open")) QueueProjectOpen(file);
+					ImGui::SameLine(); ImGui::TextUnformatted(file.c_str());
+					ImGui::PopID();
+				}
+				ImGui::EndMenu();
+			}
+			if (ImGui::MenuItem("Open Project Folder", nullptr, false, !project.filePath.empty())) {
+				const auto folder = ProjectDiskPath(project.Root()).make_preferred();
+				if (reinterpret_cast<INT_PTR>(ShellExecuteW(game.getWindow().getWindow(), L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+					projectError = "Cannot open project folder.";
+			}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Exit")) RequestClose();
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Edit")) {
@@ -230,6 +349,7 @@ void Editor::DrawDockspace()
 			ImGui::EndMenu();
 		}
 		ImGui::TextDisabled("  GGEngine | %.1f ms", ImGui::GetIO().DeltaTime * 1000.0f);
+		if (!project.filePath.empty()) { ImGui::SameLine(); ImGui::TextUnformatted(temporaryProject ? "Unsaved project" : project.name.c_str()); }
 		ImGui::EndMainMenuBar();
 	}
 	const ImGuiID dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
@@ -250,6 +370,128 @@ void Editor::DrawDockspace()
 		ImGui::DockBuilderDockWindow("Viewport", center);
 		ImGui::DockBuilderFinish(dock);
 	}
+}
+
+void Editor::QueueProjectOpen(const std::string& file)
+{
+	if (!Project::Open(file, pendingProject, projectError)) return;
+	confirmProjectSwitch = !project.filePath.empty();
+	requestedProjectSwitch = !confirmProjectSwitch;
+}
+
+void Editor::DrawProjectDialogs()
+{
+	if (showNewProject) { showNewProject = false; projectCreationError.clear(); ImGui::OpenPopup("New project"); }
+	if (ImGui::BeginPopupModal("New project", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		if (ImGui::InputText("Name", newProjectName, sizeof(newProjectName))) projectCreationError.clear();
+		if (ImGui::InputText("Parent folder", newProjectParent, sizeof(newProjectParent))) projectCreationError.clear();
+		ImGui::SameLine();
+		if (ImGui::Button("Browse...")) {
+			std::string folder;
+			projectCreationError.clear();
+			if (PickProjectPath(game.getWindow().getWindow(), true, folder, projectCreationError)) {
+				if (folder.size() < sizeof(newProjectParent)) strcpy_s(newProjectParent, folder.c_str());
+				else projectCreationError = "Selected folder path is too long.";
+			}
+			game.getTimeManager().reset();
+		}
+		ImGui::TextDisabled("A new folder with the project name will be created here.");
+		ImGui::TextWrapped("The current scene and resource files will be kept. Scene saving to disk is not implemented yet.");
+		if (!projectCreationError.empty()) ImGui::TextWrapped("%s", projectCreationError.c_str());
+		if (ImGui::Button("Create")) requestedProjectCreation = true;
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+		if (projectCreationCompleted) { projectCreationCompleted = false; ImGui::CloseCurrentPopup(); }
+		ImGui::EndPopup();
+	}
+	if (confirmProjectSwitch) { confirmProjectSwitch = false; ImGui::OpenPopup("Open another project?"); }
+	if (ImGui::BeginPopupModal("Open another project?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextWrapped("The current scene will be discarded. Scene saving is not implemented yet.");
+		ImGui::TextUnformatted(pendingProject.filePath.c_str());
+		if (ImGui::Button("Open")) { requestedProjectSwitch = true; ImGui::CloseCurrentPopup(); }
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel")) { pendingProject = {}; ImGui::CloseCurrentPopup(); }
+		ImGui::EndPopup();
+	}
+	if (!projectError.empty()) {
+		ImGui::Begin("Project message", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+		ImGui::TextWrapped("%s", projectError.c_str());
+		if (ImGui::Button("Dismiss")) projectError.clear();
+		ImGui::End();
+	}
+	if (closeRequested) { closeRequested = false; ImGui::OpenPopup("Close editor?"); }
+	if (ImGui::BeginPopupModal("Close editor?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextWrapped("Scene changes will be lost. Saving scenes is not implemented yet.");
+		if (ImGui::Button("Exit without saving")) { ImGui::CloseCurrentPopup(); PostQuitMessage(0); }
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+}
+
+void Editor::RequestClose()
+{
+	if (project.filePath.empty()) { PostQuitMessage(0); return; }
+	closeRequested = true;
+	// Закрытие через панель задач должно показывать диалог и для свёрнутого окна.
+	if (IsIconic(game.getWindow().getWindow())) ShowWindow(game.getWindow().getWindow(), SW_RESTORE);
+}
+
+void Editor::ApplyProjectAction()
+{
+	const bool createDemo = initializeDemo;
+	initializeDemo = false;
+	if (requestedProjectCreation) {
+		requestedProjectCreation = false;
+		Project created;
+		const Project* source = project.filePath.empty() ? nullptr : &project;
+		const bool complete = Project::Create(newProjectParent, newProjectName, created, projectCreationError, source);
+		// Время копирования файлов не должно превращаться в большой шаг симуляции.
+		game.getTimeManager().reset();
+		if (!complete) return;
+		// Создание постоянного проекта не заменяет уровень: сохраняются объекты, выбор и Undo.
+		game.getResourceManager().SetProjectDirectory(created.Root());
+		project = std::move(created);
+		temporaryProject = false;
+		contentBrowser = ContentBrowser(project.ResourceRoot(), project.Root());
+		recentProjects.Remember(project.filePath, projectError);
+		projectCreationCompleted = true;
+		return;
+	}
+	if (!requestedProjectSwitch) return;
+	requestedProjectSwitch = false;
+	// До передачи Game уровень и камера принадлежат этой операции.
+	auto* level = new (std::nothrow) Level();
+	GameObject* cameraObject = level ? level->createObject() : nullptr;
+	EditorCamera* camera = cameraObject ? cameraObject->createComponent<EditorCamera>() : nullptr;
+	CameraMovementComponent* movement = cameraObject ? cameraObject->createComponent<CameraMovementComponent>() : nullptr;
+	if (!camera || !movement) { delete level; projectError = "Cannot allocate a project scene."; return; }
+	if (createDemo && !PopulateDemoScene(*level)) {
+		delete level;
+		projectError = "Cannot allocate the demonstration scene.";
+		return;
+	}
+	cameraObject->getTransform().set_position(DXVector3(0.0f, 0.0f, 3.0f));
+	camera->bind_to_node(&cameraObject->getTransform());
+	movement->bind_to_node(&cameraObject->getTransform());
+	movement->enabled = false;
+	// Сбрасываем заимствованные адреса до Shutdown и удаления прежней сцены.
+	selectedObject = nullptr; selectedNode = nullptr;
+	history.clear(); historyPosition = 0;
+	pendingEdit = {}; editingTransform = editingGizmo = navigating = false;
+	meshPathDrafts.clear(); requestedCreate = ObjectType::None; requestedDelete = nullptr;
+	sceneActionError.clear();
+	if (!game.replaceLevel(level, pendingProject.Root())) {
+		delete level;
+		projectError = "Cannot initialize project systems. The previous project remains open.";
+		return;
+	}
+	game.getRenderServer().setCamera(camera);
+	game.getRenderServer().setAmbientColor({ 0.12f, 0.12f, 0.12f });
+	project = std::move(pendingProject);
+	temporaryProject = createDemo;
+	contentBrowser = ContentBrowser(project.ResourceRoot(), project.Root());
+	if (!temporaryProject) recentProjects.Remember(project.filePath, projectError);
 }
 
 const char* Editor::ObjectLabel(GameObject& object) const

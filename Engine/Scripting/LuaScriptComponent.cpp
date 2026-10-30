@@ -34,7 +34,9 @@ void LuaScriptComponent::Init(Game& game)
     sol::state_view lua(L);
 
     // Выполняем файл; ошибки возвращаются результатом, а не прерывают движок.
-    sol::protected_function_result loaded = lua.safe_script_file(scriptPath, sol::script_pass_on_error);
+    const std::string resolved = game.getResourceManager().ResolvePath(scriptPath);
+    if (resolved.empty()) { failed = true; std::cout << "[Lua] Invalid script path\n"; return; }
+    sol::protected_function_result loaded = lua.safe_script_file(resolved, sol::script_pass_on_error);
     if (!loaded.valid()) {
         sol::error error = loaded;
         std::cout << "[Lua] " << scriptPath << ": " << error.what() << std::endl;

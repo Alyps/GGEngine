@@ -5,7 +5,7 @@
 // Editor владеет панелью; записи описывают файлы и не загружают ресурсы.
 class ContentBrowser {
 public:
-    explicit ContentBrowser(const std::string& rootPath);
+    explicit ContentBrowser(const std::string& rootPath, const std::string& projectPath = {});
     void Draw(bool& open);
     bool IsFocused() const { return focused; }
 
@@ -24,6 +24,7 @@ private:
     void DrawDeleteDialog();
 
     std::string root;
+    std::string projectRoot;
     std::string current;
     std::string selected;
     std::string error;

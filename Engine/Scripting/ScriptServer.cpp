@@ -4,6 +4,7 @@
 #include <new>
 #include <string>
 #include <sol/sol.hpp>
+#include "ResourceManager.h"
 
 struct ScriptServer::Impl {
 	sol::state lua;
@@ -56,7 +57,9 @@ bool ScriptServer::RunFile(const std::string& path, std::string& error)
 	}
 
 	// Ошибка загрузки или выполнения возвращается результатом и не прерывает движок.
-	sol::protected_function_result result = impl->lua.safe_script_file(path, sol::script_pass_on_error);
+	const std::string resolved = resources ? resources->ResolvePath(path) : path;
+	if (resolved.empty()) { error = "Invalid script path"; return false; }
+	sol::protected_function_result result = impl->lua.safe_script_file(resolved, sol::script_pass_on_error);
 	if (!result.valid()) {
 		sol::error failure = result;
 		error = path + ": " + failure.what();

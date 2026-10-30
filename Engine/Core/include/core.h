@@ -76,6 +76,8 @@ public:
 
 	// При успехе принимает владение уровнем; при отказе владелец не меняется.
 	bool setStartLevel(Level* level);
+	// Вызывать между кадрами. При успехе Game принимает уровень и сбрасывает системы сцены.
+	bool replaceLevel(Level* level, const std::string& projectDirectory);
 	Level* getLevel() { return initialized ? currentLevel : nullptr; }
 
 	void Init();

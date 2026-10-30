@@ -47,6 +47,35 @@ void Game::Init()
 	if (currentLevel) currentLevel->applyPendingChanges();
 }
 
+bool Game::replaceLevel(Level* level, const std::string& projectDirectory)
+{
+	if (!level || level->owner) return false;
+	// Готовим новые системы до удаления сцены: отказ оставляет прежний уровень живым.
+	auto* nextResources = new (std::nothrow) ResourceManager(projectDirectory);
+	if (!nextResources) return false;
+	nextResources->SetStandardResourceDirectory(resourceManager->GetStandardResourceDirectory());
+	auto* nextScripts = new (std::nothrow) ScriptServer(nextResources);
+	if (!nextScripts || !nextScripts->Init()) {
+		delete nextScripts;
+		delete nextResources;
+		return false;
+	}
+	// Shutdown компонентов использует старые серверы и кеш до их освобождения.
+	delete currentLevel;
+	currentLevel = nullptr;
+	physicsServer.Shutdown();
+	delete scriptServer;
+	delete resourceManager;
+	scriptServer = nextScripts;
+	resourceManager = nextResources;
+	currentLevel = level;
+	currentLevel->owner = this;
+	initialized = true;
+	currentLevel->applyPendingChanges();
+	timeManager.reset();
+	return true;
+}
+
 void Game::BeginFrame()
 {
 	timeManager.update();

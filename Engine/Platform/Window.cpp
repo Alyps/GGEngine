@@ -114,7 +114,8 @@ DisplayWindow32::DisplayWindow32(long clientWidth, long clientHeight, LPCWSTR he
 	RECT windowRect = { 0, 0, static_cast<LONG>(clientWidth), static_cast<LONG>(clientHeight) };
 	AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
-	auto dwStyle = WS_SYSMENU | WS_CAPTION | WS_MINIMIZEBOX | WS_THICKFRAME;
+	// Стандартное окно с кнопками сворачивания, разворачивания и изменяемым размером.
+	const DWORD dwStyle = WS_OVERLAPPEDWINDOW;
 
 	auto posX = (GetSystemMetrics(SM_CXSCREEN) - clientWidth) / 2;
 	auto posY = (GetSystemMetrics(SM_CYSCREEN) - clientHeight) / 2;

@@ -15,6 +15,21 @@
 // Разбираем заголовки JSON до Windows.h, чтобы макросы min/max не мешали библиотеке.
 #include "ResourceManager.h"
 
+std::string ResourceManager::ResolvePath(const std::string& path) const
+{
+	if (path.empty() || path.find('\0') != std::string::npos
+		|| path.size() > static_cast<size_t>((std::numeric_limits<int>::max)())
+		|| !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), static_cast<int>(path.size()), nullptr, 0)) return {};
+	std::filesystem::path resolved(std::u8string(path.begin(), path.end()));
+	// Абсолютные встроенные ресурсы не зависят от каталога открытого проекта.
+	if (!projectDirectory.empty() && !resolved.is_absolute()) {
+		if (resolved.has_root_path()) return {};
+		resolved = std::filesystem::path(std::u8string(projectDirectory.begin(), projectDirectory.end())) / resolved;
+	}
+	const auto text = resolved.lexically_normal().generic_u8string();
+	return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
+
 namespace {
 
 	bool Fail(std::string& error, const std::string& message)

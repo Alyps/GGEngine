@@ -65,8 +65,9 @@ namespace {
     }
 }
 
-ContentBrowser::ContentBrowser(const std::string& rootPath)
-    : root(Utf8(DiskPath(rootPath).lexically_normal())), current(root) {}
+ContentBrowser::ContentBrowser(const std::string& rootPath, const std::string& projectPath)
+    : root(rootPath.empty() ? "" : Utf8(DiskPath(rootPath).lexically_normal())),
+      projectRoot(projectPath), current(root) {}
 
 bool ContentBrowser::CheckDirectory()
 {
@@ -217,6 +218,11 @@ void ContentBrowser::Draw(bool& open)
 {
     focused = false;
     if (!open) { wasOpen = false; return; }
+    if (root.empty()) {
+        if (ImGui::Begin("Content Browser", &open)) ImGui::TextDisabled("Create or open a project from the File menu.");
+        ImGui::End();
+        return;
+    }
     if (!wasOpen) Refresh();
     wasOpen = true;
     if (ImGui::Begin("Content Browser", &open)) {
@@ -293,7 +299,9 @@ void ContentBrowser::Draw(bool& open)
                 }
                 // Payload содержит копию UTF-8 пути, а не адрес временной строки.
                 if (!entry.directory && !entry.link && ImGui::BeginDragDropSource()) {
-                    ImGui::SetDragDropPayload("GG_RESOURCE_PATH", path.c_str(), path.size() + 1);
+                    const std::string resourcePath = projectRoot.empty() ? path
+                        : Utf8(DiskPath(path).lexically_relative(DiskPath(projectRoot)));
+                    ImGui::SetDragDropPayload("GG_RESOURCE_PATH", resourcePath.c_str(), resourcePath.size() + 1);
                     ImGui::TextUnformatted(entry.name.c_str());
                     ImGui::EndDragDropSource();
                 }

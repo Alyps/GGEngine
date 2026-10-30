@@ -28,9 +28,14 @@ private:
 	std::unordered_map<std::string, Resource*> resources;
 	std::string lastError;
 	std::string standardResourceDirectory = "res/StandartResources";
+	std::string projectDirectory;
 
 public:
-	ResourceManager() = default;
+	explicit ResourceManager(std::string directory = {}) : projectDirectory(std::move(directory)) {}
+	// Пустой корень сохраняет поведение standalone: пути от рабочей папки процесса.
+	std::string ResolvePath(const std::string& path) const;
+	// После копирования проекта меняем корень будущих загрузок; живые ресурсы остаются в кеше.
+	void SetProjectDirectory(std::string directory) { projectDirectory = std::move(directory); }
 	ResourceManager(const ResourceManager&) = delete;
 	ResourceManager& operator=(const ResourceManager&) = delete;
 	const std::string& GetLastError() const { return lastError; }
@@ -49,7 +54,9 @@ public:
 
 		lastError.clear();
 		if (path.empty()) { lastError = "Resource path is empty"; return nullptr; }
-		const auto found = resources.find(path);
+		const std::string resolved = ResolvePath(path);
+		if (resolved.empty()) { lastError = "Invalid resource path"; return nullptr; }
+		const auto found = resources.find(resolved);
 		if (found != resources.end()) {
 			T* cached = dynamic_cast<T*>(found->second);
 			if (!cached) lastError = path + ": cached resource has a different type";
@@ -59,13 +66,13 @@ public:
 		T* resource = new (std::nothrow) T(std::forward<Args>(args)...);
 		if (!resource) { lastError = "Cannot allocate resource: " + path; return nullptr; }
 		Resource* base = resource;
-		if (!base->load(path)) {
+		if (!base->load(resolved)) {
 			lastError = path + ": " + (base->loadError.empty() ? "Cannot load resource" : base->loadError);
 			delete base;
 			return nullptr;
 		}
 
-		resources.emplace(path, base);
+		resources.emplace(resolved, base);
 		return resource;
 	}
 
