@@ -385,6 +385,7 @@ int Editor::Run()
 		DrawViewport();
 		contentBrowser.Draw(showContentBrowser);
 		if (const auto file = contentBrowser.TakeObjectToOpen(); !file.empty()) QueueObjectOpen(file);
+		if (const auto file = contentBrowser.TakeSceneToOpen(); !file.empty()) QueueSceneOpen(file);
 		// Закрываем жест также при смене выбора или скрытии панели.
 		if (editingTransform && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing()) FinishTransformEdit();
 		HandleShortcuts();
@@ -482,6 +483,7 @@ void Editor::DrawDockspace()
 		if (!project.filePath.empty()) { ImGui::SameLine(); ImGui::TextUnformatted(temporaryProject ? "Unsaved project" : project.name.c_str()); }
 		if (sceneDirty) { ImGui::SameLine(); ImGui::TextUnformatted("*"); }
 		if (editedObject) { ImGui::SameLine(); ImGui::TextUnformatted(objectFile.c_str()); }
+		else if (!sceneFile.empty()) { ImGui::SameLine(); ImGui::TextUnformatted(sceneFile.c_str()); }
 		ImGui::EndMainMenuBar();
 	}
 	const ImGuiID dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
@@ -556,6 +558,7 @@ void Editor::DrawProjectDialogs()
 		const char* next = pendingAction == PendingAction::Close ? "closing the editor"
 			: pendingAction == PendingAction::NewProject ? "creating a new project"
 			: pendingAction == PendingAction::ReturnScene ? "returning to the scene"
+			: pendingAction == PendingAction::OpenScene ? "opening another scene"
 			: pendingAction == PendingAction::OpenObject ? "opening another object" : "opening another project";
 		ImGui::TextWrapped("Save the current %s before %s?", editedObject ? "object" : "scene", next);
 		if (!documentError.empty()) ImGui::TextWrapped("%s", documentError.c_str());
@@ -568,7 +571,7 @@ void Editor::DrawProjectDialogs()
 		if (ImGui::Button("Don't save")) { proceedPendingAction = true; ImGui::CloseCurrentPopup(); }
 		ImGui::SameLine();
 		if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-			pendingAction = PendingAction::None; resumeAfterSave = closeAfterReturn = false; ImGui::CloseCurrentPopup();
+			pendingAction = PendingAction::None; resumeAfterSave = closeAfterReturn = openSceneAfterReturn = false; ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndDisabled();
 		if (closeUnsavedDialog) { closeUnsavedDialog = false; ImGui::CloseCurrentPopup(); }
@@ -634,8 +637,11 @@ bool Editor::SaveScene(Project& destination, std::string& error)
 	std::string snapshot;
 	if (!CaptureScene(snapshot, error)) return false;
 	Project saved = destination;
-	if (saved.startupScene.empty()) saved.startupScene = saved.resourceDirectory + "/Scenes/Main.level.json";
-	const auto path = (ProjectDiskPath(saved.Root()) / ProjectDiskPath(saved.startupScene)).lexically_normal();
+	const std::string activeScene = !sceneFile.empty() ? sceneFile
+		: !saved.startupScene.empty() ? saved.startupScene : saved.resourceDirectory + "/Scenes/Main.level.json";
+	if (saved.startupScene.empty()) saved.startupScene = activeScene;
+	// Открытие другого уровня не меняет стартовую сцену проекта; Ctrl+S пишет текущий документ.
+	const auto path = (ProjectDiskPath(saved.Root()) / ProjectDiskPath(activeScene)).lexically_normal();
 	std::error_code code;
 	std::filesystem::create_directories(path.parent_path(), code);
 	if (code) { error = "Cannot create scene directory: " + code.message(); return false; }
@@ -644,6 +650,7 @@ bool Editor::SaveScene(Project& destination, std::string& error)
 	// Манифест ссылается на сцену только после успешной атомарной записи самого уровня.
 	if (!game.getLevel()->Save(scenePath, error) || !saved.Save(error)) return false;
 	destination = std::move(saved);
+	sceneFile = activeScene;
 	savedScene = std::move(snapshot);
 	sceneDirty = checkSceneDirty = false;
 	return true;
@@ -659,6 +666,7 @@ void Editor::ContinuePendingAction()
 	else if (action == PendingAction::NewProject) { creationSavesCurrentScene = false; showNewProject = true; }
 	else if (action == PendingAction::OpenObject) requestedObjectOpen = true;
 	else if (action == PendingAction::ReturnScene) requestedSceneReturn = true;
+	else if (action == PendingAction::OpenScene) requestedSceneOpen = true;
 }
 
 void Editor::ApplyDocumentActions()
@@ -681,7 +689,7 @@ void Editor::ApplyDocumentActions()
 	}
 	if (temporaryProject || project.filePath.empty()) { creationSavesCurrentScene = true; showNewProject = true; return; }
 	if (SaveScene(project, documentError)) {
-		contentBrowser = ContentBrowser(project.ResourceRoot(), project.Root());
+		contentBrowser.RefreshFiles();
 		if (resumeAfterSave) { closeUnsavedDialog = true; ContinuePendingAction(); }
 	}
 	game.getTimeManager().reset();
@@ -783,6 +791,7 @@ void Editor::ApplyProjectAction()
 	game.getRenderServer().setCamera(camera);
 	game.getRenderServer().setAmbientColor({ 0.12f, 0.12f, 0.12f });
 	project = std::move(pendingProject);
+	sceneFile = project.startupScene;
 	temporaryProject = createDemo;
 	savedScene.clear();
 	if (!project.startupScene.empty()) CaptureScene(savedScene, documentError);
@@ -978,6 +987,19 @@ void Editor::QueueObjectOpen(const std::string& file)
 	else requestedObjectOpen = true;
 }
 
+void Editor::QueueSceneOpen(const std::string& file)
+{
+	const auto relative = ProjectDiskPath(file).lexically_normal().lexically_relative(ProjectDiskPath(project.Root()));
+	if (relative.empty() || relative.has_root_path()) { documentError = "Choose a scene inside this project."; return; }
+	for (const auto& part : relative) if (part == "..") { documentError = "Choose a scene inside this project."; return; }
+	const auto path = relative.generic_u8string();
+	pendingSceneFile.assign(reinterpret_cast<const char*>(path.data()), path.size());
+	// Из режима объекта возвращаемся через оба независимых диалога сохранения.
+	openSceneAfterReturn = editedObject != nullptr;
+	pendingAction = editedObject ? PendingAction::ReturnScene : PendingAction::OpenScene;
+	checkPendingAction = true;
+}
+
 bool Editor::SaveObject(std::string& error)
 {
 	std::string snapshot;
@@ -992,7 +1014,7 @@ void Editor::ApplyObjectActions()
 		auto* object = requestedObjectExport; requestedObjectExport = nullptr;
 		if (!object->isPendingDestroy() && object->Save(exportObjectPath, documentError)) {
 			if (object == editedObject) { objectFile = exportObjectPath; CaptureScene(savedScene, documentError); RefreshSceneDirty(); }
-			contentBrowser = ContentBrowser(project.ResourceRoot(), project.Root());
+			contentBrowser.RefreshFiles();
 		}
 	}
 	if (requestedSceneReturn) {
@@ -1005,7 +1027,23 @@ void Editor::ApplyObjectActions()
 		if (!ReplaceEditorLevel(level, nullptr, documentError)) { editedObject = previous; delete level; closeAfterReturn = false; return; }
 		savedScene = std::move(parkedBaseline); parkedScene.clear(); objectFile.clear();
 		RefreshSceneDirty();
-		if (closeAfterReturn) { closeAfterReturn = false; RequestClose(); }
+		if (closeAfterReturn) { closeAfterReturn = openSceneAfterReturn = false; RequestClose(); }
+		else if (openSceneAfterReturn) { openSceneAfterReturn = false; pendingAction = PendingAction::OpenScene; checkPendingAction = true; }
+	}
+	if (requestedSceneOpen) {
+		requestedSceneOpen = false;
+		if (editedObject) { documentError = "Return to Scene before opening another level."; return; }
+		rapidjson::Document json;
+		const auto path = (ProjectDiskPath(project.Root()) / ProjectDiskPath(pendingSceneFile)).generic_u8string();
+		const std::string file(reinterpret_cast<const char*>(path.data()), path.size());
+		if (!Deserialization::LoadFile(file, json, documentError)) return;
+		Level* level = Level::Deserialize(json, game.getComponentFactoryMap(), documentError);
+		if (!level) return;
+		// Старый документ живёт до полной загрузки нового и успешной подготовки систем.
+		if (!ReplaceEditorLevel(level, nullptr, documentError)) { delete level; return; }
+		sceneFile = pendingSceneFile;
+		savedScene.clear(); CaptureScene(savedScene, documentError);
+		sceneDirty = savedScene.empty(); checkSceneDirty = false;
 	}
 	if (!requestedObjectOpen) return;
 	requestedObjectOpen = false;
@@ -1187,9 +1225,15 @@ void Editor::DrawTreeInspector()
 		ImGui::EndPopup();
 	}
 	bool position = selectedNode->is_inherit_position(), rotation = selectedNode->is_inherit_rotation(), scale = selectedNode->is_inherit_scale();
-	bool changed = ImGui::Checkbox("Inherit position", &position);
-	ImGui::SameLine(); changed |= ImGui::Checkbox("Inherit rotation", &rotation);
-	ImGui::SameLine(); changed |= ImGui::Checkbox("Inherit scale", &scale);
+	ImGui::SeparatorText("Inherit");
+	// Короткие подписи не пересекаются по ID с полями локальной трансформации.
+	ImGui::PushID("Inheritance");
+	bool changed = ImGui::Checkbox("Position", &position);
+	ImGui::SameLine();
+	changed |= ImGui::Checkbox("Rotation", &rotation);
+	ImGui::SameLine();
+	changed |= ImGui::Checkbox("Scale", &scale);
+	ImGui::PopID();
 	if (changed) {
 		treeAction = { TreeOperation::Inheritance, selectedNode };
 		treeAction.inheritPosition = position; treeAction.inheritRotation = rotation; treeAction.inheritScale = scale;

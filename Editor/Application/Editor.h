@@ -33,13 +33,16 @@ private:
 	bool SaveScene(Project& destination, std::string& error);
 	bool CaptureScene(std::string& snapshot, std::string& error) const;
 	void RefreshSceneDirty();
-	enum class PendingAction { None, Close, OpenProject, NewProject, OpenObject, ReturnScene };
+	enum class PendingAction { None, Close, OpenProject, NewProject, OpenObject, ReturnScene, OpenScene };
 	PendingAction pendingAction = PendingAction::None;
 	bool checkPendingAction = false, proceedPendingAction = false;
 	bool showUnsavedDialog = false, closeUnsavedDialog = false;
 	bool resumeAfterSave = false, requestedSave = false, saveShortcut = false;
 	bool scenePanelFocused = false, checkSceneDirty = false, sceneDirty = true;
 	std::string savedScene, documentError;
+	std::string sceneFile, pendingSceneFile;
+	bool requestedSceneOpen = false, openSceneAfterReturn = false;
+	void QueueSceneOpen(const std::string& file);
 	Project projectCreationTarget;
 	bool creationSavesCurrentScene = false;
 	// Во время редактирования ассета исходная сцена хранится как описание, без живых указателей.

@@ -9,6 +9,8 @@ public:
     void Draw(bool& open);
     bool IsFocused() const { return focused; }
     std::string TakeObjectToOpen() { std::string result; result.swap(objectToOpen); return result; }
+    std::string TakeSceneToOpen() { std::string result; result.swap(sceneToOpen); return result; }
+    void RefreshFiles() { if (!root.empty()) Refresh(); }
 
 private:
     struct Entry {
@@ -16,9 +18,15 @@ private:
         bool directory = false;
         bool link = false;
         bool mesh = false;
+        unsigned long long bytes = 0;
+        bool sizeKnown = false;
     };
     void Refresh();
     bool CheckDirectory();
+    bool Navigate(const std::string& path, bool remember = true);
+    void Activate(const Entry& entry, std::string& directory);
+    void OpenFolder(const std::string& path);
+    std::string ResourcePath(const std::string& path) const;
     enum class CreateType { Folder, Material, LuaScript };
     void CreateEntry();
     void DrawCreateDialog();
@@ -29,6 +37,12 @@ private:
     std::string current;
     std::string selected;
     std::string objectToOpen;
+    std::string sceneToOpen;
+    std::vector<std::string> navigation;
+    size_t navigationPosition = 0;
+    char search[256]{};
+    int typeFilter = 0;
+    bool tiles = false;
     std::string error;
     std::string actionError;
     std::string pendingDelete;
