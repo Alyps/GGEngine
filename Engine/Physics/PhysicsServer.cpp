@@ -306,11 +306,9 @@ bool PhysicsServer::rebuildActor(PhysicsItem& item)
         rotation(*item.transformNode), dynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
         dynamic ? DynamicLayer : StaticLayer);
     if (dynamic) {
-        // Инерция вычисляется по геометрии; полную массу и скорости задаёт компонент.
+        // Инерция вычисляется по геометрии; полную массу задаёт компонент.
         settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
         settings.mMassPropertiesOverride.mMass = item.mass;
-        settings.mLinearVelocity = vector(item.linearVelocity);
-        settings.mAngularVelocity = vector(item.angularVelocity);
         settings.mLinearDamping = 0.0f;
     }
     auto& bodies = impl->scene.GetBodyInterface();
@@ -318,6 +316,14 @@ bool PhysicsServer::rebuildActor(PhysicsItem& item)
         dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
     if (id.IsInvalid()) return reportError("cannot create Jolt body: body capacity exceeded");
     item.bodyId = id.GetIndexAndSequenceNumber();
+    if (dynamic) {
+        // CreationSettings требует уже ограниченные скорости; BodyInterface ограничивает их сам.
+        bodies.SetLinearAndAngularVelocity(id, vector(item.linearVelocity), vector(item.angularVelocity));
+        JPH::Vec3 linear, angular;
+        bodies.GetLinearAndAngularVelocity(id, linear, angular);
+        item.linearVelocity = vector(linear);
+        item.angularVelocity = vector(angular);
+    }
     item.lastPosition = item.transformNode->get_position();
     item.lastRotation = item.transformNode->get_rotation();
     return true;
@@ -362,7 +368,8 @@ bool PhysicsServer::Update(double fixedInterval)
         // Gizmo/Lua передают позу один раз; результат предыдущего шага не телепортируем.
         if (item->transformNode->get_position() != item->lastPosition ||
             item->transformNode->get_rotation() != item->lastRotation)
-            bodies.SetPositionAndRotation(id, JPH::RVec3(vector(item->transformNode->get_position())),
+            // Допуск Jolt отсекает численный шум без лишнего пробуждения и обновления broadphase.
+            bodies.SetPositionAndRotationWhenChanged(id, JPH::RVec3(vector(item->transformNode->get_position())),
                 rotation(*item->transformNode), dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
         if (dynamic) {
             JPH::Vec3 linear, angular;
