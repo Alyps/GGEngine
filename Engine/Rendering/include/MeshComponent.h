@@ -35,6 +35,8 @@ public:
     void setMeshPath(std::string path);
     void setMaterialPath(std::string path);
     void setGeometryPreset(GeometryPreset preset);
+    // Применяет проверенное описание к существующему компоненту, сохраняя его владельца и Init.
+    bool ApplyDescription(const rapidjson::Value& json, std::string& error);
     GeometryPreset getGeometryPreset() const { return geometryPreset; }
     const std::string& getMeshPath() const { return meshPath; }
     const std::string& getMaterialPath() const { return materialPath; }

@@ -74,6 +74,23 @@ void MeshComponent::setMaterialPath(std::string path)
     rebuildRenderItem();
 }
 
+bool MeshComponent::ApplyDescription(const rapidjson::Value& json, std::string& error)
+{
+    auto* description = static_cast<MeshComponent*>(CreateFromJson(json, error));
+    if (!description) return false;
+    // Временное описание не проходит Init; живой компонент остаётся закреплён на прежнем узле.
+    geometryPreset = description->geometryPreset;
+    meshData = std::move(description->meshData);
+    meshResource = nullptr;
+    usePresetMaterial = description->usePresetMaterial;
+    fileMesh = description->fileMesh;
+    meshPath = std::move(description->meshPath);
+    materialPath = std::move(description->materialPath);
+    delete description;
+    rebuildRenderItem();
+    return true;
+}
+
 void MeshComponent::initRenderItem(Game& game)
 {
     meshError.clear();

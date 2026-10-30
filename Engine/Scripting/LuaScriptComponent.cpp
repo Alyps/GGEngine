@@ -24,6 +24,7 @@ void LuaScriptComponent::Init(Game& game)
     delete impl;
     impl = nullptr;
     failed = false;
+    if (game.isEditorMode()) return;
 
     lua_State* L = game.getScriptServer().getState();
     if (!L) {
@@ -90,6 +91,7 @@ void LuaScriptComponent::Init(Game& game)
 
 void LuaScriptComponent::Update(Game& game, double deltaTime)
 {
+    if (game.isEditorMode()) return;
     if (failed || !impl || !impl->onUpdate.valid()) return;
 
     sol::protected_function_result result = impl->onUpdate(impl->instance, deltaTime);

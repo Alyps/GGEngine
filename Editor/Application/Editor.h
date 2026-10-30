@@ -58,7 +58,7 @@ private:
 	bool SaveObject(std::string& error);
 	void DrawTreeInspector();
 	void ApplyTreeAction();
-	void ClearTransformHistory();
+	void ClearDocumentHistory();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
 	enum class ComponentKind { Mesh, DirectionalLight, PointLight, Camera, Navigation, Collider, StaticBody, DynamicBody };
 	struct TreeAction {
@@ -104,6 +104,7 @@ private:
     };
     std::unordered_map<MeshComponent*, MeshPathDraft> meshPathDrafts;
 	void DrawViewport();
+	void DrawViewportToolbar();
 	void PickObject(const ImVec2& origin, const ImVec2& size);
 	void DrawSelectionBounds(const ImVec2& origin, const ImVec2& size);
 	void DrawGizmo(const ImVec2& origin, const ImVec2& size);
@@ -112,22 +113,78 @@ private:
 	const char* ObjectLabel(GameObject& object) const;
 	CameraMovementComponent* GetCameraMovement() const;
 
-	// История заимствует адреса и сбрасывается перед удалением объектов.
+	// Сырые адреса допустимы только пока идёт текущий жест; записи истории используют ID.
 	struct TransformState {
 		GameObject* object = nullptr;
 		TransformNode* node = nullptr;
 		DXVector3 position, scale;
 		DXQuaternion rotation;
 	};
-	struct TransformEdit { TransformState before, after; };
+	using HistoryId = uint64_t;
+	enum class TargetKind { Object, Node, Component };
+	enum class HistoryKind { Node, Component, Structure };
+	struct TargetIdentity {
+		TargetKind kind = TargetKind::Node;
+		HistoryId id = 0;
+		std::vector<size_t> branch;
+		size_t component = 0;
+		bool ordinary = false;
+	};
+	struct ObjectState {
+		HistoryId id = 0;
+		size_t position = 0;
+		std::string json;
+		std::vector<TargetIdentity> identities;
+	};
+	struct HistoryEntry {
+		HistoryKind kind = HistoryKind::Node;
+		HistoryId target = 0;
+		std::string name, before, after;
+		ObjectState objectBefore, objectAfter;
+		HistoryId selectionBefore = 0, selectionAfter = 0, cameraBefore = 0, cameraAfter = 0;
+	};
+	struct DocumentHistory {
+		std::vector<HistoryEntry> entries;
+		size_t position = 0;
+		std::vector<ObjectState> identities;
+	} documentHistory, parkedHistory;
+	std::unordered_map<GameObject*, HistoryId> objectIds;
+	std::unordered_map<TransformNode*, HistoryId> nodeIds;
+	std::unordered_map<Component*, HistoryId> componentIds;
+	struct HistoryTarget { TargetKind kind; void* pointer; };
+	std::unordered_map<HistoryId, HistoryTarget> historyTargets;
+	HistoryId nextHistoryId = 1;
+	HistoryId Id(GameObject* object);
+	HistoryId Id(TransformNode* node);
+	HistoryId Id(Component* component);
+	void ForgetDeadHistoryTargets();
+	void ForgetObjectHistoryTargets(GameObject* object);
+	ObjectState CaptureObjectState(GameObject* object);
+	void RegisterObjectState(GameObject* object, const ObjectState& state);
+	void RegisterNodeState(TransformNode& node, const std::vector<size_t>& path, ObjectState& state);
+	void RestoreDocumentIdentities(const DocumentHistory& history);
+	void CaptureDocumentIdentities(DocumentHistory& history);
+	std::string NodeProperties(TransformNode& node, const TransformState* pose = nullptr);
+	std::string ComponentProperties(Component& component);
+	bool ApplyProperties(const HistoryEntry& entry, const std::string& json);
+	void PushHistory(HistoryEntry entry);
+	void BeginProperty(HistoryKind kind, HistoryId target, const std::string& before, const char* name);
+	void FinishProperty(const std::string* after = nullptr);
+	void TrackComponentProperty(Component& component, const std::string& before, const char* name, bool changed);
+	HistoryEntry pendingProperty;
+	bool editingProperty = false;
+	bool BeginStructure(GameObject* object, const char* name, bool creating = false);
+	void FinishStructures();
+	std::vector<HistoryEntry> pendingStructures;
+	int requestedHistoryStep = 0;
+	void ApplyHistoryStep();
+	bool RestoreObjectState(const ObjectState& state, HistoryId target);
+	void RestoreHistorySelection(HistoryId selection, HistoryId camera);
 	TransformState CaptureTransform(GameObject* object, TransformNode* node) const;
 	void TrackTransformEdit(const TransformState& before);
 	void FinishTransformEdit();
-	void ApplyTransform(const TransformState& state);
 	void Undo();
 	void Redo();
-	std::vector<TransformEdit> history;
-	size_t historyPosition = 0;
 	TransformState pendingEdit;
 	bool editingTransform = false;
 	bool editingGizmo = false;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include "Window.h"
 #include "RenderServer.h"
 #include "GGTime.h"
@@ -18,6 +19,7 @@ private:
 	Game* owner = nullptr;
 	std::vector<GameObject*> objects;
 	std::vector<GameObject*> pendingObjects;
+	std::unordered_map<GameObject*, size_t> pendingObjectPositions;
 	bool shuttingDown = false;
 
 
@@ -37,6 +39,8 @@ public:
 
 	// При успехе уровень принимает владение объектом, созданным через new.
 	bool addObject(GameObject* obj);
+	// Восстановление авторского порядка: владение принимается при успехе, Init отложен.
+	bool addObjectAt(GameObject* obj, size_t position);
 	GameObject* createObject();
 	void destroyObject(GameObject* obj);
 	// Уровень владеет объектами; редактор не меняет список напрямую.
@@ -77,6 +81,9 @@ public:
 	const PhysicsServer& getPhysicsServer() const noexcept { return physicsServer; }
 	// Оба приложения выполняют физику после BeginFrame и до Update.
 	bool StepPhysics();
+	// Редактор правит авторские данные; запуск игровых скриптов остаётся режиму игры.
+	void setEditorMode(bool enabled) { editorMode = enabled; }
+	bool isEditorMode() const { return editorMode; }
 
 	TimeManager& getTimeManager() noexcept { return timeManager; }
 	const TimeManager& getTimeManager() const noexcept { return timeManager; }
@@ -105,6 +112,7 @@ private:
 	ComponentFactoryMap componentFactories;
 	Level* currentLevel = nullptr;
 	bool initialized = false;
+	bool editorMode = false;
 
 	// Its address is stored in HWND; keep it alive through window destruction.
 	WindowMessageContext windowContext{};

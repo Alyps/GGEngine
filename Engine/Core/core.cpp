@@ -153,6 +153,13 @@ GameObject* Level::createObject()
     return object;
 }
 
+bool Level::addObjectAt(GameObject* object, size_t position)
+{
+    if (!addObject(object)) return false;
+    pendingObjectPositions.emplace(object, position);
+    return true;
+}
+
 void Level::destroyObject(GameObject* obj)
 {
     if (obj && obj->owner == this) obj->pendingDestroy = true;
@@ -173,7 +180,14 @@ void Level::applyPendingChanges()
             ++it;
         }
     }
-    objects.insert(objects.end(), additions.begin(), additions.end());
+    for (GameObject* object : additions) {
+        const auto position = pendingObjectPositions.find(object);
+        if (position == pendingObjectPositions.end()) objects.push_back(object);
+        else {
+            objects.insert(objects.begin() + (std::min)(position->second, objects.size()), object);
+            pendingObjectPositions.erase(position);
+        }
+    }
     for (GameObject* object : additions) {
         if (object->pendingDestroy) {
             objects.erase(std::find(objects.begin(), objects.end(), object));
