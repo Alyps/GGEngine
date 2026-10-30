@@ -11,7 +11,7 @@ public:
     enum class GeometryPreset { None, Cube, Sphere };
 private:
     GeometryPreset geometryPreset = GeometryPreset::None;
-    MeshData<NormalVertexType> meshData;
+    MeshData<TexturedVertexType> meshData;
     // Ресурс менеджера той же игры живёт дольше компонента.
     const MeshResource* meshResource = nullptr;
     bool usePresetMaterial = false;
@@ -26,7 +26,7 @@ public:
     MeshComponent();
     // Куб со стандартным материалом из JSON вместо CreateSimple.
     explicit MeshComponent(bool usePresetMaterial);
-    explicit MeshComponent(MeshData<NormalVertexType> data);
+    explicit MeshComponent(MeshData<TexturedVertexType> data);
     explicit MeshComponent(const MeshResource& resource);
     MeshComponent(std::string meshPath, std::string materialPath);
     void Init(Game& game) override;
@@ -42,7 +42,7 @@ public:
     const std::string& getMaterialError() const { return materialError; }
     bool hasProceduralMesh() const { return !fileMesh && !meshResource; }
     // Заимствованные данные для выбора геометрии редактором без чтения GPU-буферов.
-    const MeshData<NormalVertexType>& getMeshData() const {
+    const MeshData<TexturedVertexType>& getMeshData() const {
         return meshResource ? meshResource->GetMeshData() : meshData;
     }
     const RenderItem* getRenderItem() const { return renderItem; }
