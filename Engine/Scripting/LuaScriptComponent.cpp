@@ -98,3 +98,23 @@ void LuaScriptComponent::Update(Game& game, double deltaTime)
         failed = true;
     }
 }
+
+rapidjson::Value LuaScriptComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
+{
+    auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
+    // Таблица self и состояние выполнения остаются только в runtime.
+    json.AddMember("script_path", Serialization::String(scriptPath, allocator), allocator);
+    return Serialization::Finish(std::move(json), error);
+}
+
+Component* LuaScriptComponent::CreateFromJson(const rapidjson::Value& json, std::string& error)
+{
+    error.clear();
+    using namespace Deserialization;
+    std::string path;
+    if (!String(json, "script_path", path, error)) return nullptr;
+    // До привязки созданным компонентом владеет вызывающий код.
+    auto* result = new (std::nothrow) LuaScriptComponent(std::move(path));
+    if (!result) { error = "Cannot allocate component"; return nullptr; }
+    return result;
+}

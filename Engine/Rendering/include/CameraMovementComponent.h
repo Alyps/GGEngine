@@ -3,6 +3,11 @@
 #include "InputDevice.h"
 
 class CameraMovementComponent : public TransformableComponent {
+public:
+    const char* GetSerializationType() const override { return "CameraMovementComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    // При успехе вызывающий код принимает владение компонентом до его привязки.
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
 private:
     // Game и его InputDevice должны жить дольше подписанного компонента.
     Game* ownerGame = nullptr;

@@ -20,11 +20,21 @@ public:
 };
 
 class DirectionalLightComponent : public LightComponent {
+public:
+    const char* GetSerializationType() const override { return "DirectionalLightComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    // При успехе вызывающий код принимает владение компонентом до его привязки.
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
 protected:
     LightItem makeLightItem() const override;
 };
 
 class PointLightComponent : public LightComponent {
+public:
+    const char* GetSerializationType() const override { return "PointLightComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    // При успехе вызывающий код принимает владение компонентом до его привязки.
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
 protected:
     LightItem makeLightItem() const override;
 public:

@@ -23,6 +23,13 @@ private:
 
 public:
 	Level() = default;
+	// Полное описание ассета; сериализация не запускает жизненный цикл.
+	rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const;
+	bool Save(const std::string& path, std::string& error) const;
+	// Новый уровень принадлежит вызывающему коду до передачи Game.
+	static Level* Deserialize(const rapidjson::Value& json, const ComponentFactoryMap& factories, std::string& error);
+	// Уровень принимает владение; возвращаемый указатель заимствованный.
+	GameObject* LoadObjectFromFile(const std::string& path, std::string& error);
 	~Level();
 	Level(const Level&) = delete;
 	Level& operator=(const Level&) = delete;
@@ -76,6 +83,10 @@ public:
 
 	// При успехе принимает владение уровнем; при отказе владелец не меняется.
 	bool setStartLevel(Level* level);
+	// Загрузка стартового уровня разрешена только до Init.
+	bool LoadLevelFromFile(const std::string& path, std::string& error);
+	ComponentFactoryMap& getComponentFactoryMap() { return componentFactories; }
+	const ComponentFactoryMap& getComponentFactoryMap() const { return componentFactories; }
 	Level* getLevel() { return initialized ? currentLevel : nullptr; }
 
 	void Init();
@@ -88,6 +99,8 @@ public:
 
 private:
 
+	// Фабрики регистрируются при конструировании таблицы, отдельно для каждой Game.
+	ComponentFactoryMap componentFactories;
 	Level* currentLevel = nullptr;
 	bool initialized = false;
 

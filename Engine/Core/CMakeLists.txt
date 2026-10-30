@@ -10,6 +10,4 @@ target_sources(Engine PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/Engine.cpp"
 )
 
-target_sources(Engine PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/start.cpp"
-)
+target_sources(Engine PRIVATE)

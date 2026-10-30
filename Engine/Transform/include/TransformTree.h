@@ -1,4 +1,5 @@
 #pragma once
+#include "Component.h"
 #include "GGMath.h"
 #include <vector>
 #include <algorithm>
@@ -22,6 +23,8 @@ private:
     void applyPendingChanges();
     void releaseComponent(TransformableComponent* component);
     bool isEmptySubtree() const;
+    // Только сборка нового объекта; при ошибке вызывающий код удаляет объект целиком.
+    bool Deserialize(const rapidjson::Value& json, const ComponentFactoryMap& factories, std::string& error, unsigned depth = 0);
 	DXVector3 position = DXVector3::Zero;
 	bool inherit_position = true;
 
@@ -37,6 +40,8 @@ private:
    
 
 public:
+    // Компоненты записываются внутри владеющих ими узлов.
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const;
     const std::string& get_name() const { return name; }
     // UI редактора: переименование слота; имя непустое и уникально среди соседей.
     bool set_name(const std::string& value);
