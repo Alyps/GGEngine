@@ -1,16 +1,46 @@
+// Jolt подключается до Windows/SimpleMath и остальных заголовков SDK.
+#include <Jolt/Jolt.h>
+#include <Jolt/RegisterTypes.h>
+#include <Jolt/Core/Factory.h>
+#include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Core/JobSystemSingleThreaded.h>
+#include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/PhysicsMaterial.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include "PhysicsServer.h"
 #include "TransformTree.h"
-#include <PxConfig.h>
-#include <PxPhysicsAPI.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <new>
+#include <mutex>
 #include <vector>
 
-using namespace physx;
-
 namespace {
+    // Factory общая для всех одновременно живущих Game; системы владеют ею совместно.
+    std::mutex sdkMutex;
+    unsigned sdkUsers = 0;
+    bool acquireSdk() {
+        const std::lock_guard<std::mutex> guard(sdkMutex);
+        if (!sdkUsers) {
+            if (JPH::Factory::sInstance) return false;
+            JPH::RegisterDefaultAllocator();
+            JPH::Factory::sInstance = new JPH::Factory;
+            JPH::RegisterTypes();
+        }
+        ++sdkUsers;
+        return true;
+    }
+    void releaseSdk() {
+        const std::lock_guard<std::mutex> guard(sdkMutex);
+        if (--sdkUsers) return;
+        JPH::UnregisterTypes();
+        delete JPH::Factory::sInstance;
+        JPH::Factory::sInstance = nullptr;
+    }
     bool finite(const DXVector3& v) {
         return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
     }
@@ -47,30 +77,89 @@ namespace {
         return a.staticFriction == b.staticFriction && a.dynamicFriction == b.dynamicFriction &&
             a.restitution == b.restitution;
     }
-    PxVec3 vector(const DXVector3& v) { return {v.x, v.y, v.z}; }
-    DXVector3 vector(const PxVec3& v) { return {v.x, v.y, v.z}; }
-    PxTransform pose(const TransformNode& node) {
+    JPH::Vec3 vector(const DXVector3& v) { return {v.x, v.y, v.z}; }
+    DXVector3 vector(JPH::Vec3Arg v) { return {v.GetX(), v.GetY(), v.GetZ()}; }
+    JPH::Quat rotation(const TransformNode& node) {
         const auto& q = node.get_rotation();
-        return {vector(node.get_position()), PxQuat(q.x, q.y, q.z, q.w).getNormalized()};
+        return JPH::Quat(q.x, q.y, q.z, q.w).Normalized();
     }
+
+    constexpr JPH::ObjectLayer StaticLayer = 0, DynamicLayer = 1;
+    class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
+    public:
+        JPH::uint GetNumBroadPhaseLayers() const override { return 2; }
+        JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
+            return JPH::BroadPhaseLayer(static_cast<JPH::BroadPhaseLayer::Type>(layer));
+        }
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
+        const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override {
+            return layer == JPH::BroadPhaseLayer(0) ? "Static" : "Dynamic";
+        }
+#endif
+    };
+    // Статические тела не сталкиваются друг с другом; динамические сталкиваются со всеми.
+    class ObjectPairs final : public JPH::ObjectLayerPairFilter {
+    public:
+        bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
+            return a == DynamicLayer || b == DynamicLayer;
+        }
+    };
+    class BroadPhasePairs final : public JPH::ObjectVsBroadPhaseLayerFilter {
+    public:
+        bool ShouldCollide(JPH::ObjectLayer a, JPH::BroadPhaseLayer b) const override {
+            return a == DynamicLayer || b == JPH::BroadPhaseLayer(1);
+        }
+    };
+
+    // Форма Jolt владеет снимком материала, без указателей на данные компонентов.
+    class SurfaceMaterial final : public JPH::PhysicsMaterial {
+    public:
+        ::PhysicsMaterial data;
+        explicit SurfaceMaterial(const ::PhysicsMaterial& value) : data(value) {}
+    };
+    class SurfaceContacts final : public JPH::ContactListener {
+        static void apply(const JPH::Body& a, const JPH::Body& b,
+            const JPH::ContactManifold& contact, JPH::ContactSettings& settings) {
+            const auto* first = static_cast<const SurfaceMaterial*>(a.GetShape()->GetMaterial(contact.mSubShapeID1));
+            const auto* second = static_cast<const SurfaceMaterial*>(b.GetShape()->GetMaterial(contact.mSubShapeID2));
+            // У Jolt один коэффициент контакта: ниже 0.01 м/с используем статическое трение.
+            bool sliding = false;
+            for (JPH::uint i = 0; i < contact.mRelativeContactPointsOn1.size(); ++i) {
+                const auto velocity = b.GetPointVelocity(contact.GetWorldSpaceContactPointOn2(i))
+                    - a.GetPointVelocity(contact.GetWorldSpaceContactPointOn1(i));
+                const auto tangent = velocity - contact.mWorldSpaceNormal * velocity.Dot(contact.mWorldSpaceNormal);
+                if (tangent.LengthSq() > 0.0001f) { sliding = true; break; }
+            }
+            const auto& ma = first->data;
+            const auto& mb = second->data;
+            settings.mCombinedFriction = 0.5f * (sliding
+                ? ma.dynamicFriction + mb.dynamicFriction : ma.staticFriction + mb.staticFriction);
+            settings.mCombinedRestitution = 0.5f * (ma.restitution + mb.restitution);
+        }
+    public:
+        void OnContactAdded(const JPH::Body& a, const JPH::Body& b,
+            const JPH::ContactManifold& contact, JPH::ContactSettings& settings) override {
+            apply(a, b, contact, settings);
+        }
+        void OnContactPersisted(const JPH::Body& a, const JPH::Body& b,
+            const JPH::ContactManifold& contact, JPH::ContactSettings& settings) override {
+            apply(a, b, contact, settings);
+        }
+    };
 }
 
 struct PhysicsServer::Impl {
-    PxDefaultAllocator allocator;
-    PxDefaultErrorCallback errors;
-    PxFoundation* foundation = nullptr;
-    PxPhysics* physics = nullptr;
-    PxDefaultCpuDispatcher* dispatcher = nullptr;
-    PxScene* scene = nullptr;
+    // Эти объекты живут дольше PhysicsSystem, который заимствует их адреса.
+    BroadPhaseLayers layers;
+    ObjectPairs objectPairs;
+    BroadPhasePairs broadPhasePairs;
+    SurfaceContacts contacts;
+    JPH::TempAllocatorMalloc allocator;
+    JPH::JobSystemSingleThreaded jobs;
+    JPH::PhysicsSystem scene;
     // Оба списка заимствуют адреса: владельцами записей остаются компоненты.
     std::vector<PhysicsItem*> items;
     std::vector<ColliderItem*> colliders;
-    ~Impl() {
-        if (scene) scene->release();
-        if (dispatcher) dispatcher->release();
-        if (physics) physics->release();
-        if (foundation) foundation->release();
-    }
 };
 
 PhysicsItem::~PhysicsItem() { if (server) server->removeItem(*this); }
@@ -88,32 +177,29 @@ bool PhysicsServer::Init(const DXVector3& gravity)
 {
     if (impl) return lastError.empty();
     if (!lastError.empty()) return false;
+    if (!acquireSdk()) return reportError("Jolt factory is owned by another integration");
     auto* created = new (std::nothrow) Impl;
-    if (!created) return reportError("cannot allocate PhysX state");
+    if (!created) { releaseSdk(); return reportError("cannot allocate Jolt state"); }
 
-    // Следующий ресурс создаётся только после успешного предыдущего.
-    created->foundation = PxCreateFoundation(PX_PHYSICS_VERSION, created->allocator, created->errors);
-    if (created->foundation)
-        created->physics = PxCreatePhysics(PX_PHYSICS_VERSION, *created->foundation, PxTolerancesScale(), false, nullptr);
-    if (created->physics) created->dispatcher = PxDefaultCpuDispatcherCreate(1);
-    if (created->dispatcher) {
-        PxSceneDesc description(created->physics->getTolerancesScale());
-        description.gravity = vector(finite(gravity) ? gravity : DXVector3(0, -9.81f, 0));
-        description.cpuDispatcher = created->dispatcher;
-        description.filterShader = PxDefaultSimulationFilterShader;
-        created->scene = created->physics->createScene(description);
-    }
-    // Деструктор Impl также очищает частично созданный SDK.
-    if (!created->scene) { delete created; return reportError("PhysX initialization failed"); }
+    // Задачи выполняются синхронно, без отдельного потока и второго игрового цикла.
+    created->jobs.Init(JPH::cMaxPhysicsJobs);
+    created->scene.Init(8192, 0, 65536, 16384, created->layers, created->broadPhasePairs, created->objectPairs);
+    created->scene.SetGravity(vector(finite(gravity) ? gravity : DXVector3(0, -9.81f, 0)));
+    created->scene.SetContactListener(&created->contacts);
     impl = created;
     return true;
 }
 
 void PhysicsServer::releaseActor(PhysicsItem& item)
 {
-    // Actor освобождает exclusive shapes, а формы — ссылки на материалы.
-    if (item.actor) item.actor->release();
-    item.actor = nullptr;
+    if (item.hasActor()) {
+        // Сначала удаляем из broadphase, затем освобождаем тело и его ссылки на формы.
+        auto& bodies = impl->scene.GetBodyInterface();
+        const JPH::BodyID id(item.bodyId);
+        bodies.RemoveBody(id);
+        bodies.DestroyBody(id);
+    }
+    item.bodyId = PhysicsItem::InvalidBodyId;
     item.sleeping = false;
     item.rebuild = true;
 }
@@ -179,6 +265,7 @@ void PhysicsServer::Shutdown()
         while (!impl->colliders.empty()) removeCollider(*impl->colliders.back());
         delete impl;
         impl = nullptr;
+        releaseSdk(); // Factory удаляется после последнего PhysicsSystem и всех его форм.
     }
     lastError.clear();
 }
@@ -192,45 +279,45 @@ bool PhysicsServer::rebuildActor(PhysicsItem& item)
     item.appliedMass = item.mass;
     item.rebuild = false;
 
-    const auto matches = [&item](const ColliderItem* collider) {
-        return collider->enabled && collider->transformNode == item.transformNode;
-    };
-    // Тело без активного коллайдера зарегистрировано, но не участвует в симуляции.
-    if (std::none_of(impl->colliders.begin(), impl->colliders.end(), matches)) return true;
-    PxRigidActor* actor = item.type == PhysicsBodyType::Dynamic
-        ? static_cast<PxRigidActor*>(impl->physics->createRigidDynamic(pose(*item.transformNode)))
-        : static_cast<PxRigidActor*>(impl->physics->createRigidStatic(pose(*item.transformNode)));
-    if (!actor) return reportError("cannot create rigid actor");
-
+    JPH::RefConst<JPH::Shape> shape;
+    JPH::StaticCompoundShapeSettings compound;
+    unsigned count = 0;
     for (const ColliderItem* collider : impl->colliders) {
-        if (!matches(collider)) continue;
-        const auto& materialData = collider->material;
-        PxMaterial* material = impl->physics->createMaterial(materialData.staticFriction,
-            materialData.dynamicFriction, materialData.restitution);
-        if (!material) { actor->release(); return reportError("cannot create physics material"); }
+        if (!collider->enabled || collider->transformNode != item.transformNode) continue;
         const DXVector3 half = dimensions(collider->size * item.appliedScale * 0.5f);
-        PxShape* shape = impl->physics->createShape(PxBoxGeometry(half.x, half.y, half.z), *material, true);
-        material->release(); // Shape удерживает материал после создания.
-        if (!shape) { actor->release(); return reportError("cannot create box shape"); }
-        shape->setContactOffset((std::min)(0.02f, (std::min)({half.x, half.y, half.z}) * 0.1f));
-        shape->setRestOffset(0.0f);
-        const bool attached = actor->attachShape(*shape);
-        shape->release(); // После attach ссылкой на форму владеет actor.
-        if (!attached) { actor->release(); return reportError("cannot attach collider shape"); }
+        // Только SDK Ref: форма удерживает материал, затем тело удерживает форму.
+        const JPH::RefConst<SurfaceMaterial> material = new SurfaceMaterial(collider->material);
+        JPH::BoxShapeSettings box(vector(half), (std::min)({0.05f, half.x, half.y, half.z}) * 0.1f, material);
+        const auto result = box.Create();
+        if (result.HasError()) return reportError(result.GetError().c_str());
+        shape = result.Get();
+        compound.AddShape(JPH::Vec3::sZero(), JPH::Quat::sIdentity(), shape);
+        ++count;
     }
-    if (item.type == PhysicsBodyType::Dynamic) {
-        auto* body = static_cast<PxRigidDynamic*>(actor);
-        if (!PxRigidBodyExt::setMassAndUpdateInertia(*body, item.mass)) {
-            actor->release();
-            return reportError("cannot calculate mass and inertia");
-        }
-        // Пересоздание формы после изменения масштаба сохраняет скорости тела.
-        body->setLinearVelocity(vector(item.linearVelocity));
-        body->setAngularVelocity(vector(item.angularVelocity));
-        body->setSolverIterationCounts(8, 2);
+    if (!count) return true; // Без активного коллайдера тело не создаётся.
+    if (count > 1) {
+        const auto result = compound.Create();
+        if (result.HasError()) return reportError(result.GetError().c_str());
+        shape = result.Get();
     }
-    impl->scene->addActor(*actor);
-    item.actor = actor;
+
+    const bool dynamic = item.type == PhysicsBodyType::Dynamic;
+    JPH::BodyCreationSettings settings(shape, JPH::RVec3(vector(item.transformNode->get_position())),
+        rotation(*item.transformNode), dynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
+        dynamic ? DynamicLayer : StaticLayer);
+    if (dynamic) {
+        // Инерция вычисляется по геометрии; полную массу и скорости задаёт компонент.
+        settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+        settings.mMassPropertiesOverride.mMass = item.mass;
+        settings.mLinearVelocity = vector(item.linearVelocity);
+        settings.mAngularVelocity = vector(item.angularVelocity);
+        settings.mLinearDamping = 0.0f;
+    }
+    auto& bodies = impl->scene.GetBodyInterface();
+    const auto id = bodies.CreateAndAddBody(settings,
+        dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+    if (id.IsInvalid()) return reportError("cannot create Jolt body: body capacity exceeded");
+    item.bodyId = id.GetIndexAndSequenceNumber();
     item.lastPosition = item.transformNode->get_position();
     item.lastRotation = item.transformNode->get_rotation();
     return true;
@@ -255,6 +342,7 @@ bool PhysicsServer::Update(double fixedInterval)
         collider->appliedMaterial = collider->material;
         collider->appliedEnabled = collider->enabled;
     }
+    auto& bodies = impl->scene.GetBodyInterface();
     for (PhysicsItem* item : impl->items) {
         if (!item->enabled) { releaseActor(*item); continue; }
         if (!validPose(item->transformNode)) return reportError("body needs a root transform");
@@ -267,34 +355,41 @@ bool PhysicsServer::Update(double fixedInterval)
         if (item->rebuild || item->type != item->appliedType || item->mass != item->appliedMass ||
             dimensions(item->transformNode->get_scale()) != item->appliedScale)
             if (!rebuildActor(*item)) return false;
-        if (!item->actor) continue;
+        if (!item->hasActor()) continue;
 
-        // Gizmo/Lua могут менять корневой узел: такую позу передаём в PhysX один раз.
+        const JPH::BodyID id(item->bodyId);
+        const bool dynamic = item->type == PhysicsBodyType::Dynamic;
+        // Gizmo/Lua передают позу один раз; результат предыдущего шага не телепортируем.
         if (item->transformNode->get_position() != item->lastPosition ||
             item->transformNode->get_rotation() != item->lastRotation)
-            item->actor->setGlobalPose(pose(*item->transformNode));
-        if (item->type == PhysicsBodyType::Dynamic) {
-            auto* body = static_cast<PxRigidDynamic*>(item->actor);
-            if (vector(body->getLinearVelocity()) != item->linearVelocity)
-                body->setLinearVelocity(vector(item->linearVelocity));
-            if (vector(body->getAngularVelocity()) != item->angularVelocity)
-                body->setAngularVelocity(vector(item->angularVelocity));
+            bodies.SetPositionAndRotation(id, JPH::RVec3(vector(item->transformNode->get_position())),
+                rotation(*item->transformNode), dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        if (dynamic) {
+            JPH::Vec3 linear, angular;
+            bodies.GetLinearAndAngularVelocity(id, linear, angular);
+            // Не будим уснувшие тела, если скорости Item не менялись извне.
+            if (vector(linear) != item->linearVelocity || vector(angular) != item->angularVelocity)
+                bodies.SetLinearAndAngularVelocity(id, vector(item->linearVelocity), vector(item->angularVelocity));
         }
     }
-    impl->scene->simulate(dt);
-    PxU32 error = 0;
-    if (!impl->scene->fetchResults(true, &error) || error) return reportError("fetchResults failed");
+    const auto error = impl->scene.Update(dt, 1, &impl->allocator, &impl->jobs);
+    if (error != JPH::EPhysicsUpdateError::None) return reportError("Jolt update capacity exceeded");
     for (PhysicsItem* item : impl->items) {
-        if (!item->actor) continue;
+        if (!item->hasActor()) continue;
         if (item->type == PhysicsBodyType::Dynamic) {
-            const auto* body = static_cast<PxRigidDynamic*>(item->actor);
-            const PxTransform current = body->getGlobalPose();
-            item->transformNode->set_position(vector(current.p));
-            item->transformNode->set_rotation({current.q.x, current.q.y, current.q.z, current.q.w});
+            const JPH::BodyID id(item->bodyId);
+            JPH::RVec3 position;
+            JPH::Quat orientation;
+            bodies.GetPositionAndRotation(id, position, orientation);
+            item->transformNode->set_position({static_cast<float>(position.GetX()),
+                static_cast<float>(position.GetY()), static_cast<float>(position.GetZ())});
+            item->transformNode->set_rotation({orientation.GetX(), orientation.GetY(), orientation.GetZ(), orientation.GetW()});
             // Масштаб узла не меняем; скорости и сон — актуальные данные Item.
-            item->linearVelocity = vector(body->getLinearVelocity());
-            item->angularVelocity = vector(body->getAngularVelocity());
-            item->sleeping = body->isSleeping();
+            JPH::Vec3 linear, angular;
+            bodies.GetLinearAndAngularVelocity(id, linear, angular);
+            item->linearVelocity = vector(linear);
+            item->angularVelocity = vector(angular);
+            item->sleeping = !bodies.IsActive(id);
         }
         item->lastPosition = item->transformNode->get_position();
         item->lastRotation = item->transformNode->get_rotation();

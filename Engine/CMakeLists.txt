@@ -1,7 +1,7 @@
 
 add_library(Engine STATIC)
 target_link_libraries(Engine PUBLIC DirectXTK DirectXTex)
-target_link_libraries(Engine PRIVATE PhysXExtensions)
+target_link_libraries(Engine PRIVATE Jolt)
 
 target_include_directories(Engine SYSTEM PUBLIC "${rapidjson_SOURCE_DIR}/include")
 # Lua и sol2 используются только в .cpp движка и не попадают в публичные заголовки.

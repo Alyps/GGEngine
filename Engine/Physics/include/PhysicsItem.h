@@ -1,9 +1,9 @@
 #pragma once
 #include "GGMath.h"
+#include <cstdint>
 
 struct TransformNode;
 class PhysicsServer;
-namespace physx { class PxRigidActor; }
 
 enum class PhysicsBodyType { Static, Dynamic };
 
@@ -41,7 +41,7 @@ struct PhysicsItem {
     PhysicsBodyType type = PhysicsBodyType::Dynamic;
     float mass = 1.0f;
     bool enabled = true;
-    // Сервер читает заданные скорости и обновляет их после fetchResults.
+    // Сервер читает заданные скорости и обновляет их после завершения шага.
     DXVector3 linearVelocity = DXVector3::Zero;
     DXVector3 angularVelocity = DXVector3::Zero;
 
@@ -50,13 +50,15 @@ struct PhysicsItem {
     PhysicsItem(const PhysicsItem&) = delete;
     PhysicsItem& operator=(const PhysicsItem&) = delete;
     bool isRegistered() const { return server != nullptr; }
-    bool hasActor() const { return actor != nullptr; }
+    bool hasActor() const { return bodyId != InvalidBodyId; }
     bool isSleeping() const { return sleeping; }
 
 private:
     friend class PhysicsServer;
     PhysicsServer* server = nullptr;
-    physx::PxRigidActor* actor = nullptr;
+    // SDK хранит тело; Item содержит только ID с номером поколения, без заголовков Jolt.
+    static constexpr std::uint32_t InvalidBodyId = 0xffffffffu;
+    std::uint32_t bodyId = InvalidBodyId;
     bool rebuild = true;
     bool sleeping = false;
     PhysicsBodyType appliedType = PhysicsBodyType::Dynamic;

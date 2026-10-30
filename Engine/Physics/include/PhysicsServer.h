@@ -2,7 +2,7 @@
 #include "PhysicsItem.h"
 #include <string>
 
-// Game владеет системой, компоненты — Item. PhysX скрыт в реализации.
+// Game владеет системой, компоненты — Item. Jolt скрыт в реализации.
 class PhysicsServer {
     struct Impl;
     Impl* impl = nullptr;
@@ -28,6 +28,6 @@ public:
     void removeItem(PhysicsItem& item);
     bool addCollider(ColliderItem& item);
     void removeCollider(ColliderItem& item);
-    // Один вызов — один fixed-step; fetchResults завершается до записи узлов.
+    // Один вызов — один fixed-step; работа Jolt завершается до записи узлов.
     bool Update(double fixedInterval);
 };
