@@ -5,6 +5,7 @@
 #include "RenderPresets.h"
 #include <cmath>
 #include <DirectXCollision.h>
+#include <filesystem>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -51,6 +52,71 @@ namespace {
 
 Editor::Editor(Game& application, const std::string& resourceRoot)
 	: game(application), contentBrowser(resourceRoot) {}
+
+bool Editor::LaunchGame(const std::string& executablePath, const std::string& projectDirectory,
+	const std::string& startLevelPath, std::string& error)
+{
+	error.clear();
+	const auto toWide = [&error](const std::string& path, std::wstring& wide) {
+		// Не допускаем скрытого обрезания пути и потери символов при преобразовании.
+		if (path.empty() || path.find('\0') != std::string::npos || path.size() > 32767) {
+			error = "Invalid or empty launch path";
+			return false;
+		}
+		const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+			path.data(), static_cast<int>(path.size()), nullptr, 0);
+		if (!count) { error = "Invalid UTF-8 launch path"; return false; }
+		wide.resize(count);
+		if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(),
+			static_cast<int>(path.size()), wide.data(), count)) {
+			error = "Cannot convert launch path";
+			return false;
+		}
+		return true;
+	};
+	std::wstring executable, project, scene, standard;
+	if (!toWide(executablePath, executable) || !toWide(projectDirectory, project) ||
+		!toWide(startLevelPath, scene) ||
+		!toWide(game.getResourceManager().GetStandardResourceDirectory(), standard)) return false;
+
+	// Разрешаем пути до смены cwd дочернего процесса; cwd редактора не меняется.
+	for (std::wstring* path : { &executable, &project, &standard }) {
+		std::error_code code;
+		const auto absolute = std::filesystem::absolute(std::filesystem::path(*path), code);
+		if (code) { error = "Cannot resolve launch path: " + code.message(); return false; }
+		*path = absolute.native();
+	}
+	const auto quote = [](const std::wstring& argument) {
+		std::wstring result = L"\"";
+		size_t slashes = 0;
+		// CRT удваивает обратные слеши перед кавычкой, включая закрывающую.
+		for (wchar_t character : argument) {
+			if (character == L'\\') { ++slashes; continue; }
+			result.append(character == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+			result += character;
+			slashes = 0;
+		}
+		result.append(slashes * 2, L'\\');
+		return result + L'"';
+	};
+	std::wstring command = quote(executable) + L" --project " + quote(project) +
+		L" --scene " + quote(scene) + L" --standard-resources " + quote(standard);
+	if (command.size() >= 32767) { error = "Game command line is too long"; return false; }
+
+	STARTUPINFOW startup{};
+	startup.cb = sizeof(startup);
+	PROCESS_INFORMATION process{};
+	// Отдельная консоль показывает ошибки игры; дескрипторы редактора не наследуются.
+	if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+		CREATE_NEW_CONSOLE, nullptr, project.c_str(), &startup, &process)) {
+		error = "Cannot launch Game.exe (Win32 " + std::to_string(GetLastError()) + ")";
+		return false;
+	}
+	// Закрытие дескрипторов не останавливает игру; ожидание не блокирует редактор.
+	CloseHandle(process.hThread);
+	CloseHandle(process.hProcess);
+	return true;
+}
 
 CameraMovementComponent* Editor::GetCameraMovement() const
 {
