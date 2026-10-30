@@ -13,6 +13,15 @@ public:
     void RefreshFiles() { if (!root.empty()) Refresh(); }
 
 private:
+    // Запросы текущего кадра применяются после обхода списка, чтобы не инвалидировать entries.
+    struct DrawRequests {
+        bool refresh = false, create = false, remove = false;
+        std::string directory;
+    };
+    void DrawToolbar(DrawRequests& requests);
+    size_t DrawFileList(float footerHeight, DrawRequests& requests);
+    void ApplyFileActions(DrawRequests& requests);
+    void DrawCreateMenu(DrawRequests& requests);
     struct Entry {
         std::string name;
         bool directory = false;

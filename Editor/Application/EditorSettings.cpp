@@ -1,18 +1,40 @@
 #include "EditorSettings.h"
+#include "EditorFileUtils.h"
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
 #include <filesystem>
-#include <fstream>
 #include <windows.h>
 
 namespace {
     using Action = EditorSettings::Action;
-    const char* names[] = { "Save document", "Undo", "Redo", "Delete selection", "Duplicate selection",
-        "Move tool", "Rotate tool", "Scale tool", "Camera navigation", "Viewport context menu",
-        "Camera forward", "Camera backward", "Camera left", "Camera right", "Camera down", "Camera up" };
-    const char* ids[] = { "save", "undo", "redo", "delete", "duplicate", "move", "rotate", "scale",
-        "navigate", "context_menu", "camera_forward", "camera_backward", "camera_left", "camera_right", "camera_down", "camera_up" };
+    enum class BindingContext { Command, ViewportMouse, CameraMovement };
+    struct ActionDescription {
+        const char* id;
+        const char* name;
+        EditorSettings::Binding binding;
+        BindingContext context;
+    };
+    // Описание действия задаёт его стабильный ключ JSON, подпись, назначение и контекст конфликтов.
+    constexpr ActionDescription actions[] = {
+        { "save", "Save document", {ImGuiKey_S, ImGuiMod_Ctrl}, BindingContext::Command },
+        { "undo", "Undo", {ImGuiKey_Z, ImGuiMod_Ctrl}, BindingContext::Command },
+        { "redo", "Redo", {ImGuiKey_Y, ImGuiMod_Ctrl}, BindingContext::Command },
+        { "delete", "Delete selection", {ImGuiKey_Delete}, BindingContext::Command },
+        { "duplicate", "Duplicate selection", {ImGuiKey_D, ImGuiMod_Ctrl}, BindingContext::Command },
+        { "move", "Move tool", {ImGuiKey_W}, BindingContext::Command },
+        { "rotate", "Rotate tool", {ImGuiKey_E}, BindingContext::Command },
+        { "scale", "Scale tool", {ImGuiKey_R}, BindingContext::Command },
+        { "navigate", "Camera navigation", {ImGuiKey_MouseMiddle}, BindingContext::ViewportMouse },
+        { "context_menu", "Viewport context menu", {ImGuiKey_MouseRight}, BindingContext::ViewportMouse },
+        { "camera_forward", "Camera forward", {ImGuiKey_W}, BindingContext::CameraMovement },
+        { "camera_backward", "Camera backward", {ImGuiKey_S}, BindingContext::CameraMovement },
+        { "camera_left", "Camera left", {ImGuiKey_A}, BindingContext::CameraMovement },
+        { "camera_right", "Camera right", {ImGuiKey_D}, BindingContext::CameraMovement },
+        { "camera_down", "Camera down", {ImGuiKey_Q}, BindingContext::CameraMovement },
+        { "camera_up", "Camera up", {ImGuiKey_E}, BindingContext::CameraMovement }
+    };
+    static_assert(std::size(actions) == EditorSettings::ActionCount);
     std::string ModifierLabel(ImGuiKeyChord modifiers) {
         std::string text;
         if (modifiers & ImGuiMod_Ctrl) text += "Ctrl+";
@@ -22,29 +44,22 @@ namespace {
         return text;
     }
     bool SettingsPath(std::filesystem::path& path, std::string& error) {
-        const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
-        if (!count) { error = "LOCALAPPDATA is unavailable."; return false; }
-        std::wstring directory(count, L'\0');
-        const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", directory.data(), count);
-        if (!length || length >= count) { error = "Cannot read LOCALAPPDATA."; return false; }
-        directory.resize(length);
-        path = std::filesystem::path(directory) / L"GGEngine" / L"Editor" / L"settings.json";
+        if (!EditorFiles::UserDirectory(path, error)) return false;
+        path /= L"settings.json";
         return true;
     }
 }
 
 EditorSettings::EditorSettings()
 {
-    bindings = { Binding{ImGuiKey_S, ImGuiMod_Ctrl}, {ImGuiKey_Z, ImGuiMod_Ctrl}, {ImGuiKey_Y, ImGuiMod_Ctrl},
-        {ImGuiKey_Delete}, {ImGuiKey_D, ImGuiMod_Ctrl}, {ImGuiKey_W}, {ImGuiKey_E}, {ImGuiKey_R},
-        {ImGuiKey_MouseMiddle}, {ImGuiKey_MouseRight}, {ImGuiKey_W}, {ImGuiKey_S}, {ImGuiKey_A}, {ImGuiKey_D}, {ImGuiKey_Q}, {ImGuiKey_E} };
+    for (size_t i = 0; i < ActionCount; ++i) bindings[i] = actions[i].binding;
 }
 
-const char* EditorSettings::Name(Action action) { return names[static_cast<size_t>(action)]; }
+const char* EditorSettings::Name(Action action) { return actions[static_cast<size_t>(action)].name; }
 
 bool EditorSettings::AcceptsKey(Action action, ImGuiKey key)
 {
-    if (action == Action::Navigate || action == Action::ContextMenu)
+    if (actions[static_cast<size_t>(action)].context == BindingContext::ViewportMouse)
         return key == ImGuiKey_MouseMiddle || key == ImGuiKey_MouseRight;
     // Escape остаётся отменой диалога, а самостоятельные модификаторы не являются командой.
     return key >= ImGuiKey_Tab && key <= ImGuiKey_AppForward && key != ImGuiKey_Escape
@@ -100,17 +115,17 @@ bool EditorSettings::Validate(std::string& error) const
     for (size_t i = 0; i < ActionCount; ++i) {
         const auto& binding = bindings[i];
         if (!AcceptsKey(static_cast<Action>(i), binding.key) || (binding.modifiers & ~ImGuiMod_Mask_)) {
-            error = std::string("Invalid binding: ") + names[i]; return false;
+            error = std::string("Invalid binding: ") + actions[i].name; return false;
         }
-        // Команды и навигация имеют разные контексты: W может означать Move и движение вперёд.
+        // Совпадения допустимы между контекстами; внутри контекста назначение однозначно.
+        const auto context = actions[i].context;
+        const auto navigationModifiers = context == BindingContext::CameraMovement ? Get(Action::Navigate).modifiers : 0;
         for (size_t j = 0; j < i; ++j) {
-            if ((i < 8) != (j < 8) || (i >= 10) != (j >= 10)) continue;
-            const auto navigationModifiers = Get(Action::Navigate).modifiers;
-            if (binding.key == bindings[j].key && (i < 10
-                || (binding.modifiers | navigationModifiers) == (bindings[j].modifiers | navigationModifiers))) {
-                if (i < 8 && binding.modifiers != bindings[j].modifiers) continue;
-                error = std::string("Binding conflict: ") + names[j] + " / " + names[i]; return false;
-            }
+            if (context != actions[j].context || binding.key != bindings[j].key) continue;
+            if (context != BindingContext::ViewportMouse
+                && (binding.modifiers | navigationModifiers) != (bindings[j].modifiers | navigationModifiers)) continue;
+            error = std::string("Binding conflict: ") + actions[j].name + " / " + actions[i].name;
+            return false;
         }
     }
     if (!(Get(Action::Save).modifiers & (ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiMod_Super))) {
@@ -127,13 +142,9 @@ bool EditorSettings::Load(std::string& error)
     const bool exists = std::filesystem::exists(path, code);
     if (code) { error = "Cannot access editor settings."; return false; }
     if (!exists) return true;
-    const auto size = std::filesystem::file_size(path, code);
-    if (code || size > 1024 * 1024) { error = "Cannot read editor settings (inaccessible or too large)."; return false; }
-    std::ifstream input(path, std::ios::binary);
-    std::string bytes(static_cast<size_t>(size), '\0');
-    if (!input || !input.read(bytes.data(), static_cast<std::streamsize>(size))) { error = "Cannot read editor settings."; return false; }
-    rapidjson::Document json; json.Parse<rapidjson::kParseValidateEncodingFlag>(bytes.data(), bytes.size());
-    if (json.HasParseError() || !json.IsObject() || !json.HasMember("version") || !json["version"].IsInt()
+    rapidjson::Document json;
+    if (!EditorFiles::ReadJson(path, json, error)) return false;
+    if (!json.HasMember("version") || !json["version"].IsInt()
         || json["version"].GetInt() != 1 || !json.HasMember("bindings") || !json["bindings"].IsObject()
         || !json.HasMember("selection_modifier") || !json["selection_modifier"].IsInt()) {
         error = "Unsupported or invalid editor settings."; return false;
@@ -141,8 +152,8 @@ bool EditorSettings::Load(std::string& error)
     EditorSettings candidate; candidate.selectionModifier = json["selection_modifier"].GetInt();
     const auto& entries = json["bindings"];
     for (size_t i = 0; i < ActionCount; ++i) {
-        if (!entries.HasMember(ids[i])) continue; // Новые действия получают стандартное назначение.
-        const auto& entry = entries[ids[i]];
+        if (!entries.HasMember(actions[i].id)) continue; // Новые действия получают стандартное назначение.
+        const auto& entry = entries[actions[i].id];
         if (!entry.IsObject() || !entry.HasMember("key") || !entry["key"].IsString()
             || !entry.HasMember("modifiers") || !entry["modifiers"].IsInt()) { error = "Invalid shortcut description."; return false; }
         candidate.bindings[i] = {};
@@ -171,21 +182,9 @@ bool EditorSettings::Save(std::string& error) const
         rapidjson::Value entry(rapidjson::kObjectType);
         entry.AddMember("key", rapidjson::Value(ImGui::GetKeyName(bindings[i].key), allocator), allocator);
         entry.AddMember("modifiers", bindings[i].modifiers, allocator);
-        entries.AddMember(rapidjson::Value(ids[i], allocator), entry, allocator);
+        entries.AddMember(rapidjson::Value(actions[i].id, allocator), entry, allocator);
     }
     json.AddMember("bindings", entries, allocator);
     rapidjson::StringBuffer bytes; rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(bytes); json.Accept(writer);
-    // Временный файл и атомарная замена оставляют прежние настройки целыми при сбое записи.
-    static unsigned counter = 0;
-    auto temporary = path; temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(++counter) + L".tmp";
-    HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) { error = "Cannot create temporary editor settings."; return false; }
-    DWORD written = 0;
-    bool complete = WriteFile(file, bytes.GetString(), static_cast<DWORD>(bytes.GetSize()), &written, nullptr) && written == bytes.GetSize();
-    if (complete) complete = FlushFileBuffers(file) != FALSE;
-    const bool closed = CloseHandle(file) != FALSE;
-    if (!complete || !closed || !MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DeleteFileW(temporary.c_str()); error = "Cannot save editor settings."; return false;
-    }
-    return true;
+    return EditorFiles::WriteJson(path, bytes, true, error);
 }

@@ -22,6 +22,7 @@ public:
 		const std::string& startLevelPath, std::string& error);
 
 private:
+	// Жизненный цикл приложения, раскладка и пользовательские настройки.
 	static LRESULT CALLBACK HandleMessage(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 	void DrawDockspace();
 	void DrawProjectDialogs();
@@ -35,6 +36,7 @@ private:
 	void ApplyProjectAction();
 	void RequestClose();
 	void HandleShortcuts();
+	// Документы сцены и объекта: загрузка, сохранение и отложенные действия.
 	void ApplyDocumentActions();
 	void ContinuePendingAction();
 	bool SaveScene(Project& destination, std::string& error);
@@ -50,6 +52,18 @@ private:
 	std::string sceneFile, pendingSceneFile;
 	bool requestedSceneOpen = false, openSceneAfterReturn = false;
 	void QueueSceneOpen(const std::string& file);
+	Project project, pendingProject;
+	ProjectHistory recentProjects;
+	std::string projectError;
+	std::string projectCreationError;
+	bool projectCreationCompleted = false;
+	bool initializeDemo = false;
+	bool temporaryProject = false;
+	char newProjectName[128] = "NewProject";
+	char newProjectParent[2048]{};
+	bool showNewProject = false;
+	bool requestedProjectSwitch = false;
+	bool requestedProjectCreation = false;
 	Project projectCreationTarget;
 	bool creationSavesCurrentScene = false;
 	// Во время редактирования ассета исходная сцена хранится как описание, без живых указателей.
@@ -63,9 +77,9 @@ private:
 	bool ReplaceEditorLevel(Level* level, EditorCamera* camera, std::string& error);
 	void ResetSceneReferences();
 	bool SaveObject(std::string& error);
+	// Иерархия и инспектор используют общее выделение и команды сцены.
 	void DrawTreeInspector();
 	void ApplyTreeAction();
-	void ClearDocumentHistory();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
 	enum class ComponentKind { Mesh, DirectionalLight, PointLight, Camera, Navigation, Collider, StaticBody, DynamicBody };
 	struct TreeAction {
@@ -79,18 +93,6 @@ private:
 	} treeAction;
 	TransformNode* nameDraftNode = nullptr;
 	std::string nodeNameDraft;
-	Project project, pendingProject;
-	ProjectHistory recentProjects;
-	std::string projectError;
-	std::string projectCreationError;
-	bool projectCreationCompleted = false;
-	bool initializeDemo = false;
-	bool temporaryProject = false;
-	char newProjectName[128] = "NewProject";
-	char newProjectParent[2048]{};
-	bool showNewProject = false;
-	bool requestedProjectSwitch = false;
-	bool requestedProjectCreation = false;
 	void DrawHierarchy();
 	enum class ObjectType { None, Empty, Cube, Sphere, Plane, DirectionalLight, PointLight, Mesh };
 	void DrawCreateMenu();
@@ -103,13 +105,18 @@ private:
 	void DrawTransformTree(TransformNode& node, int index);
 	void DrawInspector();
 	void DrawMeshInspector(MeshComponent& mesh);
+	enum class TransformField { Position, Rotation, Scale };
+	static constexpr float MinimumScale = 0.001f;
+	static bool IsValidEditorScale(const DXVector3& scale);
+	void DrawTransformField(TransformField field, const char* label, bool fromGroupCenter = false);
 	// Черновики ввода принадлежат UI; компонент получает только подтверждённые пути.
-    struct MeshPathDraft {
-        std::string mesh, material;
-        std::string appliedMesh, appliedMaterial;
-        std::string meshError, materialError;
-    };
-    std::unordered_map<MeshComponent*, MeshPathDraft> meshPathDrafts;
+	struct MeshPathDraft {
+		std::string mesh, material;
+		std::string appliedMesh, appliedMaterial;
+		std::string meshError, materialError;
+	};
+	std::unordered_map<MeshComponent*, MeshPathDraft> meshPathDrafts;
+	// Изображение сцены, панели вьюпорта и операции гизмо.
 	void DrawViewport();
 	void DrawViewportToolbar();
 	bool DrawSelectionTransformPanel(const ImVec2& origin, const ImVec2& size);
@@ -127,8 +134,10 @@ private:
 	void ReleaseViewport();
 	const char* ObjectLabel(GameObject& object) const;
 	CameraMovementComponent* GetCameraMovement() const;
+	void ConfigureCameraNavigation(CameraMovementComponent& movement) const;
 
-	// Сырые адреса допустимы только пока идёт текущий жест; записи истории используют ID.
+	void ClearDocumentHistory();
+	// История документа. Сырые адреса допустимы только в текущем жесте, записи используют ID.
 	struct TransformState {
 		GameObject* object = nullptr;
 		TransformNode* node = nullptr;
@@ -219,6 +228,7 @@ private:
 	bool editingTransform = false;
 	bool editingGizmo = false;
 
+	// Заимствованный движок и принадлежащие редактору UI/GPU-ресурсы.
 	Game& game;
 	ContentBrowser contentBrowser;
 	bool showContentBrowser = true;
