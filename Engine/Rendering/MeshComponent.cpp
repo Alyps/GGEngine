@@ -8,7 +8,7 @@ MeshComponent::MeshComponent()
 MeshComponent::MeshComponent(bool usePresetMaterial)
     : geometryPreset(GeometryPreset::Cube), meshData(MeshPresets::CreateRectangle()), usePresetMaterial(usePresetMaterial) {}
 
-MeshComponent::MeshComponent(MeshData<NormalVertexType> data)
+MeshComponent::MeshComponent(MeshData<TexturedVertexType> data)
     : meshData(std::move(data)) {}
 
 MeshComponent::MeshComponent(const MeshResource& resource)
@@ -105,7 +105,7 @@ void MeshComponent::initRenderItem(Game& game)
     MaterialResource* materialResource = nullptr;
     if (!materialPath.empty()) {
         materialResource = resources.load<MaterialResource>(
-            materialPath, device, resources.GetStandardResourceDirectory());
+            materialPath, device, resources.GetStandardResourceDirectory(), &resources);
         if (!materialResource) materialError = resources.GetLastError();
     }
     // Пустой меш ничего не рисует, но путь материала всё равно проверяется.
@@ -167,10 +167,10 @@ rapidjson::Value MeshComponent::Serialize(rapidjson::Document::AllocatorType& al
             rapidjson::Value entry(rapidjson::kObjectType);
             const auto& p = vertex.position;
             const auto& n = vertex.normal;
-            const auto& c = vertex.color;
+            const auto& uv = vertex.uv;
             entry.AddMember("position", Serialization::Array({ p.x, p.y, p.z }, allocator), allocator);
             entry.AddMember("normal", Serialization::Array({ n.x, n.y, n.z }, allocator), allocator);
-            entry.AddMember("color", Serialization::Array({ c.x, c.y, c.z, c.w }, allocator), allocator);
+            entry.AddMember("uv", Serialization::Array({ uv.x, uv.y }, allocator), allocator);
             vertices.PushBack(entry, allocator);
         }
         for (auto index : data.indices) indices.PushBack(index, allocator);
@@ -211,11 +211,11 @@ Component* MeshComponent::CreateFromJson(const rapidjson::Value& json, std::stri
         const auto* indices = Array(*geometry, "indices", error);
         if (!indices) return nullptr;
         // Проверяем ограничения GPU-буферов до выделения памяти под геометрию.
-        if (vertices->Size() > (std::numeric_limits<UINT>::max)() / sizeof(NormalVertexType::Vertex) ||
+        if (vertices->Size() > (std::numeric_limits<UINT>::max)() / sizeof(TexturedVertexType::Vertex) ||
             indices->Size() > (std::numeric_limits<UINT>::max)() / sizeof(uint32_t)) {
             error = "Invalid inline mesh buffer size"; return nullptr;
         }
-        MeshData<NormalVertexType> data;
+        MeshData<TexturedVertexType> data;
         // Ранние файлы не содержали топологию и использовали список треугольников.
         std::string topology = "triangle_list";
         if (geometry->HasMember("topology") && !String(*geometry, "topology", topology, error)) return nullptr;
@@ -228,14 +228,15 @@ Component* MeshComponent::CreateFromJson(const rapidjson::Value& json, std::stri
         data.vertices.reserve(vertices->Size());
         data.indices.reserve(indices->Size());
         for (rapidjson::SizeType i = 0; i < vertices->Size(); ++i) {
-            float p[3], n[3], c[4];
+            // Старые сцены хранили цвет вместо UV; для них оставляем нулевые UV.
+            float p[3], n[3], uv[2] = {};
             const auto& entry = (*vertices)[i];
             if (!Floats(entry, "position", p, 3, error) || !Floats(entry, "normal", n, 3, error) ||
-                !Floats(entry, "color", c, 4, error)) {
+                (entry.HasMember("uv") && !Floats(entry, "uv", uv, 2, error))) {
                 error = "vertices[" + std::to_string(i) + "]: " + error; return nullptr;
             }
-            data.vertices.push_back(NormalVertexType::make({ p[0], p[1], p[2] },
-                { n[0], n[1], n[2] }, { c[0], c[1], c[2], c[3] }));
+            data.vertices.push_back(TexturedVertexType::make({ p[0], p[1], p[2] },
+                { n[0], n[1], n[2] }, { uv[0], uv[1] }));
         }
         for (const auto& entry : indices->GetArray()) {
             if (!entry.IsUint() || entry.GetUint() >= vertices->Size()) {
