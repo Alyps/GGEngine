@@ -113,6 +113,7 @@ ComponentFactoryMap::ComponentFactoryMap()
 {
     // Каждая таблица независимо содержит встроенные фабрики, без глобальной регистрации.
     Register("MeshComponent", &MeshComponent::CreateFromJson);
+    Register("GameCamera", &GameCamera::CreateFromJson);
     Register("EditorCamera", &EditorCamera::CreateFromJson);
     Register("CameraMovementComponent", &CameraMovementComponent::CreateFromJson);
     Register("DirectionalLightComponent", &DirectionalLightComponent::CreateFromJson);

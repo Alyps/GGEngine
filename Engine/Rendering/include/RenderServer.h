@@ -497,7 +497,7 @@ struct RenderItem {
 	const TransformNode* transformNode = nullptr;
 };
 
-class EditorCamera;
+class CameraComponent;
 
 enum class LightType : uint32_t { Directional, Point };
 
@@ -537,7 +537,7 @@ private:
 	bool lightLimitExceeded = false;
 	DirectX::XMFLOAT3 ambientColor{ 0.03f, 0.03f, 0.03f };
 	// Изменение рендера: камера принадлежит сцене, nullptr отключает её.
-	EditorCamera* activeCamera = nullptr;
+	CameraComponent* activeCamera = nullptr;
 	// GPU Interface
 	ComPtr<ID3D11Device> device;
 	ComPtr<ID3D11DeviceContext> context;
@@ -580,8 +580,8 @@ public:
 	void setAmbientColor(const DirectX::XMFLOAT3& color) { ambientColor = color; }
 	void Init(const DisplayWindow32& target_window);
 	// Камера должна жить до переключения на другую камеру или nullptr.
-	void setCamera(EditorCamera* camera) { activeCamera = camera; }
-	EditorCamera* getCamera() const { return activeCamera; }
+	void setCamera(CameraComponent* camera) { activeCamera = camera; }
+	CameraComponent* getCamera() const { return activeCamera; }
 	ID3D11Device* Device() const { return device.Get(); }
 	ID3D11DeviceContext* Context() const { return context.Get(); }
 	// Отрисовка в заданную цель не меняет камеру и не вызывает Present.

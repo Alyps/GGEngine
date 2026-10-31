@@ -23,6 +23,9 @@ private:
     bool failed = false;
 public:
     explicit LuaScriptComponent(std::string path);
+    const std::string& getScriptPath() const { return scriptPath; }
+    // Новый путь используется при следующей инициализации компонента.
+    void setScriptPath(const std::string& path) { scriptPath = path; }
     // Game (и его ScriptServer) должен жить дольше компонента.
     ~LuaScriptComponent() override;
     LuaScriptComponent(const LuaScriptComponent&) = delete;

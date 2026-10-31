@@ -1,7 +1,7 @@
 #include "core.h"
 #include "EditorCamera.h"
 
-bool EditorCamera::getView(DXMatrix& view) const
+bool CameraComponent::getView(DXMatrix& view) const
 {
     if (!transformNode) return false;
     DXMatrix world = transformNode->worldMatrix();
@@ -19,18 +19,18 @@ bool EditorCamera::getView(DXMatrix& view) const
     return true;
 }
 
-DXMatrix EditorCamera::getProjection(float aspectRatio) const
+DXMatrix CameraComponent::getProjection(float aspectRatio) const
 {
     return DXMatrix::CreatePerspectiveFieldOfView(verticalFov, aspectRatio, nearPlane, farPlane);
 }
 
-void EditorCamera::Shutdown(Game& game)
+void CameraComponent::Shutdown(Game& game)
 {
     if (game.getRenderServer().getCamera() == this)
         game.getRenderServer().setCamera(nullptr);
 }
 
-rapidjson::Value EditorCamera::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
+rapidjson::Value CameraComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
 {
     auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
     json.AddMember("vertical_fov", verticalFov, allocator);
@@ -39,7 +39,8 @@ rapidjson::Value EditorCamera::Serialize(rapidjson::Document::AllocatorType& all
     return Serialization::Finish(std::move(json), error);
 }
 
-Component* EditorCamera::CreateFromJson(const rapidjson::Value& json, std::string& error)
+template<class Camera>
+Component* CameraComponent::ReadCamera(const rapidjson::Value& json, std::string& error)
 {
     error.clear();
     using namespace Deserialization;
@@ -50,10 +51,35 @@ Component* EditorCamera::CreateFromJson(const rapidjson::Value& json, std::strin
         error = "Invalid camera projection parameters"; return nullptr;
     }
     // До привязки созданным компонентом владеет вызывающий код.
-    auto* result = new (std::nothrow) EditorCamera();
+    auto* result = new (std::nothrow) Camera();
     if (!result) { error = "Cannot allocate component"; return nullptr; }
     result->verticalFov = fov;
     result->nearPlane = nearValue;
     result->farPlane = farValue;
     return result;
+}
+
+Component* EditorCamera::CreateFromJson(const rapidjson::Value& json, std::string& error)
+{
+    return ReadCamera<EditorCamera>(json, error);
+}
+
+Component* GameCamera::CreateFromJson(const rapidjson::Value& json, std::string& error)
+{
+    return ReadCamera<GameCamera>(json, error);
+}
+
+GameCamera* GameCamera::Find(Level& level)
+{
+    for (GameObject* object : level.getObjects()) {
+        if (object->isPendingDestroy()) continue;
+        for (Component* component : object->getComponents()) {
+            auto* candidate = dynamic_cast<GameCamera*>(component);
+            if (candidate && !candidate->isPendingDestroy() && candidate->getTransformNode() &&
+                !candidate->getTransformNode()->isPendingDestroy()) {
+                return candidate;
+            }
+        }
+    }
+    return nullptr;
 }

@@ -65,21 +65,9 @@ int wmain(int argc, wchar_t* argv[])
     game.Init();
 
     // Общий индекс объекта включает компоненты всех веток TransformTree.
-    EditorCamera* camera = nullptr;
-    for (GameObject* object : game.getLevel()->getObjects()) {
-        if (object->isPendingDestroy()) continue;
-        for (Component* component : object->getComponents()) {
-            auto* candidate = dynamic_cast<EditorCamera*>(component);
-            if (candidate && !candidate->isPendingDestroy() && candidate->getTransformNode() &&
-                !candidate->getTransformNode()->isPendingDestroy()) {
-                camera = candidate;
-                break;
-            }
-        }
-        if (camera) break;
-    }
+    GameCamera* camera = GameCamera::Find(*game.getLevel());
     if (!camera) {
-        std::cerr << "Start level has no camera attached to a transform\n";
+        std::cerr << "Start level has no GameCamera attached to a transform\n";
         return 1;
     }
     game.getRenderServer().setCamera(camera);

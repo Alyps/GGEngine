@@ -42,7 +42,7 @@ private:
 	bool SaveScene(Project& destination, std::string& error);
 	bool CaptureScene(std::string& snapshot, std::string& error) const;
 	void RefreshSceneDirty();
-	enum class PendingAction { None, Close, OpenProject, NewProject, OpenObject, ReturnScene, OpenScene };
+	enum class PendingAction { None, Close, OpenProject, NewProject, OpenObject, ReturnScene, OpenScene, Play };
 	PendingAction pendingAction = PendingAction::None;
 	bool checkPendingAction = false, proceedPendingAction = false;
 	bool showUnsavedDialog = false, closeUnsavedDialog = false;
@@ -81,7 +81,7 @@ private:
 	void DrawTreeInspector();
 	void ApplyTreeAction();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
-	enum class ComponentKind { Mesh, DirectionalLight, PointLight, Camera, Navigation, Collider, StaticBody, DynamicBody };
+	enum class ComponentKind { Mesh, DirectionalLight, PointLight, Camera, GameCamera, Navigation, LuaScript, Collider, StaticBody, DynamicBody };
 	struct TreeAction {
 		TreeOperation operation = TreeOperation::None;
 		TransformNode* node = nullptr;
@@ -113,7 +113,7 @@ private:
 	GameObject* requestedDelete = nullptr;
 	GameObject* requestedDuplicate = nullptr;
 	std::string sceneActionError;
-	void DrawTransformTree(TransformNode& node, int index);
+	void DrawTransformTree(TransformNode& node);
 	void DrawInspector();
 	void DrawMeshInspector(MeshComponent& mesh);
 	enum class TransformField { Position, Rotation, Scale };

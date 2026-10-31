@@ -55,6 +55,7 @@ void Editor::DrawProjectDialogs()
 	if (ImGui::BeginPopupModal("Unsaved scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 		ImGui::BeginDisabled(closeUnsavedDialog);
 		const char* next = pendingAction == PendingAction::Close ? "closing the editor"
+			: pendingAction == PendingAction::Play ? "launching the game"
 			: pendingAction == PendingAction::NewProject ? "creating a new project"
 			: pendingAction == PendingAction::ReturnScene ? "returning to the scene"
 			: pendingAction == PendingAction::OpenScene ? "opening another scene"
@@ -67,7 +68,7 @@ void Editor::DrawProjectDialogs()
 			else requestedSave = true;
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("Don't save")) { proceedPendingAction = true; ImGui::CloseCurrentPopup(); }
+		if (pendingAction != PendingAction::Play && ImGui::Button("Don't save")) { proceedPendingAction = true; ImGui::CloseCurrentPopup(); }
 		ImGui::SameLine();
 		if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
 			pendingAction = PendingAction::None; resumeAfterSave = closeAfterReturn = openSceneAfterReturn = false; ImGui::CloseCurrentPopup();
@@ -146,6 +147,23 @@ void Editor::ContinuePendingAction()
 	pendingAction = PendingAction::None;
 	resumeAfterSave = false;
 	if (action == PendingAction::Close) PostQuitMessage(0);
+	else if (action == PendingAction::Play) {
+		// Оба пути считаются от редактора: установленный рядом Game.exe или соседняя цель CMake.
+		std::wstring module(32768, L'\0');
+		const DWORD length = GetModuleFileNameW(nullptr, module.data(), static_cast<DWORD>(module.size()));
+		if (!length || length >= module.size()) { documentError = "Cannot locate the editor executable."; return; }
+		module.resize(length);
+		const auto folder = std::filesystem::path(module).parent_path();
+		auto executable = folder / L"Game.exe";
+		std::error_code code;
+		if (!std::filesystem::is_regular_file(executable, code)) executable = folder.parent_path() / L"Game" / L"Game.exe";
+		if (!std::filesystem::is_regular_file(executable, code)) {
+			documentError = "Cannot find Game.exe. Build the Game target for this editor configuration.";
+			return;
+		}
+		const auto path = executable.generic_u8string();
+		LaunchGame(std::string(reinterpret_cast<const char*>(path.data()), path.size()), project.Root(), sceneFile, documentError);
+	}
 	else if (action == PendingAction::OpenProject) requestedProjectSwitch = true;
 	else if (action == PendingAction::NewProject) { creationSavesCurrentScene = false; showNewProject = true; }
 	else if (action == PendingAction::OpenObject) requestedObjectOpen = true;
@@ -159,7 +177,11 @@ void Editor::ApplyDocumentActions()
 	if (checkSceneDirty || checkPendingAction) RefreshSceneDirty();
 	if (checkPendingAction) {
 		checkPendingAction = false;
-		if (game.getLevel() && sceneDirty) showUnsavedDialog = true;
+		if (pendingAction == PendingAction::Play && (!game.getLevel() || !GameCamera::Find(*game.getLevel()))) {
+			documentError = "Add a GameCamera to a transform node in this scene before playing.";
+			pendingAction = PendingAction::None;
+		}
+		else if (game.getLevel() && (sceneDirty || (pendingAction == PendingAction::Play && sceneFile.empty()))) showUnsavedDialog = true;
 		else ContinuePendingAction();
 	}
 	if (proceedPendingAction) { proceedPendingAction = false; ContinuePendingAction(); }

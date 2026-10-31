@@ -248,6 +248,12 @@ EditorCamera* Project::CreateSceneCamera(Level& level)
 bool Project::PopulateDemoScene(Level& level)
 {
 	if (!CreateSceneCamera(level)) return false;
+	// Игровая камера имеет собственную позу, независимую от навигации редактора.
+	auto* cameraObject = level.createObject();
+	auto* camera = cameraObject ? cameraObject->createComponent<GameCamera>() : nullptr;
+	if (!camera) return false;
+	cameraObject->getTransform().set_position(DXVector3(0.0f, 0.0f, 3.0f));
+	camera->bind_to_node(&cameraObject->getTransform());
 	// Уровень владеет объектами и освободит частично созданную сцену при отказе.
 	GameObject* objects[6]{};
 	for (auto& object : objects) {

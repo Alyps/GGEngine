@@ -144,9 +144,11 @@ void Editor::DrawViewportToolbar()
 		drawOptions();
 		ImGui::SetCursorPosX(start + (std::max)(0.0f, (width - playbackWidth) * 0.5f));
 	}
-	// Точки подключения будущего игрового режима; пока кнопки не меняют состояние сцены.
-	ImGui::Button("Play");
-	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start game (not connected yet)");
+	// Запуск проходит между кадрами, когда завершены изменения объектов и компонентов.
+	ImGui::BeginDisabled(editedObject || !game.getLevel());
+	if (ImGui::Button("Play")) { pendingAction = PendingAction::Play; checkPendingAction = true; }
+	ImGui::EndDisabled();
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Launch the current scene in a game window");
 	ImGui::SameLine(); ImGui::Button("Pause");
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause game (not connected yet)");
 	ImGui::SameLine(); ImGui::Button("Stop");
@@ -289,7 +291,7 @@ void Editor::DrawViewport()
 
 bool Editor::BuildViewportRay(const ImVec2& origin, const ImVec2& size, ViewportRay& ray) const
 {
-	EditorCamera* camera = game.getRenderServer().getCamera();
+	CameraComponent* camera = game.getRenderServer().getCamera();
 	DXMatrix view;
 	if (!camera || !camera->getView(view) || size.x <= 0 || size.y <= 0 || viewport.Width <= 0 || viewport.Height <= 0) return false;
 	// Выбор и вставка используют один луч, соответствующий реальной текстуре viewport.
@@ -347,7 +349,7 @@ void Editor::DrawObjectDropTarget(const ImVec2& minimum, const ImVec2& maximum, 
 
 void Editor::DrawSelectionBounds(const ImVec2& origin, const ImVec2& size)
 {
-	EditorCamera* camera = game.getRenderServer().getCamera();
+	CameraComponent* camera = game.getRenderServer().getCamera();
 	DXMatrix view;
 	if (!selectedObject || selectedObject->isPendingDestroy() || !camera || !camera->getView(view)) return;
 	const DXMatrix viewProjection = view * camera->getProjection(viewport.Width / viewport.Height);
@@ -447,7 +449,7 @@ void Editor::PickObject(const ImVec2& origin, const ImVec2& size, bool toggle, b
 
 void Editor::DrawGizmo(const ImVec2& origin, const ImVec2& size, bool blocked)
 {
-	EditorCamera* camera = game.getRenderServer().getCamera();
+	CameraComponent* camera = game.getRenderServer().getCamera();
 	if (!selectedNode || !camera || navigating || (blocked && !editingGizmo)
 		|| (settings.SelectionHeld() && !editingGizmo)
 		|| ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;

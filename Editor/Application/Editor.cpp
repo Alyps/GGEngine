@@ -100,7 +100,7 @@ void Editor::ConfigureCameraNavigation(CameraMovementComponent& movement) const
 CameraMovementComponent* Editor::GetCameraMovement() const
 {
 	// Компоненты теперь удаляемые: получаем навигацию живой активной камеры.
-	EditorCamera* camera = game.getRenderServer().getCamera();
+	CameraComponent* camera = game.getRenderServer().getCamera();
 	if (!camera || camera->isPendingDestroy() || !camera->getOwner()
 		|| camera->getOwner()->isPendingDestroy()) return nullptr;
 	for (Component* component : camera->getOwner()->getComponents()) {

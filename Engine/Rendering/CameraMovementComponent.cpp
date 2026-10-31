@@ -25,7 +25,7 @@ void CameraMovementComponent::OnMouseMove(const InputDevice::MouseMoveEventArgs&
     if (GetForegroundWindow() != ownerGame->getWindow().getWindow()) return;
 
     // Состояние кнопки обновляется InputDevice до отправки события движения.
-    const EditorCamera* camera = ownerGame->getRenderServer().getCamera();
+    const CameraComponent* camera = ownerGame->getRenderServer().getCamera();
     if (!camera || camera->getTransformNode() != transformNode) return;
     if (!ownerGame->getInputDevice().IsKeyDown(rotationButton)) return;
     if (args.Offset.x == 0.0f && args.Offset.y == 0.0f) return;
@@ -68,7 +68,7 @@ void CameraMovementComponent::Update(Game& game, double deltaTime)
 {
     // Ввод получает только активная камера в окне с фокусом.
     if (!enabled || !transformNode || GetForegroundWindow() != game.getWindow().getWindow()) return;
-    const EditorCamera* camera = game.getRenderServer().getCamera();
+    const CameraComponent* camera = game.getRenderServer().getCamera();
     if (!camera || camera->getTransformNode() != transformNode) return;
     InputDevice& input = game.getInputDevice();
 

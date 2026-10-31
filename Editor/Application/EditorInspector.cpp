@@ -23,7 +23,8 @@ namespace {
 const char* Editor::ObjectLabel(GameObject& object) const
 {
 	for (Component* component : object.getComponents()) {
-		if (dynamic_cast<EditorCamera*>(component)) return "Camera";
+		if (dynamic_cast<EditorCamera*>(component)) return "Editor camera";
+		if (dynamic_cast<GameCamera*>(component)) return "GameCamera";
 		if (dynamic_cast<DirectionalLightComponent*>(component)) return "Directional light";
 		if (dynamic_cast<PointLightComponent*>(component)) return "Point light";
 		if (dynamic_cast<MeshComponent*>(component)) return "Mesh object";
@@ -118,31 +119,10 @@ void Editor::DrawHierarchy()
 		const ImVec2 dropMinimum = ImGui::GetCursorScreenPos();
 		const ImVec2 available = ImGui::GetContentRegionAvail();
 		if (level) {
-			int index = 0;
 			for (GameObject* object : level->getObjects()) {
 				if (!object || object->isPendingDestroy()) continue;
 				if (editedObject && object != editedObject) continue;
-				ImGui::PushID(object);
-				const bool selected = IsObjectSelected(object);
-				ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-				if (selected) flags |= ImGuiTreeNodeFlags_Selected;
-				const bool open = ImGui::TreeNodeEx("Object", flags, "%s %d", ObjectLabel(*object), ++index);
-				if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-					SelectObject(object, settings.SelectionHeld());
-				}
-				if (ImGui::BeginPopupContextItem("ObjectActions")) {
-					SelectContextObject(object);
-					if (ImGui::MenuItem("Duplicate selection", settings.Label(EditorAction::Duplicate).c_str(), false, editedObject == nullptr)) requestedDuplicate = object;
-					if (ImGui::MenuItem("Delete selection", settings.Label(EditorAction::Delete).c_str(), false, CanDeleteSelection())) requestedDelete = object;
-					if (!CanDeleteSelection()) ImGui::TextDisabled("Selection includes the active editor camera");
-					ImGui::EndPopup();
-				}
-				if (open) {
-					// Дерево трансформаций показано отдельно от списка компонентов.
-					DrawTransformTree(object->getTransform(), 0);
-					ImGui::TreePop();
-				}
-				ImGui::PopID();
+				DrawTransformTree(object->getTransform());
 			}
 		}
 		if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
@@ -174,7 +154,7 @@ bool Editor::CanDeleteObject(GameObject* object) const
 {
 	if (editedObject) return false;
 	if (!object || object->isPendingDestroy()) return false;
-	const EditorCamera* camera = game.getRenderServer().getCamera();
+	const CameraComponent* camera = game.getRenderServer().getCamera();
 	// Пока камера навигации принадлежит сцене, оставляем её доступной для работы.
 	return !camera || camera->getOwner() != object;
 }
@@ -394,7 +374,9 @@ void Editor::ApplyTreeAction()
 		case ComponentKind::DirectionalLight: component = node->create_component<DirectionalLightComponent>(); break;
 		case ComponentKind::PointLight: component = node->create_component<PointLightComponent>(); break;
 		case ComponentKind::Camera: component = node->create_component<EditorCamera>(); break;
+		case ComponentKind::GameCamera: component = node->create_component<GameCamera>(); break;
 		case ComponentKind::Navigation: component = node->create_component<CameraMovementComponent>(); break;
+		case ComponentKind::LuaScript: component = node->create_component<LuaScriptComponent>(std::string{}); break;
 		case ComponentKind::Collider: component = node->create_component<BoxColliderComponent>(); break;
 		case ComponentKind::StaticBody: component = node->create_component<StaticRigidBodyComponent>(); break;
 		case ComponentKind::DynamicBody: component = node->create_component<DynamicRigidBodyComponent>(); break;
@@ -457,16 +439,26 @@ void Editor::DrawTreeInspector()
 	if (!sceneActionError.empty()) ImGui::TextWrapped("%s", sceneActionError.c_str());
 }
 
-void Editor::DrawTransformTree(TransformNode& node, int index)
+void Editor::DrawTransformTree(TransformNode& node)
 {
 	ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-	if (selectedNode == &node) flags |= ImGuiTreeNodeFlags_Selected;
+	GameObject* object = node.getOwner();
+	const bool isRoot = !node.get_parent();
+	if (isRoot ? IsObjectSelected(object) : selectedNode == &node) flags |= ImGuiTreeNodeFlags_Selected;
 	if (node.get_children().empty()) flags |= ImGuiTreeNodeFlags_Leaf;
-	const bool open = ImGui::TreeNodeEx(&node, flags, "%s", node.get_name().c_str());
+	const bool open = ImGui::TreeNodeEx(&node, flags, isRoot ? "object %s" : "%s", node.get_name().c_str());
 	if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-		SelectNode(&node);
+		if (isRoot) SelectObject(object, settings.SelectionHeld());
+		else SelectNode(&node);
 	}
-	if (node.get_parent() && ImGui::BeginDragDropSource()) {
+	if (isRoot && ImGui::BeginPopupContextItem()) {
+		SelectContextObject(object);
+		if (ImGui::MenuItem("Duplicate selection", settings.Label(EditorAction::Duplicate).c_str(), false, editedObject == nullptr)) requestedDuplicate = object;
+		if (ImGui::MenuItem("Delete selection", settings.Label(EditorAction::Delete).c_str(), false, CanDeleteSelection())) requestedDelete = object;
+		if (!CanDeleteSelection()) ImGui::TextDisabled("Selection includes the active editor camera");
+		ImGui::EndPopup();
+	}
+	if (!isRoot && ImGui::BeginDragDropSource()) {
 		TransformNode* source = &node;
 		ImGui::SetDragDropPayload("GG_TRANSFORM_NODE", &source, sizeof(source));
 		ImGui::TextUnformatted(node.get_name().c_str()); ImGui::EndDragDropSource();
@@ -477,9 +469,8 @@ void Editor::DrawTransformTree(TransformNode& node, int index)
 		ImGui::EndDragDropTarget();
 	}
 	if (open) {
-		int childIndex = 0;
 		for (TransformNode* child : node.get_children())
-			if (child && !child->isPendingDestroy()) DrawTransformTree(*child, ++childIndex);
+			if (child && !child->isPendingDestroy()) DrawTransformTree(*child);
 		ImGui::TreePop();
 	}
 }
@@ -542,9 +533,9 @@ void Editor::DrawInspector()
 			if (selectedObjects.size() > 1) ImGui::TextDisabled("Component properties: active object");
 			if (ImGui::Button("Add component")) ImGui::OpenPopup("Add component");
 			if (ImGui::BeginPopup("Add component")) {
-				const char* labels[] = { "Mesh", "Directional light", "Point light", "Camera", "Camera movement", "Box collider", "Static body", "Dynamic body" };
-				for (int kind = 0; kind < 8; ++kind)
-					if (ImGui::MenuItem(labels[kind], nullptr, false, kind < 5 || !selectedNode->get_parent())) {
+				const char* labels[] = { "Mesh", "Directional light", "Point light", "Editor camera", "GameCamera", "Camera movement", "Lua Script", "Box collider", "Static body", "Dynamic body" };
+				for (int kind = 0; kind < IM_ARRAYSIZE(labels); ++kind)
+					if (ImGui::MenuItem(labels[kind], nullptr, false, kind < static_cast<int>(ComponentKind::Collider) || !selectedNode->get_parent())) {
 						treeAction = { TreeOperation::AddComponent, selectedNode }; treeAction.kind = static_cast<ComponentKind>(kind);
 					}
 				ImGui::EndPopup();
@@ -587,8 +578,19 @@ void Editor::DrawInspector()
 						changed = ImGui::DragFloat("Range", &point->range, 0.1f, 0.01f, 1000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 						TrackComponentProperty(*light, before, "Light range", changed);
 					}
-				} else if (dynamic_cast<EditorCamera*>(component)) ImGui::TextUnformatted("Camera");
+				} else if (dynamic_cast<EditorCamera*>(component)) ImGui::TextUnformatted("Editor camera");
+				else if (dynamic_cast<GameCamera*>(component)) ImGui::TextUnformatted("GameCamera");
 				else if (dynamic_cast<CameraMovementComponent*>(component)) ImGui::TextUnformatted("Camera navigation");
+				else if (auto* script = dynamic_cast<LuaScriptComponent*>(component)) {
+					const auto before = ComponentProperties(*script);
+					const auto& path = script->getScriptPath();
+					std::vector<char> buffer((std::max)(size_t(32768), path.size() + 1), '\0');
+					std::copy(path.begin(), path.end(), buffer.begin());
+					const bool changed = ImGui::InputTextWithHint("Script path", "res/Scripts/Player.lua", buffer.data(), buffer.size());
+					if (changed) script->setScriptPath(buffer.data());
+					// Весь ввод до выхода из поля образует одну команду Undo.
+					TrackComponentProperty(*script, before, "Script path", changed);
+				}
 				else if (auto* mesh = dynamic_cast<MeshComponent*>(component)) {
 					DrawMeshInspector(*mesh);
 				}

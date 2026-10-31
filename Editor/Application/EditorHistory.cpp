@@ -224,6 +224,12 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 			return true;
 		}
 		if (auto* mesh = dynamic_cast<MeshComponent*>(component)) return mesh->ApplyDescription(json, documentError);
+		if (auto* script = dynamic_cast<LuaScriptComponent*>(component)) {
+			std::string path;
+			if (!Deserialization::String(json, "script_path", path, documentError)) return false;
+			script->setScriptPath(path);
+			return true;
+		}
 	}
 	documentError = "Unsupported history operation.";
 	return false;

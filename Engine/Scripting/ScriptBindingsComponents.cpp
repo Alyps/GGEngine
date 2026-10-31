@@ -12,6 +12,8 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 	for (Component* component : object.getComponents()) {
 		if (name == "Mesh") {
 			if (auto* typed = dynamic_cast<MeshComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "GameCamera") {
+			if (auto* typed = dynamic_cast<GameCamera*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "EditorCamera") {
 			if (auto* typed = dynamic_cast<EditorCamera*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "CameraMovement") {
@@ -41,6 +43,7 @@ void BindComponents(lua_State* L)
 	lua.new_usertype<MeshComponent>("Mesh", sol::no_constructor);
 
 	// Свойства камеры пока не доступны скриптам: тип нужен, чтобы найти и проверить компонент.
+	lua.new_usertype<GameCamera>("GameCamera", sol::no_constructor);
 	lua.new_usertype<EditorCamera>("EditorCamera", sol::no_constructor);
 
 	lua.new_usertype<CameraMovementComponent>("CameraMovement",
