@@ -1,6 +1,7 @@
 #include "Editor.h"
 #include "imgui_internal.h"
 #include "RenderPresets.h"
+#include "EditorFileUtils.h"
 #include <cmath>
 #include <limits>
 using EditorAction = EditorSettings::Action;
@@ -114,6 +115,8 @@ void Editor::DrawHierarchy()
 		ImGui::EndDisabled();
 		if (!sceneActionError.empty()) ImGui::TextWrapped("%s", sceneActionError.c_str());
 		ImGui::Separator();
+		const ImVec2 dropMinimum = ImGui::GetCursorScreenPos();
+		const ImVec2 available = ImGui::GetContentRegionAvail();
 		if (level) {
 			int index = 0;
 			for (GameObject* object : level->getObjects()) {
@@ -144,6 +147,8 @@ void Editor::DrawHierarchy()
 		}
 		if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
 			&& !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive()) SelectObject(nullptr);
+		// Сброс на любую строку или свободное место создаёт объект уровня, без переподчинения.
+		DrawObjectDropTarget(dropMinimum, ImVec2(dropMinimum.x + available.x, dropMinimum.y + available.y));
 	}
 	ImGui::End();
 }
@@ -180,13 +185,30 @@ void Editor::ApplySceneActions()
 	const ObjectType type = requestedCreate;
 	GameObject* removed = requestedDelete;
 	GameObject* duplicated = requestedDuplicate;
+	const std::string inserted = std::move(requestedObjectInsert);
+	requestedObjectInsert.clear();
 	requestedCreate = ObjectType::None;
 	requestedDelete = nullptr;
 	requestedDuplicate = nullptr;
-	if (!level || (type == ObjectType::None && !removed && !duplicated)) return;
+	if (!level || (type == ObjectType::None && !removed && !duplicated && inserted.empty())) return;
 	if (editedObject) return;
 	FinishTransformEdit();
 	sceneActionError.clear();
+	if (!inserted.empty()) {
+		rapidjson::Document json;
+		const auto file = EditorFiles::Utf8Path(EditorFiles::DiskPath(project.Root()) / EditorFiles::DiskPath(inserted));
+		if (!Deserialization::LoadFile(file, json, sceneActionError)) return;
+		GameObject* object = GameObject::Deserialize(json, game.getComponentFactoryMap(), sceneActionError);
+		if (!object) return;
+		object->getTransform().set_position(objectInsertPosition);
+		// До addObject экземпляром владеет эта операция, после успеха — только Level.
+		if (!level->addObject(object)) {
+			delete object; sceneActionError = "Cannot attach object to scene."; return;
+		}
+		BeginStructure(object, "Insert object", true);
+		SelectObject(object);
+		checkSceneDirty = true;
+	}
 	if (removed && CanDeleteSelection()) {
 		const auto targets = IsObjectSelected(removed) ? SelectedObjects() : std::vector<GameObject*>{ removed };
 		const size_t firstRecord = pendingStructures.size();

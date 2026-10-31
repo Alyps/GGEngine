@@ -97,6 +97,9 @@ private:
 	enum class ObjectType { None, Empty, Cube, Sphere, Plane, DirectionalLight, PointLight, Mesh };
 	void DrawCreateMenu();
 	void ApplySceneActions();
+	void DrawObjectDropTarget(const ImVec2& minimum, const ImVec2& maximum, bool inViewport = false);
+	std::string requestedObjectInsert;
+	DXVector3 objectInsertPosition = DXVector3::Zero;
 	bool CanDeleteObject(GameObject* object) const;
 	ObjectType requestedCreate = ObjectType::None;
 	GameObject* requestedDelete = nullptr;

@@ -1,5 +1,6 @@
 #include "Editor.h"
 #include "imgui_internal.h"
+#include "EditorFileUtils.h"
 #include <cmath>
 #include <DirectXCollision.h>
 using DirectX::SimpleMath::Vector4;
@@ -221,6 +222,8 @@ void Editor::DrawViewport()
 			const bool imageHovered = ImGui::IsWindowHovered() && ImGui::IsItemHovered();
 			const bool panelHovered = DrawSelectionTransformPanel(origin, size);
 			const bool sceneHovered = imageHovered && !panelHovered;
+			if (!panelHovered && !navigating && !ImGuizmo::IsUsing())
+				DrawObjectDropTarget(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
 			const bool pickRequested = sceneHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
 			// Назначенная кнопка начинает навигацию только над изображением, без активного UI.
 			const bool popup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
@@ -282,6 +285,53 @@ void Editor::DrawViewport()
 		ImGui::EndPopup();
 	}
 	ImGui::End();
+}
+
+void Editor::DrawObjectDropTarget(const ImVec2& minimum, const ImVec2& maximum, bool inViewport)
+{
+	if (!game.getLevel() || editedObject || maximum.x <= minimum.x || maximum.y <= minimum.y) return;
+	const auto* payload = ImGui::GetDragDropPayload();
+	if (!payload || !payload->IsDataType("GG_RESOURCE_PATH") || payload->DataSize <= 1) return;
+	const char* bytes = static_cast<const char*>(payload->Data);
+	if (bytes[payload->DataSize - 1] != '\0') return;
+	const std::string path(bytes, payload->DataSize - 1);
+	std::string lower = path;
+	for (char& c : lower) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+	if (!lower.ends_with(".object.json") || path.find('\0') != std::string::npos) return;
+	// Контент-браузер передаёт только пути внутри проекта, не абсолютные имена файлов.
+	const auto relative = EditorFiles::DiskPath(path);
+	if (relative.has_root_path()) return;
+	for (const auto& part : relative) if (part == "..") return;
+	if (!ImGui::BeginDragDropTargetCustom(ImRect(minimum, maximum), ImGui::GetID("Object asset drop"))) return;
+	if (ImGui::AcceptDragDropPayload("GG_RESOURCE_PATH")) {
+		DXVector3 position = DXVector3::Zero;
+		if (inViewport) {
+			EditorCamera* camera = game.getRenderServer().getCamera();
+			DXMatrix view;
+			if (!camera || !camera->getView(view)) { ImGui::EndDragDropTarget(); return; }
+			const float width = maximum.x - minimum.x, height = maximum.y - minimum.y;
+			const ImVec2 mouse = ImGui::GetMousePos();
+			const DXMatrix projection = camera->getProjection(width / height);
+			const DXVector3 start = DirectX::XMVector3Unproject(DirectX::XMVectorSet(mouse.x - minimum.x, mouse.y - minimum.y, 0, 1),
+				0, 0, width, height, 0, 1, projection, view, DXMatrix::Identity);
+			const DXVector3 end = DirectX::XMVector3Unproject(DirectX::XMVectorSet(mouse.x - minimum.x, mouse.y - minimum.y, 1, 1),
+				0, 0, width, height, 0, 1, projection, view, DXMatrix::Identity);
+			DXVector3 direction = end - start;
+			const float length = direction.Length();
+			if (!std::isfinite(length) || length <= 0) { ImGui::EndDragDropTarget(); return; }
+			direction /= length;
+			// При взгляде вдоль земли или в небо ставим экземпляр перед камерой.
+			const float ground = std::abs(direction.y) > 1e-5f ? -start.y / direction.y : -1.0f;
+			position = start + direction * (std::isfinite(ground) && ground >= 0 && ground <= 10000 ? ground : 5.0f);
+			if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) {
+				ImGui::EndDragDropTarget(); return;
+			}
+		}
+		// Изменение уровня откладывается до окончания всех обходов и отрисовки кадра.
+		requestedObjectInsert = path;
+		objectInsertPosition = position;
+	}
+	ImGui::EndDragDropTarget();
 }
 
 void Editor::DrawSelectionBounds(const ImVec2& origin, const ImVec2& size)

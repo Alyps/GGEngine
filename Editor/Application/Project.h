@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+class Level;
 
 // Описание проекта принадлежит редактору; движок получает только файловый корень.
 struct Project {
@@ -15,6 +16,8 @@ struct Project {
     static bool Create(const std::string& parent, const std::string& name,
         Project& result, std::string& error, const Project* source = nullptr);
     static bool CreateTemporary(Project& result, std::string& error);
+    // Общая расстановка демонстрации; Level владеет созданными объектами, Init не вызывается.
+    static bool PopulateDemoScene(Level& level);
 };
 
 // В пользовательских настройках хранятся только пути, а не содержимое проектов.

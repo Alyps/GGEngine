@@ -36,7 +36,7 @@ private:
     void Activate(const Entry& entry, std::string& directory);
     void OpenFolder(const std::string& path);
     std::string ResourcePath(const std::string& path) const;
-    enum class CreateType { Folder, Material, LuaScript };
+    enum class CreateType { Folder, Scene, MeshObject, Object, Material, LuaScript };
     void CreateEntry();
     void DrawCreateDialog();
     void DrawDeleteDialog();

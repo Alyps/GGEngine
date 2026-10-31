@@ -1,54 +1,10 @@
 #include "Editor.h"
 #include "imgui_internal.h"
 #include "EditorFileUtils.h"
-#include "RenderPresets.h"
 #include <rapidjson/writer.h>
 #include <rapidjson/stringbuffer.h>
 using EditorFiles::DiskPath;
 using EditorFiles::PickProjectPath;
-namespace {
-	bool PopulateDemoScene(Level& level)
-	{
-		// Уровень владеет объектами и освободит частично созданную сцену при отказе.
-		GameObject* objects[6]{};
-		for (auto& object : objects) {
-			object = level.createObject();
-			if (!object) return false;
-		}
-		auto* cube = objects[0]->createComponent<MeshComponent>();
-		auto* floor = objects[1]->createComponent<MeshComponent>(MeshPresets::CreateQuad(5.0f, 7.0f));
-		auto* secondCube = objects[2]->createComponent<MeshComponent>(true);
-		auto* sphere = objects[3]->createComponent<MeshComponent>(MeshPresets::CreateCircle(0.5f));
-		auto* directional = objects[4]->createComponent<DirectionalLightComponent>();
-		auto* point = objects[5]->createComponent<PointLightComponent>();
-		if (!cube || !floor || !secondCube || !sphere || !directional || !point) return false;
-
-		// Повторяем расстановку прежней демонстрации: два куба, шар и пол XZ.
-		objects[1]->getTransform().set_position(DXVector3(0.0f, -0.5f, 0.0f));
-		objects[1]->getTransform().set_rotation(
-			DXQuaternion::CreateFromAxisAngle(DXVector3::UnitX, -DirectX::XM_PIDIV2));
-		objects[2]->getTransform().set_position(DXVector3(-1.5f, 0.0f, 0.0f));
-		objects[3]->getTransform().set_position(DXVector3(1.5f, 0.0f, 0.0f));
-		cube->bind_to_node(&objects[0]->getTransform());
-		floor->bind_to_node(&objects[1]->getTransform());
-		secondCube->bind_to_node(&objects[2]->getTransform());
-		sphere->bind_to_node(&objects[3]->getTransform());
-
-		// Синий направленный и зелёный точечный свет сохраняют вид исходной сцены.
-		objects[4]->getTransform().set_rotation(
-			DXQuaternion::CreateFromYawPitchRoll(-DirectX::XM_PIDIV4, -0.6154797f, 0.0f));
-		directional->color = { 0.0f, 0.0f, 1.0f };
-		directional->intensity = 0.6f;
-		directional->bind_to_node(&objects[4]->getTransform());
-		objects[5]->getTransform().set_position(DXVector3(2.0f, 2.0f, -2.0f));
-		point->color = { 0.0f, 1.0f, 0.0f };
-		point->intensity = 12.0f;
-		point->range = 5.0f;
-		point->bind_to_node(&objects[5]->getTransform());
-		return true;
-	}
-}
-
 void Editor::QueueProjectOpen(const std::string& file)
 {
 	if (editedObject) { documentError = "Return to Scene before switching projects."; return; }
@@ -238,7 +194,7 @@ void Editor::ApplyProjectAction()
 			GameObject* cameraObject = demo ? demo->createObject() : nullptr;
 			auto* camera = cameraObject ? cameraObject->createComponent<EditorCamera>() : nullptr;
 			auto* navigation = cameraObject ? cameraObject->createComponent<CameraMovementComponent>() : nullptr;
-			if (!camera || !navigation || !PopulateDemoScene(*demo)) {
+			if (!camera || !navigation || !Project::PopulateDemoScene(*demo)) {
 				delete demo; projectCreationError = "Cannot allocate the demo scene."; return;
 			}
 			cameraObject->getTransform().set_position(DXVector3(0.0f, 0.0f, 3.0f));
@@ -289,7 +245,7 @@ void Editor::ApplyProjectAction()
 	CameraMovementComponent* movement = cameraObject ? cameraObject->createComponent<CameraMovementComponent>() : nullptr;
 	if (cameraObject && (!camera || !movement)) { delete level; projectError = "Cannot allocate a project camera."; return; }
 	if (pendingProject.startupScene.empty() && !cameraObject) { delete level; projectError = "Cannot allocate a project camera."; return; }
-	if (createDemo && !PopulateDemoScene(*level)) {
+	if (createDemo && !Project::PopulateDemoScene(*level)) {
 		delete level;
 		projectError = "Cannot allocate the demonstration scene.";
 		return;
@@ -338,6 +294,7 @@ void Editor::ResetSceneReferences()
 	selectedObject = nullptr; selectedNode = nameDraftNode = nullptr;
 	meshPathDrafts.clear(); treeAction = {};
 	requestedCreate = ObjectType::None; requestedDelete = requestedDuplicate = requestedObjectExport = nullptr;
+	requestedObjectInsert.clear();
 	navigating = false;
 	ImGui::ClearActiveID(); ImGui::ClearDragDrop();
 }

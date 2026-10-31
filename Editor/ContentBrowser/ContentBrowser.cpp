@@ -2,6 +2,10 @@
 #include "EditorFileUtils.h"
 #include "imgui.h"
 #include "ResourceManager.h"
+#include "core.h"
+#include "Project.h"
+#include <rapidjson/prettywriter.h>
+#include <rapidjson/stringbuffer.h>
 #include <algorithm>
 #include <filesystem>
 #include <windows.h>
@@ -231,9 +235,12 @@ void ContentBrowser::CreateEntry()
     }
     if (!CheckDirectory()) { actionError = error; return; }
     // Достраиваем расширение; stone.json также становится stone.material.json.
-    if (createType == CreateType::Material && !LowerAscii(name).ends_with(".material.json")) {
+    const char* suffix = createType == CreateType::Material ? ".material.json"
+        : createType == CreateType::Scene ? ".level.json"
+        : createType == CreateType::Object || createType == CreateType::MeshObject ? ".object.json" : nullptr;
+    if (suffix && !LowerAscii(name).ends_with(suffix)) {
         if (LowerAscii(name).ends_with(".json")) name.resize(name.size() - 5);
-        name += ".material.json";
+        name += suffix;
     }
     if (createType == CreateType::LuaScript && !LowerAscii(name).ends_with(".lua")) name += ".lua";
     const fs::path destination = DiskPath(current) / DiskPath(name);
@@ -245,11 +252,45 @@ void ContentBrowser::CreateEntry()
         }
     } else {
         // Шаблон соответствует MaterialData версии 1 и не требует GPU для создания.
-        const std::string contents = createType == CreateType::Material
+        std::string contents = createType == CreateType::Material
             ? "{\n  \"version\": 1,\n  \"shader\": \"builtin/simple\",\n  \"render_state\": \"opaque\",\n"
               "  \"sampler\": \"wrap_linear\",\n  \"diffuse\": null,\n  \"specular_strength\": 0.5,\n  \"shininess\": 32.0\n}\n"
             // LuaScriptComponent ожидает таблицу с необязательными обработчиками.
             : "local M = {}\n\nfunction M.on_init(self)\nend\n\nfunction M.on_update(self, dt)\nend\n\nreturn M\n";
+        if (createType == CreateType::Scene || createType == CreateType::Object || createType == CreateType::MeshObject) {
+            rapidjson::Document document;
+            rapidjson::Value description;
+            // Используем сериализаторы движка: шаблоны не дублируют формат сцены и дерева.
+            if (createType == CreateType::Scene) {
+                Level scene;
+                GameObject* cameraObject = scene.createObject();
+                auto* camera = cameraObject ? cameraObject->createComponent<EditorCamera>() : nullptr;
+                auto* navigation = cameraObject ? cameraObject->createComponent<CameraMovementComponent>() : nullptr;
+                if (!camera || !navigation || !Project::PopulateDemoScene(scene)) {
+                    actionError = "Cannot allocate the demo scene."; return;
+                }
+                // Камера сохраняется вместе с демкой, чтобы сцена открывалась с готовым обзором.
+                cameraObject->getTransform().set_position(DXVector3(0.0f, 0.0f, 3.0f));
+                camera->bind_to_node(&cameraObject->getTransform());
+                navigation->bind_to_node(&cameraObject->getTransform());
+                description = scene.Serialize(document.GetAllocator(), actionError);
+            } else {
+                GameObject object;
+                if (createType == CreateType::MeshObject) {
+                    // Временный объект владеет компонентом; Init и создание GPU-ресурсов не нужны.
+                    auto* mesh = object.createComponent<MeshComponent>();
+                    if (!mesh) { actionError = "Cannot allocate mesh component."; return; }
+                    mesh->bind_to_node(&object.getTransform());
+                }
+                description = object.Serialize(document.GetAllocator(), actionError);
+            }
+            if (description.IsNull()) return;
+            rapidjson::StringBuffer buffer;
+            rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+            if (!description.Accept(writer)) { actionError = "Cannot serialize resource."; return; }
+            contents.assign(buffer.GetString(), buffer.GetSize());
+            contents += '\n';
+        }
         if (!WriteNewFile(destination, contents, actionError)) return;
     }
     search[0] = '\0'; typeFilter = 0;
@@ -262,7 +303,12 @@ void ContentBrowser::DrawCreateDialog()
 {
     if (!ImGui::BeginPopupModal("Create resource", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     ImGui::TextUnformatted(createType == CreateType::Folder ? "Folder"
+        : createType == CreateType::Scene ? "Scene (.level.json)"
+        : createType == CreateType::MeshObject ? "Mesh object (.object.json)"
+        : createType == CreateType::Object ? "Object (.object.json)"
         : createType == CreateType::Material ? "Material (.material.json)" : "Lua script (.lua)");
+    if (createType == CreateType::MeshObject) ImGui::TextDisabled("Object with a cube mesh component.");
+    if (createType == CreateType::Scene) ImGui::TextDisabled("Default demo with camera, lights and primitives. Double-click the file to open.");
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     const bool enter = ImGui::InputText("Name", entryName, sizeof(entryName), ImGuiInputTextFlags_EnterReturnsTrue);
     if (!actionError.empty()) ImGui::TextWrapped("%s", actionError.c_str());
@@ -304,6 +350,10 @@ void ContentBrowser::DrawDeleteDialog()
 void ContentBrowser::DrawCreateMenu(DrawRequests& requests)
 {
     if (ImGui::MenuItem("Folder")) { createType = CreateType::Folder; requests.create = true; }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Scene")) { createType = CreateType::Scene; requests.create = true; }
+    if (ImGui::MenuItem("Mesh object")) { createType = CreateType::MeshObject; requests.create = true; }
+    if (ImGui::MenuItem("Object")) { createType = CreateType::Object; requests.create = true; }
     if (ImGui::MenuItem("Material")) { createType = CreateType::Material; requests.create = true; }
     if (ImGui::MenuItem("Lua script")) { createType = CreateType::LuaScript; requests.create = true; }
 }
@@ -314,7 +364,14 @@ void ContentBrowser::DrawToolbar(DrawRequests& requests)
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 3));
     const bool showPath = ImGui::GetContentRegionAvail().y >= 5 * ImGui::GetFrameHeightWithSpacing();
-    const bool wide = ImGui::GetContentRegionAvail().x >= 180;
+    const bool wide = ImGui::GetContentRegionAvail().x >= 240;
+    ImGui::BeginDisabled(!available);
+    if (ImGui::SmallButton("Add")) ImGui::OpenPopup("Add resource");
+    if (ImGui::BeginPopup("Add resource")) {
+        DrawCreateMenu(requests);
+        ImGui::EndPopup();
+    }
+    ImGui::EndDisabled(); ImGui::SameLine();
     if (wide) {
         ImGui::BeginDisabled(navigationPosition == 0);
         if (ImGui::SmallButton("<") && Navigate(navigation[navigationPosition - 1], false)) --navigationPosition;
