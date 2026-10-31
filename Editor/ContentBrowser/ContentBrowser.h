@@ -38,6 +38,9 @@ private:
     std::string ResourcePath(const std::string& path) const;
     enum class CreateType { Folder, Scene, MeshObject, Object, Material, LuaScript };
     void CreateEntry();
+    bool PrepareEntryName(std::string& name);
+    bool BuildEntryContents(std::string& contents);
+    bool WriteEntry(const std::string& name);
     void DrawCreateDialog();
     void DrawDeleteDialog();
 

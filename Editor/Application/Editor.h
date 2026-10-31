@@ -98,8 +98,16 @@ private:
 	void DrawCreateMenu();
 	void ApplySceneActions();
 	void DrawObjectDropTarget(const ImVec2& minimum, const ImVec2& maximum, bool inViewport = false);
-	std::string requestedObjectInsert;
-	DXVector3 objectInsertPosition = DXVector3::Zero;
+	struct ObjectInsertRequest {
+		std::string path;
+		DXVector3 position = DXVector3::Zero;
+	} requestedObjectInsert;
+	struct ViewportRay {
+		DXVector3 origin, direction;
+		float length = 0;
+	};
+	bool BuildViewportRay(const ImVec2& origin, const ImVec2& size, ViewportRay& ray) const;
+	bool GetObjectDropPosition(const ImVec2& origin, const ImVec2& size, DXVector3& position) const;
 	bool CanDeleteObject(GameObject* object) const;
 	ObjectType requestedCreate = ObjectType::None;
 	GameObject* requestedDelete = nullptr;

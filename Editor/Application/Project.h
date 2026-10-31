@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 class Level;
+class EditorCamera;
 
 // Описание проекта принадлежит редактору; движок получает только файловый корень.
 struct Project {
@@ -16,7 +17,8 @@ struct Project {
     static bool Create(const std::string& parent, const std::string& name,
         Project& result, std::string& error, const Project* source = nullptr);
     static bool CreateTemporary(Project& result, std::string& error);
-    // Общая расстановка демонстрации; Level владеет созданными объектами, Init не вызывается.
+    // Level владеет камерой и демонстрацией; возвращаемый адрес заимствован, Init не вызывается.
+    static EditorCamera* CreateSceneCamera(Level& level);
     static bool PopulateDemoScene(Level& level);
 };
 

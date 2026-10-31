@@ -214,15 +214,14 @@ void ContentBrowser::Refresh()
     })) selected.clear();
 }
 
-void ContentBrowser::CreateEntry()
+bool ContentBrowser::PrepareEntryName(std::string& name)
 {
-    std::string name(entryName);
     // Разрешаем только одно имя, без относительных переходов и Win32-суффиксов.
     if (name.empty() || name == "." || name == ".." || name.back() == '.' || name.back() == ' '
         || name.find_first_of("/\\:*?\"<>|") != std::string::npos
         || std::any_of(name.begin(), name.end(), [](unsigned char c) { return c < 32; })) {
         actionError = "Enter a name without separators or reserved characters.";
-        return;
+        return false;
     }
     // Win32 запрещает имена устройств также перед расширением (например CON.txt).
     std::string base = name.substr(0, name.find('.'));
@@ -231,9 +230,8 @@ void ContentBrowser::CreateEntry()
         || (base.size() == 4 && (base.starts_with("COM") || base.starts_with("LPT"))
             && base[3] >= '1' && base[3] <= '9')) {
         actionError = "This name is reserved by Windows.";
-        return;
+        return false;
     }
-    if (!CheckDirectory()) { actionError = error; return; }
     // Достраиваем расширение; stone.json также становится stone.material.json.
     const char* suffix = createType == CreateType::Material ? ".material.json"
         : createType == CreateType::Scene ? ".level.json"
@@ -243,56 +241,71 @@ void ContentBrowser::CreateEntry()
         name += suffix;
     }
     if (createType == CreateType::LuaScript && !LowerAscii(name).ends_with(".lua")) name += ".lua";
+    return true;
+}
+
+bool ContentBrowser::BuildEntryContents(std::string& contents)
+{
+    if (createType == CreateType::Material) {
+        // Шаблон MaterialData не требует GPU для создания.
+        contents = "{\n  \"version\": 1,\n  \"shader\": \"builtin/simple\",\n  \"render_state\": \"opaque\",\n"
+            "  \"sampler\": \"wrap_linear\",\n  \"diffuse\": null,\n  \"specular_strength\": 0.5,\n  \"shininess\": 32.0\n}\n";
+        return true;
+    }
+    if (createType == CreateType::LuaScript) {
+        // LuaScriptComponent ожидает таблицу с необязательными обработчиками.
+        contents = "local M = {}\n\nfunction M.on_init(self)\nend\n\nfunction M.on_update(self, dt)\nend\n\nreturn M\n";
+        return true;
+    }
+    rapidjson::Document document;
+    rapidjson::Value description;
+    // Используем сериализаторы движка: шаблоны не дублируют формат сцены и дерева.
+    if (createType == CreateType::Scene) {
+        Level scene;
+        if (!Project::PopulateDemoScene(scene)) {
+            actionError = "Cannot allocate the demo scene."; return false;
+        }
+        description = scene.Serialize(document.GetAllocator(), actionError);
+    } else {
+        GameObject object;
+        if (createType == CreateType::MeshObject) {
+            // Временный объект владеет компонентом; Init и создание GPU-ресурсов не нужны.
+            auto* mesh = object.createComponent<MeshComponent>();
+            if (!mesh) { actionError = "Cannot allocate mesh component."; return false; }
+            mesh->bind_to_node(&object.getTransform());
+        }
+        description = object.Serialize(document.GetAllocator(), actionError);
+    }
+    if (description.IsNull()) return false;
+    rapidjson::StringBuffer buffer;
+    rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+    if (!description.Accept(writer)) { actionError = "Cannot serialize resource."; return false; }
+    contents.assign(buffer.GetString(), buffer.GetSize());
+    contents += '\n';
+    return true;
+}
+
+bool ContentBrowser::WriteEntry(const std::string& name)
+{
     const fs::path destination = DiskPath(current) / DiskPath(name);
     if (createType == CreateType::Folder) {
         std::error_code ec;
         if (!fs::create_directory(destination, ec)) {
             actionError = ec ? "Cannot create folder: " + ec.message() : "A folder with this name already exists.";
-            return;
+            return false;
         }
-    } else {
-        // Шаблон соответствует MaterialData версии 1 и не требует GPU для создания.
-        std::string contents = createType == CreateType::Material
-            ? "{\n  \"version\": 1,\n  \"shader\": \"builtin/simple\",\n  \"render_state\": \"opaque\",\n"
-              "  \"sampler\": \"wrap_linear\",\n  \"diffuse\": null,\n  \"specular_strength\": 0.5,\n  \"shininess\": 32.0\n}\n"
-            // LuaScriptComponent ожидает таблицу с необязательными обработчиками.
-            : "local M = {}\n\nfunction M.on_init(self)\nend\n\nfunction M.on_update(self, dt)\nend\n\nreturn M\n";
-        if (createType == CreateType::Scene || createType == CreateType::Object || createType == CreateType::MeshObject) {
-            rapidjson::Document document;
-            rapidjson::Value description;
-            // Используем сериализаторы движка: шаблоны не дублируют формат сцены и дерева.
-            if (createType == CreateType::Scene) {
-                Level scene;
-                GameObject* cameraObject = scene.createObject();
-                auto* camera = cameraObject ? cameraObject->createComponent<EditorCamera>() : nullptr;
-                auto* navigation = cameraObject ? cameraObject->createComponent<CameraMovementComponent>() : nullptr;
-                if (!camera || !navigation || !Project::PopulateDemoScene(scene)) {
-                    actionError = "Cannot allocate the demo scene."; return;
-                }
-                // Камера сохраняется вместе с демкой, чтобы сцена открывалась с готовым обзором.
-                cameraObject->getTransform().set_position(DXVector3(0.0f, 0.0f, 3.0f));
-                camera->bind_to_node(&cameraObject->getTransform());
-                navigation->bind_to_node(&cameraObject->getTransform());
-                description = scene.Serialize(document.GetAllocator(), actionError);
-            } else {
-                GameObject object;
-                if (createType == CreateType::MeshObject) {
-                    // Временный объект владеет компонентом; Init и создание GPU-ресурсов не нужны.
-                    auto* mesh = object.createComponent<MeshComponent>();
-                    if (!mesh) { actionError = "Cannot allocate mesh component."; return; }
-                    mesh->bind_to_node(&object.getTransform());
-                }
-                description = object.Serialize(document.GetAllocator(), actionError);
-            }
-            if (description.IsNull()) return;
-            rapidjson::StringBuffer buffer;
-            rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
-            if (!description.Accept(writer)) { actionError = "Cannot serialize resource."; return; }
-            contents.assign(buffer.GetString(), buffer.GetSize());
-            contents += '\n';
-        }
-        if (!WriteNewFile(destination, contents, actionError)) return;
+        return true;
     }
+    std::string contents;
+    return BuildEntryContents(contents) && WriteNewFile(destination, contents, actionError);
+}
+
+void ContentBrowser::CreateEntry()
+{
+    std::string name(entryName);
+    if (!PrepareEntryName(name)) return;
+    if (!CheckDirectory()) { actionError = error; return; }
+    if (!WriteEntry(name)) return;
     search[0] = '\0'; typeFilter = 0;
     Refresh();
     selected = Utf8Path(DiskPath(current) / DiskPath(name));

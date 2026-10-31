@@ -287,6 +287,37 @@ void Editor::DrawViewport()
 	ImGui::End();
 }
 
+bool Editor::BuildViewportRay(const ImVec2& origin, const ImVec2& size, ViewportRay& ray) const
+{
+	EditorCamera* camera = game.getRenderServer().getCamera();
+	DXMatrix view;
+	if (!camera || !camera->getView(view) || size.x <= 0 || size.y <= 0 || viewport.Width <= 0 || viewport.Height <= 0) return false;
+	// Выбор и вставка используют один луч, соответствующий реальной текстуре viewport.
+	const ImVec2 mouse = ImGui::GetMousePos();
+	const float x = (mouse.x - origin.x) * viewport.Width / size.x;
+	const float y = (mouse.y - origin.y) * viewport.Height / size.y;
+	const DXMatrix projection = camera->getProjection(viewport.Width / viewport.Height);
+	ray.origin = DirectX::XMVector3Unproject(DirectX::XMVectorSet(x, y, 0, 1),
+		0, 0, viewport.Width, viewport.Height, 0, 1, projection, view, DXMatrix::Identity);
+	const DXVector3 end = DirectX::XMVector3Unproject(DirectX::XMVectorSet(x, y, 1, 1),
+		0, 0, viewport.Width, viewport.Height, 0, 1, projection, view, DXMatrix::Identity);
+	ray.direction = end - ray.origin;
+	ray.length = ray.direction.Length();
+	if (!std::isfinite(ray.length) || ray.length <= 0) return false;
+	ray.direction /= ray.length;
+	return std::isfinite(ray.origin.x) && std::isfinite(ray.origin.y) && std::isfinite(ray.origin.z);
+}
+
+bool Editor::GetObjectDropPosition(const ImVec2& origin, const ImVec2& size, DXVector3& position) const
+{
+	ViewportRay ray;
+	if (!BuildViewportRay(origin, size, ray)) return false;
+	// При взгляде вдоль земли или в небо ставим экземпляр перед камерой.
+	const float ground = std::abs(ray.direction.y) > 1e-5f ? -ray.origin.y / ray.direction.y : -1.0f;
+	position = ray.origin + ray.direction * (std::isfinite(ground) && ground >= 0 && ground <= 10000 ? ground : 5.0f);
+	return std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z);
+}
+
 void Editor::DrawObjectDropTarget(const ImVec2& minimum, const ImVec2& maximum, bool inViewport)
 {
 	if (!game.getLevel() || editedObject || maximum.x <= minimum.x || maximum.y <= minimum.y) return;
@@ -305,31 +336,11 @@ void Editor::DrawObjectDropTarget(const ImVec2& minimum, const ImVec2& maximum, 
 	if (!ImGui::BeginDragDropTargetCustom(ImRect(minimum, maximum), ImGui::GetID("Object asset drop"))) return;
 	if (ImGui::AcceptDragDropPayload("GG_RESOURCE_PATH")) {
 		DXVector3 position = DXVector3::Zero;
-		if (inViewport) {
-			EditorCamera* camera = game.getRenderServer().getCamera();
-			DXMatrix view;
-			if (!camera || !camera->getView(view)) { ImGui::EndDragDropTarget(); return; }
-			const float width = maximum.x - minimum.x, height = maximum.y - minimum.y;
-			const ImVec2 mouse = ImGui::GetMousePos();
-			const DXMatrix projection = camera->getProjection(width / height);
-			const DXVector3 start = DirectX::XMVector3Unproject(DirectX::XMVectorSet(mouse.x - minimum.x, mouse.y - minimum.y, 0, 1),
-				0, 0, width, height, 0, 1, projection, view, DXMatrix::Identity);
-			const DXVector3 end = DirectX::XMVector3Unproject(DirectX::XMVectorSet(mouse.x - minimum.x, mouse.y - minimum.y, 1, 1),
-				0, 0, width, height, 0, 1, projection, view, DXMatrix::Identity);
-			DXVector3 direction = end - start;
-			const float length = direction.Length();
-			if (!std::isfinite(length) || length <= 0) { ImGui::EndDragDropTarget(); return; }
-			direction /= length;
-			// При взгляде вдоль земли или в небо ставим экземпляр перед камерой.
-			const float ground = std::abs(direction.y) > 1e-5f ? -start.y / direction.y : -1.0f;
-			position = start + direction * (std::isfinite(ground) && ground >= 0 && ground <= 10000 ? ground : 5.0f);
-			if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) {
-				ImGui::EndDragDropTarget(); return;
-			}
+		if (inViewport && !GetObjectDropPosition(minimum, ImVec2(maximum.x - minimum.x, maximum.y - minimum.y), position)) {
+			ImGui::EndDragDropTarget(); return;
 		}
 		// Изменение уровня откладывается до окончания всех обходов и отрисовки кадра.
-		requestedObjectInsert = path;
-		objectInsertPosition = position;
+		requestedObjectInsert = { path, position };
 	}
 	ImGui::EndDragDropTarget();
 }
@@ -384,23 +395,12 @@ void Editor::DrawSelectionBounds(const ImVec2& origin, const ImVec2& size)
 void Editor::PickObject(const ImVec2& origin, const ImVec2& size, bool toggle, bool context)
 {
 	Level* level = game.getLevel();
-	EditorCamera* camera = game.getRenderServer().getCamera();
-	DXMatrix view;
-	if (!level || !camera || !camera->getView(view)) return;
-	// Координаты изображения переводим в пиксели реальной текстуры viewport.
-	const ImVec2 mouse = ImGui::GetMousePos();
-	const float x = (mouse.x - origin.x) * viewport.Width / size.x;
-	const float y = (mouse.y - origin.y) * viewport.Height / size.y;
-	const DXMatrix projection = camera->getProjection(viewport.Width / viewport.Height);
+	ViewportRay ray;
+	if (!level || !BuildViewportRay(origin, size, ray)) return;
+	const DXVector3& rayOrigin = ray.origin;
+	const DXVector3& direction = ray.direction;
+	float nearest = ray.length;
 	const DXMatrix identity = DXMatrix::Identity;
-	const DXVector3 rayOrigin = DirectX::XMVector3Unproject(DirectX::XMVectorSet(x, y, 0, 1),
-		0, 0, viewport.Width, viewport.Height, 0, 1, projection, view, identity);
-	const DXVector3 rayEnd = DirectX::XMVector3Unproject(DirectX::XMVectorSet(x, y, 1, 1),
-		0, 0, viewport.Width, viewport.Height, 0, 1, projection, view, identity);
-	DXVector3 direction = rayEnd - rayOrigin;
-	float nearest = direction.Length();
-	if (!std::isfinite(nearest) || nearest <= 0.0f) return;
-	direction /= nearest;
 	GameObject* hit = nullptr;
 
 	for (GameObject* object : level->getObjects()) {

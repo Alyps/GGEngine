@@ -191,15 +191,9 @@ void Editor::ApplyProjectAction()
 		if (!creationSavesCurrentScene) {
 			// Новый уровень ещё не принадлежит Game: создаём и сохраняем демо без Init.
 			auto* demo = new (std::nothrow) Level();
-			GameObject* cameraObject = demo ? demo->createObject() : nullptr;
-			auto* camera = cameraObject ? cameraObject->createComponent<EditorCamera>() : nullptr;
-			auto* navigation = cameraObject ? cameraObject->createComponent<CameraMovementComponent>() : nullptr;
-			if (!camera || !navigation || !Project::PopulateDemoScene(*demo)) {
+			if (!demo || !Project::PopulateDemoScene(*demo)) {
 				delete demo; projectCreationError = "Cannot allocate the demo scene."; return;
 			}
-			cameraObject->getTransform().set_position(DXVector3(0.0f, 0.0f, 3.0f));
-			camera->bind_to_node(&cameraObject->getTransform());
-			navigation->bind_to_node(&cameraObject->getTransform());
 			Project ready = projectCreationTarget;
 			ready.startupScene = ready.resourceDirectory + "/Scenes/Main.level.json";
 			const auto path = (DiskPath(ready.Root()) / DiskPath(ready.startupScene)).generic_u8string();
@@ -240,20 +234,15 @@ void Editor::ApplyProjectAction()
 		if (!level) return;
 	} else level = new (std::nothrow) Level();
 	if (!level) { projectError = "Cannot allocate scene."; return; }
-	GameObject* cameraObject = pendingProject.startupScene.empty() ? level->createObject() : nullptr;
-	EditorCamera* camera = cameraObject ? cameraObject->createComponent<EditorCamera>() : nullptr;
-	CameraMovementComponent* movement = cameraObject ? cameraObject->createComponent<CameraMovementComponent>() : nullptr;
-	if (cameraObject && (!camera || !movement)) { delete level; projectError = "Cannot allocate a project camera."; return; }
-	if (pendingProject.startupScene.empty() && !cameraObject) { delete level; projectError = "Cannot allocate a project camera."; return; }
 	if (createDemo && !Project::PopulateDemoScene(*level)) {
 		delete level;
 		projectError = "Cannot allocate the demonstration scene.";
 		return;
 	}
-	if (cameraObject) {
-		cameraObject->getTransform().set_position(DXVector3(0.0f, 0.0f, 3.0f));
-		camera->bind_to_node(&cameraObject->getTransform());
-		movement->bind_to_node(&cameraObject->getTransform());
+	EditorCamera* camera = nullptr;
+	if (!createDemo && pendingProject.startupScene.empty()) {
+		camera = Project::CreateSceneCamera(*level);
+		if (!camera) { delete level; projectError = "Cannot allocate a project camera."; return; }
 	}
 	// Сбрасываем заимствованные адреса до Shutdown и удаления прежней сцены.
 	FinishTransformEdit(); FinishProperty();
@@ -294,7 +283,7 @@ void Editor::ResetSceneReferences()
 	selectedObject = nullptr; selectedNode = nameDraftNode = nullptr;
 	meshPathDrafts.clear(); treeAction = {};
 	requestedCreate = ObjectType::None; requestedDelete = requestedDuplicate = requestedObjectExport = nullptr;
-	requestedObjectInsert.clear();
+	requestedObjectInsert = {};
 	navigating = false;
 	ImGui::ClearActiveID(); ImGui::ClearDragDrop();
 }

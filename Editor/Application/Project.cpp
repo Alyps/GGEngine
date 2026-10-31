@@ -233,8 +233,21 @@ bool ProjectHistory::Remember(const std::string& file, std::string& error)
     return WriteJson(settings, bytes, true, error);
 }
 
+EditorCamera* Project::CreateSceneCamera(Level& level)
+{
+	GameObject* object = level.createObject();
+	auto* camera = object ? object->createComponent<EditorCamera>() : nullptr;
+	auto* navigation = object ? object->createComponent<CameraMovementComponent>() : nullptr;
+	if (!camera || !navigation) return nullptr;
+	object->getTransform().set_position(DXVector3(0.0f, 0.0f, 3.0f));
+	camera->bind_to_node(&object->getTransform());
+	navigation->bind_to_node(&object->getTransform());
+	return camera;
+}
+
 bool Project::PopulateDemoScene(Level& level)
 {
+	if (!CreateSceneCamera(level)) return false;
 	// Уровень владеет объектами и освободит частично созданную сцену при отказе.
 	GameObject* objects[6]{};
 	for (auto& object : objects) {

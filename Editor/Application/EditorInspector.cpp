@@ -185,22 +185,22 @@ void Editor::ApplySceneActions()
 	const ObjectType type = requestedCreate;
 	GameObject* removed = requestedDelete;
 	GameObject* duplicated = requestedDuplicate;
-	const std::string inserted = std::move(requestedObjectInsert);
-	requestedObjectInsert.clear();
+	const ObjectInsertRequest inserted = std::move(requestedObjectInsert);
+	requestedObjectInsert = {};
 	requestedCreate = ObjectType::None;
 	requestedDelete = nullptr;
 	requestedDuplicate = nullptr;
-	if (!level || (type == ObjectType::None && !removed && !duplicated && inserted.empty())) return;
+	if (!level || (type == ObjectType::None && !removed && !duplicated && inserted.path.empty())) return;
 	if (editedObject) return;
 	FinishTransformEdit();
 	sceneActionError.clear();
-	if (!inserted.empty()) {
+	if (!inserted.path.empty()) {
 		rapidjson::Document json;
-		const auto file = EditorFiles::Utf8Path(EditorFiles::DiskPath(project.Root()) / EditorFiles::DiskPath(inserted));
+		const auto file = EditorFiles::Utf8Path(EditorFiles::DiskPath(project.Root()) / EditorFiles::DiskPath(inserted.path));
 		if (!Deserialization::LoadFile(file, json, sceneActionError)) return;
 		GameObject* object = GameObject::Deserialize(json, game.getComponentFactoryMap(), sceneActionError);
 		if (!object) return;
-		object->getTransform().set_position(objectInsertPosition);
+		object->getTransform().set_position(inserted.position);
 		// До addObject экземпляром владеет эта операция, после успеха — только Level.
 		if (!level->addObject(object)) {
 			delete object; sceneActionError = "Cannot attach object to scene."; return;
