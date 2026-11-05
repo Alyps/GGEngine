@@ -6,6 +6,9 @@ Game::Game(std::wstring windowTitle, long clientWidth, long clientHeight)
 	window = new DisplayWindow32(clientWidth, clientHeight, windowTitle.c_str(), windowContext);
 	inputDevice = new InputDevice(*window);
 	windowContext.inputDevice = inputDevice;
+#if defined(GG_GAME)
+	inputDevice->gameInput = &gameInput;
+#endif
 	renderServer = new RenderServer();
 	renderServer->Init(*window);
 	resourceManager = new ResourceManager();
@@ -95,24 +98,41 @@ void Game::EndFrame()
 
 int Game::Run()
 {
+#if defined(GG_GAME)
+	gameInput.SetFocused(GetForegroundWindow() == window->getWindow());
+	gameInput.SetActive(true);
+#endif
 
 	// Не включаем время загрузки уровня в первый кадр.
 	timeManager.reset();
 
 	for (;;)
 	{
+#if defined(GG_GAME)
+		// Сообщения этого кадра должны пережить последующий BeginFrame игры.
+		gameInput.BeginFrame();
+#endif
 		MSG message{};
 		while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
 		{
-			if (message.message == WM_QUIT)
+			if (message.message == WM_QUIT) {
+#if defined(GG_GAME)
+				gameInput.SetActive(false);
+#endif
 				return static_cast<int>(message.wParam);
+			}
 
 			TranslateMessage(&message);
 			DispatchMessageW(&message);
 		}
 
 		BeginFrame();
-		if (!StepPhysics()) return 1;
+		if (!StepPhysics()) {
+#if defined(GG_GAME)
+			gameInput.SetActive(false);
+#endif
+			return 1;
+		}
 		Update();
 		renderServer->DrawAll();
 		EndFrame();

@@ -2,6 +2,9 @@
 #include <cassert>    
 #include <cstdlib> 
 #include "InputDevice.h" 
+#if defined(GG_GAME)
+#include "GameInput.h"
+#endif
 
 
 
@@ -30,11 +33,21 @@ LRESULT DisplayWindow32::HandleMessage(HWND hwnd, UINT umessage, WPARAM wparam, 
 		context->window = nullptr;
 		SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
 		return DefWindowProc(hwnd, umessage, wparam, lparam);
+	case WM_SETFOCUS:
+#if defined(GG_GAME)
+		if (context->inputDevice && context->inputDevice->gameInput)
+			context->inputDevice->gameInput->SetFocused(true);
+#endif
+		return 0;
 	case WM_KILLFOCUS:
 		// Отпускание кнопок вне окна может не прийти через Raw Input.
 		if (context->inputDevice) {
 			context->inputDevice->keys->clear();
 			context->inputDevice->MouseOffset = DirectX::SimpleMath::Vector2::Zero;
+			context->inputDevice->MouseWheelDelta = 0;
+#if defined(GG_GAME)
+			if (context->inputDevice->gameInput) context->inputDevice->gameInput->SetFocused(false);
+#endif
 		}
 		return 0;
 	case WM_DESTROY:
@@ -81,7 +94,9 @@ LRESULT DisplayWindow32::HandleMessage(HWND hwnd, UINT umessage, WPARAM wparam, 
 				args.ButtonFlags = raw->data.mouse.usButtonFlags;
 				args.ExtraInformation = raw->data.mouse.ulExtraInformation;
 				args.Buttons = raw->data.mouse.ulRawButtons;
-				args.WheelDelta = raw->data.mouse.usButtonData;
+				// Колесо знаковое; usButtonData в остальных пакетах не является прокруткой.
+				args.WheelDelta = (raw->data.mouse.usButtonFlags & RI_MOUSE_WHEEL)
+					? static_cast<SHORT>(raw->data.mouse.usButtonData) : 0;
 				args.X = raw->data.mouse.lLastX;
 				args.Y = raw->data.mouse.lLastY;
 

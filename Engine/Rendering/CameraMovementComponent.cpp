@@ -3,32 +3,9 @@
 #include <algorithm>
 #include <cmath>
 
-CameraMovementComponent::~CameraMovementComponent()
+void CameraMovementComponent::Rotate(const DirectX::SimpleMath::Vector2& offset)
 {
-    if (ownerGame)
-        ownerGame->getInputDevice().MouseMove.Remove(mouseMoveHandle);
-}
-
-void CameraMovementComponent::Init(Game& game)
-{
-    // Повторная инициализация не должна создавать вторую подписку.
-    if (ownerGame)
-        ownerGame->getInputDevice().MouseMove.Remove(mouseMoveHandle);
-    ownerGame = &game;
-    mouseMoveHandle = game.getInputDevice().MouseMove.AddRaw(this,
-        &CameraMovementComponent::OnMouseMove);
-}
-
-void CameraMovementComponent::OnMouseMove(const InputDevice::MouseMoveEventArgs& args)
-{
-    if (!enabled || !ownerGame || !transformNode) return;
-    if (GetForegroundWindow() != ownerGame->getWindow().getWindow()) return;
-
-    // Состояние кнопки обновляется InputDevice до отправки события движения.
-    const CameraComponent* camera = ownerGame->getRenderServer().getCamera();
-    if (!camera || camera->getTransformNode() != transformNode) return;
-    if (!ownerGame->getInputDevice().IsKeyDown(rotationButton)) return;
-    if (args.Offset.x == 0.0f && args.Offset.y == 0.0f) return;
+    if (offset.x == 0.0f && offset.y == 0.0f) return;
 
     // Мировая ориентация позволяет сохранять горизонт и у дочерней камеры.
     DXMatrix world = transformNode->worldMatrix();
@@ -39,10 +16,10 @@ void CameraMovementComponent::OnMouseMove(const InputDevice::MouseMoveEventArgs&
 
     // Углы служат только для ограничений и создания осевых кватернионов.
     const DXVector3 forward = DXVector3::Transform(DXVector3(0.0f, 0.0f, -1.0f), orientation);
-    const float yaw = std::atan2(-forward.x, -forward.z) - args.Offset.x * mouseSensitivity;
+    const float yaw = std::atan2(-forward.x, -forward.z) - offset.x * mouseSensitivity;
     const float pitchLimit = DirectX::XM_PIDIV2 - DirectX::XM_PI / 180.0f;
     const float pitch = std::clamp(std::asin(std::clamp(forward.y, -1.0f, 1.0f))
-        - args.Offset.y * mouseSensitivity, -pitchLimit, pitchLimit);
+        - offset.y * mouseSensitivity, -pitchLimit, pitchLimit);
 
     // SimpleMath operator* применяет первый поворот, затем второй: X, затем мировой Y.
     // Пересборка из двух осевых кватернионов исключает накопление крена.
@@ -66,17 +43,14 @@ void CameraMovementComponent::OnMouseMove(const InputDevice::MouseMoveEventArgs&
 
 void CameraMovementComponent::Update(Game& game, double deltaTime)
 {
-    // Ввод получает только активная камера в окне с фокусом.
-    if (!enabled || !transformNode || GetForegroundWindow() != game.getWindow().getWindow()) return;
+    // Команда поворота применяется один раз; разрешение навигации определяет редактор.
+    const auto offset = rotationInput;
+    rotationInput = DirectX::SimpleMath::Vector2::Zero;
+    if (!enabled || !transformNode) return;
     const CameraComponent* camera = game.getRenderServer().getCamera();
     if (!camera || camera->getTransformNode() != transformNode) return;
-    InputDevice& input = game.getInputDevice();
-
-    // W направлено вдоль -Z, Q опускает камеру, E поднимает.
-    DXVector3 direction = externalMovementInput ? movementInput : DXVector3(
-        float(input.IsKeyDown(Keys::D)) - float(input.IsKeyDown(Keys::A)),
-        float(input.IsKeyDown(Keys::E)) - float(input.IsKeyDown(Keys::Q)),
-        float(input.IsKeyDown(Keys::S)) - float(input.IsKeyDown(Keys::W)));
+    Rotate(offset);
+    DXVector3 direction = movementInput;
     if (direction.LengthSquared() == 0.0f) return;
 
     // Нормализация сохраняет скорость при одновременном нажатии нескольких клавиш.
@@ -87,12 +61,6 @@ void CameraMovementComponent::Update(Game& game, double deltaTime)
     // Кватернион переводит движение в систему родителя без углов Эйлера.
     direction = DXVector3::Transform(direction, orientation);
     transformNode->move(direction * (speed * static_cast<float>(deltaTime)));
-}
-
-void CameraMovementComponent::Shutdown(Game& game)
-{
-    if (ownerGame) ownerGame->getInputDevice().MouseMove.Remove(mouseMoveHandle);
-    ownerGame = nullptr;
 }
 
 rapidjson::Value CameraMovementComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const

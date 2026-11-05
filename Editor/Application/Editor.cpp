@@ -94,7 +94,6 @@ bool Editor::LaunchGame(const std::string& executablePath, const std::string& pr
 void Editor::ConfigureCameraNavigation(CameraMovementComponent& movement) const
 {
 	movement.enabled = false;
-	movement.rotationButton = NavigationButton();
 }
 
 CameraMovementComponent* Editor::GetCameraMovement() const
@@ -118,7 +117,7 @@ Editor::~Editor()
 	if (previousProcedure && IsWindow(window))
 		SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousProcedure));
 	RemovePropW(window, EditorProperty);
-	if (auto* movement = GetCameraMovement()) { movement->enabled = true; movement->useDefaultMovementInput(); }
+	if (auto* movement = GetCameraMovement()) movement->enabled = false;
 	ReleaseViewport();
 	if (ui) {
 		ImGui::SetCurrentContext(ui);
@@ -356,11 +355,6 @@ void Editor::DrawDockspace()
 		ImGui::DockBuilderDockWindow("Viewport", center);
 		ImGui::DockBuilderFinish(dock);
 	}
-}
-
-Keys Editor::NavigationButton() const
-{
-	return settings.Get(EditorAction::Navigate).key == ImGuiKey_MouseRight ? Keys::RightButton : Keys::MiddleButton;
 }
 
 void Editor::DrawSettings()

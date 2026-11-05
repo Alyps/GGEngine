@@ -6,6 +6,9 @@
 #include "RenderServer.h"
 #include "GGTime.h"
 #include "InputDevice.h"
+#if defined(GG_GAME)
+#include "GameInput.h"
+#endif
 #include "Object.h"
 #include "ScriptServer.h"
 #include "ResourceManager.h"
@@ -67,6 +70,10 @@ public:
 
 	InputDevice& getInputDevice() noexcept { return *inputDevice; }
 	const InputDevice& getInputDevice() const noexcept { return *inputDevice; }
+#if defined(GG_GAME)
+	GameInput& getGameInput() noexcept { return gameInput; }
+	const GameInput& getGameInput() const noexcept { return gameInput; }
+#endif
 
 	RenderServer& getRenderServer() noexcept { return *renderServer; }
 	const RenderServer& getRenderServer() const noexcept { return *renderServer; }
@@ -118,6 +125,10 @@ private:
 	WindowMessageContext windowContext{};
 	TimeManager timeManager;
 	PhysicsServer physicsServer;
+#if defined(GG_GAME)
+	// Состояние живёт до уничтожения InputDevice, который хранит заимствованный адрес.
+	GameInput gameInput;
+#endif
 
 	// Владеющие указатели: освобождаются после уровня в core.cpp.
 	DisplayWindow32* window = nullptr;

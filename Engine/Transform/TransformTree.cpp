@@ -354,6 +354,12 @@ bool TransformNode::Deserialize(const rapidjson::Value& json, const ComponentFac
     const auto* entries = Array(json, "components", error);
     if (!entries) return false;
     for (rapidjson::SizeType i = 0; i < entries->Size(); ++i) {
+#if defined(GG_GAME)
+        // Старые сцены содержат служебные компоненты редактора; в игре они не создаются.
+        std::string type;
+        if (!String((*entries)[i], "type", type, error)) return false;
+        if (type == "EditorCamera" || type == "CameraMovementComponent") continue;
+#endif
         Component* component = factories.Create((*entries)[i], error);
         if (!component) { error = name + "/components[" + std::to_string(i) + "]: " + error; return false; }
         auto* transformable = dynamic_cast<TransformableComponent*>(component);

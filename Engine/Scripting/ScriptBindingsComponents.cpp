@@ -1,5 +1,5 @@
 #include "ScriptBindings.h"
-#include "Object.h"
+#include "core.h"
 #include <string>
 #include <sol/sol.hpp>
 
@@ -14,10 +14,6 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 			if (auto* typed = dynamic_cast<MeshComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "GameCamera") {
 			if (auto* typed = dynamic_cast<GameCamera*>(component)) return sol::make_object(lua, typed);
-		} else if (name == "EditorCamera") {
-			if (auto* typed = dynamic_cast<EditorCamera*>(component)) return sol::make_object(lua, typed);
-		} else if (name == "CameraMovement") {
-			if (auto* typed = dynamic_cast<CameraMovementComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "DirectionalLight") {
 			if (auto* typed = dynamic_cast<DirectionalLightComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "PointLight") {
@@ -44,14 +40,30 @@ void BindComponents(lua_State* L)
 
 	// Свойства камеры пока не доступны скриптам: тип нужен, чтобы найти и проверить компонент.
 	lua.new_usertype<GameCamera>("GameCamera", sol::no_constructor);
-	lua.new_usertype<EditorCamera>("EditorCamera", sol::no_constructor);
+#if defined(GG_GAME)
+	// Скрипты получают заимствованный GameInput через self.input; создавать его нельзя.
+	lua.new_usertype<GameInput>("GameInput", sol::no_constructor,
+		"is_key_down", &GameInput::IsKeyDown,
+		"was_key_pressed", &GameInput::WasKeyPressed,
+		"was_key_released", &GameInput::WasKeyReleased,
+		"active", sol::property(&GameInput::IsActive),
+		"mouse_x", sol::property([](const GameInput& input) { return input.GetMousePosition().x; }),
+		"mouse_y", sol::property([](const GameInput& input) { return input.GetMousePosition().y; }),
+		"mouse_delta_x", sol::property([](const GameInput& input) { return input.GetMouseDelta().x; }),
+		"mouse_delta_y", sol::property([](const GameInput& input) { return input.GetMouseDelta().y; }),
+		"wheel_delta", sol::property(&GameInput::GetMouseWheelDelta));
 
-	lua.new_usertype<CameraMovementComponent>("CameraMovement",
-		sol::no_constructor,
-		"speed", sol::property([](const CameraMovementComponent& c) { return c.speed; },
-			[](CameraMovementComponent& c, float value) { c.speed = value; }),
-		"mouse_sensitivity", sol::property([](const CameraMovementComponent& c) { return c.mouseSensitivity; },
-			[](CameraMovementComponent& c, float value) { c.mouseSensitivity = value; }));
+	// Имена совпадают с C++ Keys; буквенные и цифровые коды идут последовательно.
+	auto keys = lua.create_named_table("Keys");
+	for (int code = 'A'; code <= 'Z'; ++code) keys[std::string(1, static_cast<char>(code))] = static_cast<Keys>(code);
+	for (int code = '0'; code <= '9'; ++code) keys["D" + std::string(1, static_cast<char>(code))] = static_cast<Keys>(code);
+	keys["LeftButton"] = Keys::LeftButton; keys["RightButton"] = Keys::RightButton;
+	keys["MiddleButton"] = Keys::MiddleButton; keys["Escape"] = Keys::Escape;
+	keys["Space"] = Keys::Space; keys["LeftShift"] = Keys::LeftShift;
+	keys["RightShift"] = Keys::RightShift;
+	keys["Up"] = Keys::Up; keys["Down"] = Keys::Down;
+	keys["Left"] = Keys::Left; keys["Right"] = Keys::Right;
+#endif
 
 	// Общие поля света; цвет передаётся как Color, альфа игнорируется.
 	lua.new_usertype<LightComponent>("Light",
