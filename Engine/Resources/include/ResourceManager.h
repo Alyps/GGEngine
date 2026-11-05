@@ -147,73 +147,34 @@ public:
 	bool Save(const std::string& path, std::string& error) const;
 };
 
+// Необязательный файл image.png.texture.json; отсутствие сохраняет прежнюю загрузку.
+struct TextureSettings {
+	enum class ColorSpace { Auto, Linear, SRGB };
+	enum class Mipmaps { Auto, Disabled };
+	ColorSpace colorSpace = ColorSpace::Auto;
+	Mipmaps mipmaps = Mipmaps::Auto;
+	bool operator==(const TextureSettings&) const = default;
+	bool Validate(std::string& error) const;
+	bool Load(const std::string& imagePath, std::string& error);
+	bool Save(const std::string& imagePath, std::string& error) const;
+};
+
 class TextureResource final : public Resource {
 friend class ResourceManager;
 
 private:
 	ComPtr<ID3D11Device> m_device;
 	Texture m_texture;
+	TextureSettings settings;
+	std::string sourcePath;
+	bool BuildTexture(const std::string& path, const TextureSettings& options, Texture& result, std::string& error) const;
 
 	explicit TextureResource(ID3D11Device* device) : m_device(device) {}
 	bool load(const std::string& path) override;
 
 public:
 	const Texture& GetTexture() const { return m_texture; }
+	const TextureSettings& GetSettings() const { return settings; }
+	// Сначала готовим GPU-ресурс и сохраняем JSON; только затем заменяем содержимое на прежнем адресе.
+	bool ApplySettings(const TextureSettings& options, std::string& error);
 };
-
-inline bool TextureResource::load(const std::string& path)
-{
-	if (!m_device || path.empty() || path.find('\0') != std::string::npos ||
-		path.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) return false;
-
-	const int pathLength = static_cast<int>(path.size());
-	const int wideLength = MultiByteToWideChar(
-		CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), pathLength, nullptr, 0);
-	if (wideLength == 0) return false;
-	std::wstring wpath(static_cast<size_t>(wideLength), L'\0');
-	if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-		path.data(), pathLength, wpath.data(), wideLength) != wideLength) return false;
-
-	const auto dot = wpath.find_last_of(L'.');
-	const auto separator = wpath.find_last_of(L"/\\");
-	std::wstring ext;
-	if (dot != std::wstring::npos &&
-		(separator == std::wstring::npos || dot > separator)) ext = wpath.substr(dot);
-	for (auto& c : ext) c = static_cast<wchar_t>(std::towlower(c));
-
-	DirectX::TexMetadata  metadata{};
-	DirectX::ScratchImage image{};
-
-
-	HRESULT hr = E_FAIL;
-	if (ext == L".dds") hr = DirectX::LoadFromDDSFile(wpath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, image);
-	else if (ext == L".tga") hr = DirectX::LoadFromTGAFile(wpath.c_str(), DirectX::TGA_FLAGS_NONE, &metadata, image);
-	else if (ext == L".hdr") hr = DirectX::LoadFromHDRFile(wpath.c_str(), &metadata, image);
-	else                     hr = DirectX::LoadFromWICFile(wpath.c_str(), DirectX::WIC_FLAGS_NONE, &metadata, image);
-	if (FAILED(hr)) return false;
-
-	
-
-	const DirectX::ScratchImage* src = &image;
-	DirectX::ScratchImage        mipChain;
-
-	if (metadata.mipLevels <= 1 &&
-		metadata.dimension == DirectX::TEX_DIMENSION_TEXTURE2D)
-	{
-		hr = DirectX::GenerateMipMaps(
-			image.GetImages(),
-			image.GetImageCount(),
-			metadata,
-			DirectX::TEX_FILTER_DEFAULT,
-			0,
-			mipChain);
-
-		if (SUCCEEDED(hr)) {
-			src = &mipChain;
-		}
-		// при неудаче молча используем оригинал
-	}
-
-	m_texture = Texture::Create(m_device.Get(), *src);
-	return m_texture.IsValid();
-}

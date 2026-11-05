@@ -235,12 +235,24 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 	return false;
 }
 
-void Editor::PushHistory(HistoryEntry entry)
+bool Editor::UseTextureHistory() const
 {
-	if (entry.kind == HistoryKind::Group ? entry.children.empty()
+	return historyTargetsTexture && showInspector && showTextureTab;
+}
+
+const Editor::DocumentHistory& Editor::ActiveHistory() const
+{
+	return UseTextureHistory() ? textureHistory : documentHistory;
+}
+
+void Editor::PushHistory(HistoryEntry entry, DocumentHistory* destination)
+{
+	if (entry.kind == HistoryKind::TextureSettings ? entry.textureBefore == entry.textureAfter
+		: entry.kind == HistoryKind::Group ? entry.children.empty()
 		: entry.kind == HistoryKind::Structure ? entry.objectBefore.json == entry.objectAfter.json : entry.before == entry.after) return;
-	auto& entries = documentHistory.entries;
-	entries.erase(entries.begin() + documentHistory.position, entries.end());
+	auto& context = destination ? *destination : documentHistory;
+	auto& entries = context.entries;
+	entries.erase(entries.begin() + context.position, entries.end());
 	entries.push_back(std::move(entry));
 	// Ограничиваем количество и память; одна большая операция остаётся отменяемой.
 	const auto objectBytes = [](const ObjectState& state) {
@@ -261,8 +273,8 @@ void Editor::PushHistory(HistoryEntry entry)
 		bytes -= entryBytes(entryBytes, entries.front());
 		entries.erase(entries.begin());
 	}
-	documentHistory.position = entries.size();
-	checkSceneDirty = true;
+	context.position = entries.size();
+	if (&context == &documentHistory) checkSceneDirty = true;
 }
 
 void Editor::BeginProperty(HistoryKind kind, HistoryId target, const std::string& before, const char* name)
@@ -410,6 +422,13 @@ void Editor::RestoreSelectedObjects(const std::vector<HistoryId>& objects, Histo
 
 bool Editor::ApplyHistoryEntry(const HistoryEntry& entry, bool undo)
 {
+	if (entry.kind == HistoryKind::TextureSettings) {
+		if (!textureSettingsReady) return false;
+		// Undo/Redo меняет только черновик; сохранённый baseline и GPU обновляет Apply.
+		textureSettingsDraft = undo ? entry.textureBefore : entry.textureAfter;
+		textureSettingsError.clear();
+		return true;
+	}
 	bool applied = false;
 	if (entry.kind == HistoryKind::Group) {
 		if (entry.children.empty()) return false;
@@ -454,14 +473,21 @@ void Editor::RestoreHistorySelection(HistoryId selection, HistoryId camera)
 void Editor::ApplyHistoryStep()
 {
 	const int direction = requestedHistoryStep; requestedHistoryStep = 0;
-	auto& context = documentHistory;
+	const bool texture = requestedTextureHistoryStep; requestedTextureHistoryStep = false;
+	// Получатель фиксируется при запросе: последующая смена фокуса не перенаправляет команду.
+	auto& context = texture ? textureHistory : documentHistory;
 	if (!direction || (direction < 0 ? context.position == 0 : context.position >= context.entries.size())) return;
 	const size_t index = direction < 0 ? context.position - 1 : context.position;
 	const auto& entry = context.entries[index];
 	const bool applied = ApplyHistoryEntry(entry, direction < 0);
-	if (!applied) { if (documentError.empty()) documentError = "Cannot apply history operation."; return; }
+	if (!applied) {
+		auto& error = texture ? textureSettingsError : documentError;
+		if (error.empty()) error = "Cannot apply history operation.";
+		return;
+	}
 	context.position = direction < 0 ? index : index + 1;
-	meshPathDrafts.clear(); nameDraftNode = nullptr; checkSceneDirty = true; game.getTimeManager().reset();
+	if (!texture) { meshPathDrafts.clear(); nameDraftNode = nullptr; checkSceneDirty = true; }
+	game.getTimeManager().reset();
 }
 
 Editor::TransformState Editor::CaptureTransform(GameObject* object, TransformNode* node) const
@@ -586,9 +612,14 @@ void Editor::FinishTransformEdit()
 }
 void Editor::Undo()
 {
-	if (!editingTransform && !editingProperty && documentHistory.position > 0) requestedHistoryStep = -1;
+	if (!editingTransform && !editingProperty && ActiveHistory().position > 0) {
+		requestedHistoryStep = -1; requestedTextureHistoryStep = UseTextureHistory();
+	}
 }
 void Editor::Redo()
 {
-	if (!editingTransform && !editingProperty && documentHistory.position < documentHistory.entries.size()) requestedHistoryStep = 1;
+	const auto& history = ActiveHistory();
+	if (!editingTransform && !editingProperty && history.position < history.entries.size()) {
+		requestedHistoryStep = 1; requestedTextureHistoryStep = UseTextureHistory();
+	}
 }

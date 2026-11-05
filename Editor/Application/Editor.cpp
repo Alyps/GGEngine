@@ -120,6 +120,7 @@ Editor::~Editor()
 	RemovePropW(window, EditorProperty);
 	if (auto* movement = GetCameraMovement()) { movement->enabled = true; movement->useDefaultMovementInput(); }
 	ReleaseViewport();
+	CloseTexturePreview();
 	if (ui) {
 		ImGui::SetCurrentContext(ui);
 		if (rendererReady) ImGui_ImplDX11_Shutdown();
@@ -213,6 +214,7 @@ int Editor::Run()
 		ImGui::NewFrame();
 		ImGuizmo::BeginFrame();
 		scenePanelFocused = false;
+		textureInspectorFocused = false;
 		saveShortcut = false;
 		// Назначенное сохранение доступно и в полях инспектора до записи сцены.
 		if (!navigating && !settings.Held(EditorAction::Navigate) && GetForegroundWindow() == window
@@ -220,14 +222,20 @@ int Editor::Run()
 			saveShortcut = settings.Shortcut(EditorAction::Save);
 		if (saveShortcut) requestedSave = true;
 		DrawDockspace();
+		DrawTextureDialogs();
 		DrawProjectDialogs();
 		DrawSettings();
 		if (showHierarchy) DrawHierarchy();
 		if (showInspector) DrawInspector();
 		DrawViewport();
+		if (scenePanelFocused) historyTargetsTexture = false;
 		contentBrowser.Draw(showContentBrowser);
 		if (const auto file = contentBrowser.TakeObjectToOpen(); !file.empty()) QueueObjectOpen(file);
 		if (const auto file = contentBrowser.TakeSceneToOpen(); !file.empty()) QueueSceneOpen(file);
+		if (const auto file = contentBrowser.TakeTextureToOpen(); !file.empty()) {
+			RequestTextureAction(TextureAction::Open, file);
+			showInspector = true;
+		}
 		// Закрываем жест также при смене выбора или скрытии панели.
 		if (editingTransform && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing()) FinishTransformEdit();
 		if (editingProperty && !ImGui::IsAnyItemActive()
@@ -266,6 +274,7 @@ int Editor::Run()
 		game.EndFrame();
 		FinishStructures();
 		ApplyHistoryStep();
+		ApplyTextureActions();
 		ApplyDocumentActions();
 		ApplyProjectAction();
 		ApplyObjectActions();
@@ -314,8 +323,9 @@ void Editor::DrawDockspace()
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Edit")) {
-			const auto& entries = documentHistory.entries;
-			const size_t position = documentHistory.position;
+			const auto& history = ActiveHistory();
+			const auto& entries = history.entries;
+			const size_t position = history.position;
 			const std::string undo = position ? "Undo: " + entries[position - 1].name : "Undo";
 			const std::string redo = position < entries.size() ? "Redo: " + entries[position].name : "Redo";
 			if (ImGui::MenuItem(undo.c_str(), settings.Label(EditorAction::Undo).c_str(), false, !editingTransform && !editingProperty && position > 0)) Undo();
@@ -433,7 +443,13 @@ void Editor::HandleShortcuts()
 	if (GetForegroundWindow() != game.getWindow().getWindow() || navigating || ImGuizmo::IsUsing()
 		|| ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive()
 		|| ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
-	if (!scenePanelFocused || contentBrowser.IsFocused()) return;
+	if (contentBrowser.IsFocused()) return;
+	if (UseTextureHistory() && textureInspectorFocused) {
+		if (settings.Shortcut(EditorAction::Undo)) Undo();
+		if (settings.Shortcut(EditorAction::Redo)) Redo();
+		return;
+	}
+	if (!scenePanelFocused) return;
 	if (settings.Shortcut(EditorAction::Undo)) Undo();
 	if (settings.Shortcut(EditorAction::Redo)) Redo();
 	if (settings.Shortcut(EditorAction::Duplicate) && !editedObject && selectedObject) requestedDuplicate = selectedObject;

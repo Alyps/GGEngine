@@ -115,6 +115,36 @@ private:
 	std::string sceneActionError;
 	void DrawTransformTree(TransformNode& node);
 	void DrawInspector();
+	void DrawObjectInspector();
+	void OpenTexturePreview(const std::string& file);
+	void CloseTexturePreview();
+	void DrawTextureInspector();
+	void RefreshTexturePreview(TextureResource& resource);
+	bool ApplyTextureSettings();
+	bool TextureSettingsDirty() const;
+	void RecordTextureSettings(const TextureSettings& before, const char* name);
+	void RevertTextureSettings();
+	bool textureInspectorFocused = false, historyTargetsTexture = false;
+	void DrawTextureDialogs();
+	void ApplyTextureActions();
+	enum class TextureAction { None, Open, Close, HideInspector, ContinueDocument, ContinueSave };
+	void RequestTextureAction(TextureAction action, const std::string& file = {});
+	void ContinueTextureAction();
+	TextureAction textureAction = TextureAction::None;
+	TextureSettings textureSettings, textureSettingsDraft;
+	std::string textureSettingsError;
+	bool textureSettingsReady = false, requestedTextureApply = false;
+	bool showUnsavedTextureDialog = false, texturePromptActive = false;
+	bool continueAfterTextureApply = false, proceedTextureAction = false, closeTextureDialog = false;
+	std::string pendingTextureFile, textureFile, textureError;
+	// Собственная COM-ссылка переживает смену кеша сцены; освобождается явно редактором.
+	ID3D11ShaderResourceView* texturePreviewView = nullptr;
+	D3D11_TEXTURE2D_DESC textureDescription{};
+	DXGI_FORMAT textureFormat = DXGI_FORMAT_UNKNOWN;
+	bool showTextureTab = false, focusTextureTab = false, fitTexture = true;
+	bool resetTextureScroll = false;
+	float textureZoom = 100.0f;
+	int textureBackground = 0;
 	void DrawMeshInspector(MeshComponent& mesh);
 	enum class TransformField { Position, Rotation, Scale };
 	static constexpr float MinimumScale = 0.001f;
@@ -159,7 +189,7 @@ private:
 	// Выделение заимствует объекты через ID; порядок определяет последний активный объект.
 	std::vector<HistoryId> selectedObjects;
 	enum class TargetKind { Object, Node, Component };
-	enum class HistoryKind { Node, Component, Structure, Group };
+	enum class HistoryKind { Node, Component, Structure, Group, TextureSettings };
 	struct TargetIdentity {
 		TargetKind kind = TargetKind::Node;
 		HistoryId id = 0;
@@ -177,6 +207,7 @@ private:
 		HistoryKind kind = HistoryKind::Node;
 		HistoryId target = 0;
 		std::string name, before, after;
+		TextureSettings textureBefore, textureAfter;
 		ObjectState objectBefore, objectAfter;
 		HistoryId selectionBefore = 0, selectionAfter = 0, cameraBefore = 0, cameraAfter = 0;
 		std::vector<HistoryId> selectedBefore, selectedAfter;
@@ -186,7 +217,9 @@ private:
 		std::vector<HistoryEntry> entries;
 		size_t position = 0;
 		std::vector<ObjectState> identities;
-	} documentHistory, parkedHistory;
+	} documentHistory, parkedHistory, textureHistory;
+	bool UseTextureHistory() const;
+	const DocumentHistory& ActiveHistory() const;
 	std::unordered_map<GameObject*, HistoryId> objectIds;
 	std::unordered_map<TransformNode*, HistoryId> nodeIds;
 	std::unordered_map<Component*, HistoryId> componentIds;
@@ -206,7 +239,7 @@ private:
 	std::string NodeProperties(TransformNode& node, const TransformState* pose = nullptr);
 	std::string ComponentProperties(Component& component);
 	bool ApplyProperties(const HistoryEntry& entry, const std::string& json);
-	void PushHistory(HistoryEntry entry);
+	void PushHistory(HistoryEntry entry, DocumentHistory* destination = nullptr);
 	void BeginProperty(HistoryKind kind, HistoryId target, const std::string& before, const char* name);
 	void FinishProperty(const std::string* after = nullptr);
 	void TrackComponentProperty(Component& component, const std::string& before, const char* name, bool changed);
@@ -216,6 +249,7 @@ private:
 	void FinishStructures();
 	std::vector<HistoryEntry> pendingStructures;
 	int requestedHistoryStep = 0;
+	bool requestedTextureHistoryStep = false;
 	void ApplyHistoryStep();
 	bool RestoreObjectState(const ObjectState& state, HistoryId target);
 	bool RestoreObjectStates(std::vector<ObjectState> states);

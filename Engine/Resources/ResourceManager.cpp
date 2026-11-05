@@ -1,5 +1,6 @@
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -89,7 +90,7 @@ namespace {
 		HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
 			CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (file == INVALID_HANDLE_VALUE)
-			return Fail(error, "Cannot create temporary material file (Win32 " + std::to_string(GetLastError()) + ")");
+			return Fail(error, "Cannot create temporary resource file (Win32 " + std::to_string(GetLastError()) + ")");
 
 		DWORD written = 0;
 		bool success = size <= (std::numeric_limits<DWORD>::max)() &&
@@ -98,14 +99,14 @@ namespace {
 		if (!CloseHandle(file)) success = false;
 		if (!success) {
 			DeleteFileW(temporary.c_str());
-			return Fail(error, "Cannot write material file; original file was preserved");
+			return Fail(error, "Cannot write resource file; original file was preserved");
 		}
 
 		// Не удаляем старый файл заранее: ошибка замены не должна его уничтожить.
 		if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
 			const DWORD code = GetLastError();
 			DeleteFileW(temporary.c_str());
-			return Fail(error, "Cannot replace material file (Win32 " + std::to_string(code) + ")");
+			return Fail(error, "Cannot replace resource file (Win32 " + std::to_string(code) + ")");
 		}
 		return true;
 	}
@@ -342,4 +343,140 @@ bool MaterialResource::Save(const std::string& path, std::string& error) const
 	current.specularStrength = material.specularStrength;
 	current.shininess = material.shininess;
 	return current.Save(path, error);
+}
+
+bool TextureSettings::Validate(std::string& error) const
+{
+	error.clear();
+	if (colorSpace != ColorSpace::Auto && colorSpace != ColorSpace::Linear && colorSpace != ColorSpace::SRGB)
+		return Fail(error, "Unknown texture color space");
+	if (mipmaps != Mipmaps::Auto && mipmaps != Mipmaps::Disabled) return Fail(error, "Unknown mipmap mode");
+	return true;
+}
+
+bool TextureSettings::Load(const std::string& imagePath, std::string& error)
+{
+	error.clear();
+	std::wstring path;
+	if (!WidePath(imagePath + ".texture.json", path, error)) return false;
+	const DWORD attributes = GetFileAttributesW(path.c_str());
+	if (attributes == INVALID_FILE_ATTRIBUTES) {
+		const DWORD code = GetLastError();
+		if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND) return Fail(error, "Cannot access texture settings");
+		*this = {}; return true;
+	}
+	// Настройки малы; ограничиваем чтение до выделения памяти и не меняем this при ошибке.
+	std::error_code code;
+	const auto size = std::filesystem::file_size(path, code);
+	if (code || size > 65536) return Fail(error, "Texture settings are unavailable or too large");
+	std::ifstream input(std::filesystem::path(path), std::ios::binary);
+	std::string text(static_cast<size_t>(size), '\0');
+	if (!input || !input.read(text.data(), static_cast<std::streamsize>(size))) return Fail(error, "Cannot read texture settings");
+	if (text.find('\0') != std::string::npos) return Fail(error, "Unexpected NUL byte in texture settings");
+	rapidjson::Document json;
+	json.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(), text.size());
+	if (json.HasParseError() || !json.IsObject()) return Fail(error, "Invalid texture settings JSON");
+	for (auto field = json.MemberBegin(); field != json.MemberEnd(); ++field) {
+		const std::string name(field->name.GetString(), field->name.GetStringLength());
+		if (name != "version" && name != "color_space" && name != "mipmaps") return Fail(error, "Unknown texture setting: " + name);
+		for (auto previous = json.MemberBegin(); previous != field; ++previous)
+			if (previous->name == field->name) return Fail(error, "Duplicate texture setting: " + name);
+	}
+	const auto version = json.FindMember("version");
+	if (version == json.MemberEnd() || !version->value.IsInt() || version->value.GetInt() != 1)
+		return Fail(error, "Texture settings version must be 1");
+	std::string color = "auto", mips = "auto";
+	if (!ReadString(json, "color_space", color, error) || !ReadString(json, "mipmaps", mips, error)) return false;
+	TextureSettings result;
+	if (color == "linear") result.colorSpace = ColorSpace::Linear;
+	else if (color == "srgb") result.colorSpace = ColorSpace::SRGB;
+	else if (color != "auto") return Fail(error, "color_space: expected auto, linear or srgb");
+	if (mips == "disabled") result.mipmaps = Mipmaps::Disabled;
+	else if (mips != "auto") return Fail(error, "mipmaps: expected auto or disabled");
+	*this = result;
+	return true;
+}
+
+bool TextureSettings::Save(const std::string& imagePath, std::string& error) const
+{
+	if (!Validate(error)) return false;
+	std::wstring path;
+	if (!WidePath(imagePath + ".texture.json", path, error)) return false;
+	rapidjson::StringBuffer bytes;
+	rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(bytes);
+	writer.StartObject(); writer.Key("version"); writer.Int(1);
+	writer.Key("color_space"); writer.String(colorSpace == ColorSpace::Auto ? "auto" : colorSpace == ColorSpace::Linear ? "linear" : "srgb");
+	writer.Key("mipmaps"); writer.String(mipmaps == Mipmaps::Auto ? "auto" : "disabled"); writer.EndObject();
+	return WriteFileAtomically(path, bytes.GetString(), bytes.GetSize(), error);
+}
+
+bool TextureResource::BuildTexture(const std::string& path, const TextureSettings& options, Texture& result, std::string& error) const
+{
+	if (!options.Validate(error)) return false;
+	if (!m_device) return Fail(error, "Texture device is unavailable");
+	std::wstring wide;
+	if (!WidePath(path, wide, error)) return false;
+	std::wstring extension = std::filesystem::path(wide).extension().native();
+	for (auto& c : extension) c = static_cast<wchar_t>(std::towlower(c));
+	DirectX::TexMetadata metadata{};
+	DirectX::ScratchImage image, mipChain, baseMip;
+	HRESULT status;
+	if (extension == L".dds") status = DirectX::LoadFromDDSFile(wide.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, image);
+	else if (extension == L".tga") status = DirectX::LoadFromTGAFile(wide.c_str(), DirectX::TGA_FLAGS_NONE, &metadata, image);
+	else if (extension == L".hdr") status = DirectX::LoadFromHDRFile(wide.c_str(), &metadata, image);
+	else status = DirectX::LoadFromWICFile(wide.c_str(), DirectX::WIC_FLAGS_NONE, &metadata, image);
+	if (FAILED(status)) return Fail(error, "Cannot load texture image (HRESULT " + std::to_string(status) + ")");
+	// Меняем интерпретацию каналов; исходные пиксели и файл изображения не перекодируются.
+	DXGI_FORMAT format = metadata.format;
+	if (options.colorSpace == TextureSettings::ColorSpace::Linear) format = DirectX::MakeLinear(format);
+	if (options.colorSpace == TextureSettings::ColorSpace::SRGB) {
+		format = DirectX::MakeSRGB(format);
+		if (!DirectX::IsSRGB(format)) return Fail(error, "This image format has no sRGB variant");
+	}
+	if (format != metadata.format && !image.OverrideFormat(format)) return Fail(error, "Cannot apply texture color space");
+	metadata = image.GetMetadata();
+	const DirectX::ScratchImage* source = &image;
+	if (options.mipmaps == TextureSettings::Mipmaps::Disabled && metadata.mipLevels > 1) {
+		// Копируем только базовый mip каждого элемента/среза, сохраняя тип DDS и компрессию.
+		auto baseMetadata = metadata; baseMetadata.mipLevels = 1;
+		if (FAILED(baseMip.Initialize(baseMetadata))) return Fail(error, "Cannot allocate base mip image");
+		for (size_t item = 0; item < metadata.arraySize; ++item) for (size_t slice = 0; slice < metadata.depth; ++slice) {
+			const auto* from = image.GetImage(0, item, slice);
+			const auto* to = baseMip.GetImage(0, item, slice);
+			if (!from || !to || from->rowPitch != to->rowPitch || from->slicePitch != to->slicePitch)
+				return Fail(error, "Cannot copy base mip image layout");
+			std::memcpy(to->pixels, from->pixels, from->slicePitch);
+		}
+		source = &baseMip;
+	} else if (options.mipmaps == TextureSettings::Mipmaps::Auto && metadata.mipLevels <= 1
+		&& metadata.dimension == DirectX::TEX_DIMENSION_TEXTURE2D) {
+		// Auto сохраняет прежнее поведение: готовая цепочка либо генерация с откатом к оригиналу.
+		status = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), metadata, DirectX::TEX_FILTER_DEFAULT, 0, mipChain);
+		if (SUCCEEDED(status)) source = &mipChain;
+	}
+	Texture candidate = Texture::Create(m_device.Get(), *source);
+	if (!candidate.IsValid()) return Fail(error, "Cannot create GPU texture");
+	result = std::move(candidate);
+	return true;
+}
+
+bool TextureResource::load(const std::string& path)
+{
+	TextureSettings options;
+	if (!options.Load(path, loadError)) return false;
+	Texture candidate;
+	if (!BuildTexture(path, options, candidate, loadError)) return false;
+	m_texture = std::move(candidate);
+	settings = options; sourcePath = path;
+	return true;
+}
+
+bool TextureResource::ApplySettings(const TextureSettings& options, std::string& error)
+{
+	Texture candidate;
+	if (!BuildTexture(sourcePath, options, candidate, error) || !options.Save(sourcePath, error)) return false;
+	// Материалы заимствуют адрес m_texture: заменяется содержимое, а не объект ресурса.
+	m_texture = std::move(candidate);
+	settings = options;
+	return true;
 }
