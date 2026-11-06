@@ -4,7 +4,7 @@ function(add_engine_variant engine_target build_definition)
     # Определение общее для библиотеки и приложения, использующего её заголовки.
     target_compile_definitions(${engine_target} PUBLIC ${build_definition}=1 UNICODE _UNICODE)
     target_link_libraries(${engine_target} PUBLIC DirectXTK DirectXTex)
-    target_link_libraries(${engine_target} PRIVATE PhysXExtensions)
+    target_link_libraries(${engine_target} PRIVATE Jolt)
 
     target_include_directories(${engine_target} SYSTEM PUBLIC "${rapidjson_SOURCE_DIR}/include")
     # Lua и sol2 используются только в .cpp движка и не попадают в публичные заголовки.
