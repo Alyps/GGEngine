@@ -3,6 +3,9 @@
 #include <iostream>
 #include "core.h"
 #include "Window.h"
+#if defined(GG_GAME)
+#include "GameInput.h"
+#endif
 
 
 using namespace DirectX::SimpleMath;
@@ -79,21 +82,27 @@ void InputDevice::OnMouseMove(RawMouseEventArgs args)
 	MouseWheelDelta = args.WheelDelta;
 
 	const MouseMoveEventArgs moveArgs = {MousePosition, MouseOffset, MouseWheelDelta};
+#if defined(GG_GAME)
+	if (gameInput) gameInput->OnMouseMove(moveArgs);
+#endif
 	
 	MouseMove.Broadcast(moveArgs);
 }
 
 void InputDevice::AddPressedKey(Keys key)
 {
-	//if (!game->isActive) {
-	//	return;
-	//}
-	keys->insert(key);
+	if (!keys->insert(key).second) return;
+#if defined(GG_GAME)
+	if (gameInput) gameInput->OnKey(key, true);
+#endif
 }
 
 void InputDevice::RemovePressedKey(Keys key)
 {
-	keys->erase(key);
+	if (!keys->erase(key)) return;
+#if defined(GG_GAME)
+	if (gameInput) gameInput->OnKey(key, false);
+#endif
 }
 
 bool InputDevice::IsKeyDown(Keys key)

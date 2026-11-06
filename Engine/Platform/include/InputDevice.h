@@ -48,6 +48,8 @@ enum class Keys : USHORT
 
 
 
+class GameInput;
+
 class InputDevice
 {
 	friend LRESULT DisplayWindow32::HandleMessage(HWND hwnd, UINT umessage, WPARAM wparam, LPARAM lparam);
@@ -56,6 +58,10 @@ class InputDevice
 	DisplayWindow32* window;
 
 	std::unordered_set<Keys>* keys;
+#if defined(GG_GAME)
+	// Владелец Game гарантирует время жизни; редактор этого поля не содержит.
+	GameInput* gameInput = nullptr;
+#endif
 
 public:
 	
@@ -66,9 +72,9 @@ public:
 		int WheelDelta;
 	};
 
-	DirectX::SimpleMath::Vector2 MousePosition;
-	DirectX::SimpleMath::Vector2 MouseOffset;
-	int MouseWheelDelta;
+	DirectX::SimpleMath::Vector2 MousePosition = DirectX::SimpleMath::Vector2::Zero;
+	DirectX::SimpleMath::Vector2 MouseOffset = DirectX::SimpleMath::Vector2::Zero;
+	int MouseWheelDelta = 0;
 
 	MulticastDelegate<const MouseMoveEventArgs&> MouseMove;
 	

@@ -166,6 +166,9 @@ void Editor::DrawHierarchy()
 		if (level) {
 			for (GameObject* object : level->getObjects()) {
 				if (!object || object->isPendingDestroy()) continue;
+				// Служебная камера остаётся во владении уровня, но не входит в авторскую иерархию.
+				const auto* camera = game.getRenderServer().getCamera();
+				if (camera && camera->getOwner() == object) continue;
 				if (editedObject && object != editedObject) continue;
 				DrawTransformTree(object->getTransform());
 			}
@@ -418,9 +421,7 @@ void Editor::ApplyTreeAction()
 		case ComponentKind::Mesh: component = node->create_component<MeshComponent>(); break;
 		case ComponentKind::DirectionalLight: component = node->create_component<DirectionalLightComponent>(); break;
 		case ComponentKind::PointLight: component = node->create_component<PointLightComponent>(); break;
-		case ComponentKind::Camera: component = node->create_component<EditorCamera>(); break;
 		case ComponentKind::GameCamera: component = node->create_component<GameCamera>(); break;
-		case ComponentKind::Navigation: component = node->create_component<CameraMovementComponent>(); break;
 		case ComponentKind::LuaScript: component = node->create_component<LuaScriptComponent>(std::string{}); break;
 		case ComponentKind::Collider: component = node->create_component<BoxColliderComponent>(); break;
 		case ComponentKind::StaticBody: component = node->create_component<StaticRigidBodyComponent>(); break;
@@ -859,7 +860,7 @@ void Editor::DrawObjectInspector()
 		if (selectedObjects.size() > 1) ImGui::TextDisabled("Component properties: active object");
 		if (ImGui::Button("Add component")) ImGui::OpenPopup("Add component");
 		if (ImGui::BeginPopup("Add component")) {
-			const char* labels[] = { "Mesh", "Directional light", "Point light", "Editor camera", "GameCamera", "Camera movement", "Lua Script", "Box collider", "Static body", "Dynamic body" };
+			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Box collider", "Static body", "Dynamic body" };
 			for (int kind = 0; kind < IM_ARRAYSIZE(labels); ++kind)
 				if (ImGui::MenuItem(labels[kind], nullptr, false, kind < static_cast<int>(ComponentKind::Collider) || !selectedNode->get_parent())) {
 					treeAction = { TreeOperation::AddComponent, selectedNode }; treeAction.kind = static_cast<ComponentKind>(kind);

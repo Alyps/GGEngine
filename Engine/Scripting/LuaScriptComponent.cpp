@@ -70,6 +70,10 @@ void LuaScriptComponent::Init(Game& game)
         if (!transformNode) bind_to_node(&object->getTransform());
     }
     if (transformNode) impl->instance["transform"] = transformNode;
+#if defined(GG_GAME)
+    // Game владеет вводом и живёт дольше скриптовых компонентов уровня.
+    impl->instance["input"] = &game.getGameInput();
+#endif
 
     // Функции берём один раз: покадровый вызов не ищет их по имени.
     sol::object init = module["on_init"];

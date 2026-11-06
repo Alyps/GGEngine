@@ -31,7 +31,6 @@ private:
 	std::string settingsError;
 	bool openSettings = false;
 	int capturingBinding = -1, bindingCaptureFrame = 0;
-	Keys NavigationButton() const;
 	void QueueProjectOpen(const std::string& file);
 	void ApplyProjectAction();
 	void RequestClose();
@@ -81,7 +80,7 @@ private:
 	void DrawTreeInspector();
 	void ApplyTreeAction();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
-	enum class ComponentKind { Mesh, DirectionalLight, PointLight, Camera, GameCamera, Navigation, LuaScript, Collider, StaticBody, DynamicBody };
+	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, Collider, StaticBody, DynamicBody };
 	struct TreeAction {
 		TreeOperation operation = TreeOperation::None;
 		TransformNode* node = nullptr;

@@ -233,7 +233,8 @@ void Editor::DrawViewport()
 			if (!settings.Held(EditorAction::Navigate) || popup || ImGui::GetIO().WantTextInput
 				|| GetForegroundWindow() != game.getWindow().getWindow()) navigating = false;
 			if (auto* movement = GetCameraMovement()) {
-				movement->rotationButton = NavigationButton();
+				const auto delta = ImGui::GetIO().MouseDelta;
+				movement->setRotationInput(DirectX::SimpleMath::Vector2(delta.x, delta.y));
 				const auto modifiers = settings.Get(EditorAction::Navigate).modifiers;
 				// Компонент получает направление по значению, без зависимости движка от ImGui.
 				movement->setMovementInput(DXVector3(
