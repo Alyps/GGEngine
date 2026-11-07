@@ -40,6 +40,14 @@ public:
     static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
     explicit DynamicRigidBodyComponent(float mass = 1.0f)
         : RigidBodyComponent(PhysicsBodyType::Dynamic, mass) {}
+
+    // C++ API компонента используется Lua-привязками без Game и типов Jolt в аргументах.
+    // Мировые векторы; сила/момент действуют один fixed-step, импульсы — один раз.
+    // Результат означает принятие команды в Item, а не немедленное изменение скорости.
+    bool addForce(const DXVector3& force) { return getPhysicsItem().addForce(force); }
+    bool addImpulse(const DXVector3& impulse) { return getPhysicsItem().addImpulse(impulse); }
+    bool addTorque(const DXVector3& torque) { return getPhysicsItem().addTorque(torque); }
+    bool addAngularImpulse(const DXVector3& impulse) { return getPhysicsItem().addAngularImpulse(impulse); }
 };
 
 class StaticRigidBodyComponent : public RigidBodyComponent {
