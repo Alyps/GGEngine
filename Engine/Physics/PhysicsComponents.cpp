@@ -1,5 +1,39 @@
 #include "PhysicsComponents.h"
 #include "core.h"
+#include <cmath>
+#if defined(GG_EDITOR)
+#include "RenderPresets.h"
+#endif
+
+bool BoxColliderComponent::setSize(const DXVector3& size)
+{
+    // Не принимаем вырожденный бокс и нечисловые значения из вызывающего кода.
+    if (!std::isfinite(size.x) || !std::isfinite(size.y) || !std::isfinite(size.z) ||
+        size.x <= 0.0f || size.y <= 0.0f || size.z <= 0.0f) return false;
+    colliderItem.size = size;
+    return true;
+}
+
+BoxColliderComponent::~BoxColliderComponent()
+{
+#if defined(GG_EDITOR)
+    releaseEditorShell();
+#endif
+}
+
+#if defined(GG_EDITOR)
+void BoxColliderComponent::releaseEditorShell()
+{
+    if (!editorShell) return;
+    // Shutdown снимает регистрацию до освобождения принадлежащих компоненту данных.
+    delete editorShell->material->Shader();
+    delete editorShell->material->State();
+    delete editorShell->material;
+    delete editorShell->mesh;
+    delete editorShell;
+    editorShell = nullptr;
+}
+#endif
 
 BoxColliderComponent::BoxColliderComponent(DXVector3 size, PhysicsMaterial material)
 {
@@ -18,10 +52,26 @@ void BoxColliderComponent::Init(Game& game)
     }
     colliderItem.transformNode = transformNode;
     game.getPhysicsServer().addCollider(colliderItem);
+#if defined(GG_EDITOR)
+    // Единичный бокс масштабируется при отрисовке без пересоздания GPU-меша.
+    editorShell = RenderItemPresets::CreateSimple(game.getRenderServer().Device(),
+        MeshPresets::CreateRectangle(), false,
+        game.getResourceManager().GetStandardResourceDirectory(), true, "PSColliderMain");
+    if (editorShell) {
+        editorShell->transformNode = transformNode;
+        editorShell->editorShellSize = &colliderItem.size;
+        editorShell->editorGame = &game;
+        game.getRenderServer().addItem(*editorShell);
+    }
+#endif
 }
 
 void BoxColliderComponent::Shutdown(Game& game)
 {
+#if defined(GG_EDITOR)
+    if (editorShell) game.getRenderServer().removeItem(*editorShell);
+    releaseEditorShell();
+#endif
     // Система освобождает связанные формы до уничтожения записи компонента.
     game.getPhysicsServer().removeCollider(colliderItem);
     colliderItem.transformNode = nullptr;

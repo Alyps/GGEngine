@@ -64,6 +64,12 @@ VertexOutput VSMain(VertexInput input)
     return output;
 }
 
+// Отдельная точка входа компилируется только для оболочек редактора.
+float4 PSColliderMain(VertexOutput input) : SV_TARGET
+{
+    return float4(0.15f, 0.9f, 0.35f, 0.22f);
+}
+
 float4 PSMain(VertexOutput input) : SV_TARGET
 {
     float3 normal = SafeNormalize(input.normal);

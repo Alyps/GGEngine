@@ -10,7 +10,7 @@
 // Game и сцена живут дольше редактора; редактор владеет только UI и viewport.
 class Editor {
 public:
-	explicit Editor(Game& game);
+	Editor(Game& game, const std::string& draftsDirectory);
 	~Editor();
 	Editor(const Editor&) = delete;
 	Editor& operator=(const Editor&) = delete;

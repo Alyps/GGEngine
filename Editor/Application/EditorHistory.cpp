@@ -224,6 +224,16 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 			return true;
 		}
 		if (auto* mesh = dynamic_cast<MeshComponent*>(component)) return mesh->ApplyDescription(json, documentError);
+		if (auto* collider = dynamic_cast<BoxColliderComponent*>(component)) {
+			float size[3];
+			if (!Deserialization::Floats(json, "size", size, 3, documentError)) return false;
+			// Изменяем существующий Item, сохраняя регистрации физики и оболочки.
+			if (!collider->setSize(DXVector3(size))) {
+				documentError = "Invalid box collider size.";
+				return false;
+			}
+			return true;
+		}
 		if (auto* script = dynamic_cast<LuaScriptComponent*>(component)) {
 			std::string path;
 			if (!Deserialization::String(json, "script_path", path, documentError)) return false;

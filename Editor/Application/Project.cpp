@@ -177,17 +177,14 @@ bool Project::Create(const std::string& parent, const std::string& name, Project
     return true;
 }
 
-bool Project::CreateTemporary(Project& result, std::string& error)
+bool Project::CreateTemporary(const std::string& directory, Project& result, std::string& error)
 {
-    fs::path directory;
-    if (!EditorFiles::UserDirectory(directory, error)) return false;
-    const fs::path drafts = directory / L"Drafts";
     std::error_code ec;
-    fs::create_directories(drafts, ec);
-    if (ec) return Fail(error, "Cannot create temporary project directory: " + ec.message());
+    fs::create_directories(DiskPath(directory), ec);
+    if (ec) return Fail(error, "Cannot create temporary project directory: " + directory + ": " + ec.message());
     // Каждому запуску — отдельная папка, чтобы не затереть ресурсы другого редактора.
     const std::string name = "Unsaved-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64());
-    return Create(Utf8Path(drafts), name, result, error);
+    return Create(directory, name, result, error);
 }
 
 bool ProjectHistory::Load(std::string& error)

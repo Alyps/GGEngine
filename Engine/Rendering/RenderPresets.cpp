@@ -158,7 +158,8 @@ namespace RenderItemPresets {
 	}
 
 	RenderItem* CreateSimple(ID3D11Device* device, const MeshData<TexturedVertexType>& meshData,
-		bool is_wire_frame, const std::string& standardResourceDirectory)
+		bool is_wire_frame, const std::string& standardResourceDirectory,
+		bool transparent, const char* pixelEntry)
 	{
 		if (!device || standardResourceDirectory.empty())
 			return nullptr;
@@ -172,11 +173,11 @@ namespace RenderItemPresets {
 			reinterpret_cast<const char8_t*>(directory.data()), directory.size()));
 		const auto shaderPath = standardPath /
 			"Shaders" / "Simple.hlsl";
-		auto shader = ShaderPack::Create(device, shaderPath.wstring(), mesh.Layout());
+		auto shader = ShaderPack::Create(device, shaderPath.wstring(), mesh.Layout(), pixelEntry);
 		if (!shader.IsValid())
 			return nullptr;
 
-		auto state = is_wire_frame
+		auto state = transparent ? RenderState::CreateTransparent(*device) : is_wire_frame
 			? RenderState::CreateWireframe(*device)
 			: RenderState::CreateOpaque(*device);
 		if (!state.Raster() || !state.Depth() || !state.Blend())

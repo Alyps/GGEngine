@@ -1,25 +1,30 @@
 #include <core.h>
 #include "Editor.h"
-#include <filesystem>
+#include "EditorFileUtils.h"
 
 int main()
 {
-    Game game(L"GGEngine Editor");
-    // Встроенные файлы движка не зависят от выбранного проекта и рабочей папки.
+    // Пути релиза считаются от EXE независимо от рабочей папки.
     std::wstring module(32768, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, module.data(), static_cast<DWORD>(module.size()));
-    module.resize(length);
-    const auto bundled = std::filesystem::path(module).parent_path() / L"StandartResources";
-    std::error_code error;
-    if (length && std::filesystem::is_directory(bundled, error)) {
-        // Менеджер ресурсов принимает пути в UTF-8.
-        const auto utf8 = bundled.generic_u8string();
-        game.getResourceManager().SetStandardResourceDirectory(std::string(utf8.begin(), utf8.end()));
-    } else {
-        game.getResourceManager().SetStandardResourceDirectory(GG_STANDARD_RESOURCE_DIRECTORY);
+    if (!length || length >= module.size()) {
+        MessageBoxW(nullptr, L"Cannot locate Editor.exe.", L"GGEngine Editor", MB_OK | MB_ICONERROR);
+        return 1;
     }
+    module.resize(length);
+    const auto directory = std::filesystem::path(module).parent_path();
+    const auto bundled = directory / L"StandartResources";
+    std::error_code error;
+    if (!std::filesystem::is_directory(bundled, error)) {
+        MessageBoxW(nullptr, L"StandartResources is missing or inaccessible next to Editor.exe.",
+            L"GGEngine Editor", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    Game game(L"GGEngine Editor");
+    game.getResourceManager().SetStandardResourceDirectory(EditorFiles::Utf8Path(bundled));
     game.Init();
-    // Редактор начинает с демосцены и временного каталога ресурсов в LocalAppData.
-    Editor editor(game);
+    // Черновые проекты хранятся в res рядом с редактором.
+    Editor editor(game, EditorFiles::Utf8Path(directory / L"res"));
     return editor.Run();
 }

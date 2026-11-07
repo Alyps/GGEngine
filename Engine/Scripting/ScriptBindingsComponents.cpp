@@ -55,7 +55,7 @@ void BindComponents(lua_State* L)
 
 	// Поддерживать ComponentType, FindComponent и Lua-типы синхронно при добавлении/переименовании компонентов.
 	// Строковые константы доступны через ComponentType.PointLight; обычное присваивание запрещено.
-	auto componentTypes = lua.new_enum<true>("ComponentType",
+	lua.new_enum<true>("ComponentType",
 		"Mesh", "Mesh", "GameCamera", "GameCamera",
 		"DirectionalLight", "DirectionalLight", "PointLight", "PointLight",
 		"LuaScript", "LuaScript", "BoxCollider", "BoxCollider",
@@ -64,6 +64,8 @@ void BindComponents(lua_State* L)
 		, "EditorCamera", "EditorCamera", "CameraMovement", "CameraMovement"
 #endif
 	);
+	// new_enum возвращает state_view: саму таблицу констант получаем по имени.
+	sol::table componentTypes = lua["ComponentType"];
 	// Скрываем метатаблицу констант от обычных getmetatable/setmetatable.
 	sol::table componentTypesMeta = componentTypes[sol::metatable_key];
 	componentTypesMeta[sol::meta_function::metatable] = false;

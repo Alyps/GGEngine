@@ -905,6 +905,14 @@ void Editor::DrawObjectInspector()
 					changed = ImGui::DragFloat("Range", &point->range, 0.1f, 0.01f, 1000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 					TrackComponentProperty(*light, before, "Light range", changed);
 				}
+			} else if (auto* collider = dynamic_cast<BoxColliderComponent*>(component)) {
+				const auto before = ComponentProperties(*collider);
+				DXVector3 size = collider->getColliderItem().size;
+				// Полные длины сторон; весь жест редактирования образует одну команду Undo.
+				bool changed = ImGui::DragFloat3("Size (X, Y, Z)", &size.x, 0.05f,
+					0.001f, 10000.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+				if (changed) changed = collider->setSize(size);
+				TrackComponentProperty(*collider, before, "Box collider size", changed);
 			} else if (dynamic_cast<EditorCamera*>(component)) ImGui::TextUnformatted("Editor camera");
 			else if (dynamic_cast<GameCamera*>(component)) ImGui::TextUnformatted("GameCamera");
 			else if (dynamic_cast<CameraMovementComponent*>(component)) ImGui::TextUnformatted("Camera navigation");

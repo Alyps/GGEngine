@@ -1,6 +1,7 @@
 #pragma once
 #include "TransformableComponent.h"
 #include "PhysicsItem.h"
+struct RenderItem;
 
 class BoxColliderComponent : public TransformableComponent {
 public:
@@ -10,8 +11,15 @@ public:
     static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
 private:
     ColliderItem colliderItem;
+#if defined(GG_EDITOR)
+    // Компонент владеет оболочкой и всеми её графическими ресурсами.
+    RenderItem* editorShell = nullptr;
+    void releaseEditorShell();
+#endif
 public:
     explicit BoxColliderComponent(DXVector3 size = DXVector3::One, PhysicsMaterial material = {});
+    ~BoxColliderComponent() override;
+    bool setSize(const DXVector3& size);
     ColliderItem& getColliderItem() { return colliderItem; }
     const ColliderItem& getColliderItem() const { return colliderItem; }
     void Init(Game& game) override;

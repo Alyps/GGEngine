@@ -25,11 +25,12 @@ namespace MeshPresets {
 
 namespace RenderItemPresets {
 
-	// Заполненные меши используют Phong и Opaque; нормали и обход направлены наружу.
+	// По умолчанию Phong/Opaque; transparent включает alpha-смешивание без записи глубины.
 	// Вызывающий код владеет item, mesh, material, shader и state; при ошибке nullptr.
 	RenderItem* CreateSimple(ID3D11Device* device, const MeshData<TexturedVertexType>& meshData,
 		bool is_wire_frame = false,
-		const std::string& standardResourceDirectory = "res/StandartResources");
+		const std::string& standardResourceDirectory = "res/StandartResources",
+		bool transparent = false, const char* pixelEntry = "PSMain");
 
 	// Читает Default.material.json; режим рендера задаётся в файле материала.
 	// Вызывающий код владеет item и mesh, менеджер — материалом и его зависимостями.

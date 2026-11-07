@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "Window.h"
+#include "GGMath.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -290,9 +291,9 @@ private:
 	ShaderPack() = default;
 
 public:
-	// Один HLSL с VSMain/PSMain (vs_5_0/ps_5_0). При ошибке возвращается пустой ShaderPack.
+	// Один HLSL с VSMain и выбранным pixelEntry (по умолчанию PSMain); при ошибке пустой pack.
 	static ShaderPack Create(ID3D11Device* device, const std::wstring& path,
-		const VertexLayout& vertexLayout);
+		const VertexLayout& vertexLayout, const char* pixelEntry = "PSMain");
 
 	bool IsValid() const { return vertexShader && pixelShader && layout; }
 
@@ -489,12 +490,18 @@ public:
 // Рендеринг
 
 struct TransformNode;
+class Game;
 
 struct RenderItem {
 	Mesh* mesh = nullptr;
 	Material* material = nullptr;
 	// Узлом владеет объект; он должен жить, пока запись используется рендером.
 	const TransformNode* transformNode = nullptr;
+#if defined(GG_EDITOR)
+	// Ссылки заимствованы у компонента и его Game до снятия регистрации Item.
+	const DXVector3* editorShellSize = nullptr;
+	const Game* editorGame = nullptr;
+#endif
 };
 
 class CameraComponent;

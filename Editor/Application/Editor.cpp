@@ -13,14 +13,14 @@ using EditorFiles::PickObjectSavePath;
 using EditorFiles::PickProjectPath;
 namespace { constexpr wchar_t EditorProperty[] = L"GGEngine.Editor"; }
 
-Editor::Editor(Game& application)
+Editor::Editor(Game& application, const std::string& draftsDirectory)
 	: game(application), contentBrowser("")
 {
 	game.setEditorMode(true);
 	recentProjects.Load(projectError);
 	// Демо и ресурсы доступны сразу, до выбора постоянного места проекта.
 	std::string error;
-	if (Project::CreateTemporary(pendingProject, error)) {
+	if (Project::CreateTemporary(draftsDirectory, pendingProject, error)) {
 		initializeDemo = true;
 		requestedProjectSwitch = true;
 	} else projectError = error;

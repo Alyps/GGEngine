@@ -16,7 +16,7 @@ struct Project {
     static bool Open(const std::string& file, Project& result, std::string& error);
     static bool Create(const std::string& parent, const std::string& name,
         Project& result, std::string& error, const Project* source = nullptr);
-    static bool CreateTemporary(Project& result, std::string& error);
+    static bool CreateTemporary(const std::string& directory, Project& result, std::string& error);
     // Level владеет камерой и демонстрацией; возвращаемый адрес заимствован, Init не вызывается.
     static EditorCamera* CreateSceneCamera(Level& level);
     static bool PopulateDemoScene(Level& level);

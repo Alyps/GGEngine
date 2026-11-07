@@ -1,6 +1,9 @@
 #include "RenderServer.h"
 #include "EditorCamera.h"
 #include "TransformTree.h"
+#if defined(GG_EDITOR)
+#include "core.h"
+#endif
 #include <algorithm>
 #include <cstring>
 #include <cmath>
@@ -31,10 +34,10 @@ ComPtr<ID3DBlob> CompileShaderFromFile(const std::wstring& path,
 } // namespace
 
 ShaderPack ShaderPack::Create(ID3D11Device* device, const std::wstring& path,
-    const VertexLayout& vertexLayout)
+    const VertexLayout& vertexLayout, const char* pixelEntry)
 {
 	// Return Guard
-    if (!device || path.empty() || !vertexLayout.elements ||
+    if (!device || path.empty() || !pixelEntry || !*pixelEntry || !vertexLayout.elements ||
         vertexLayout.elementCount == 0 || vertexLayout.stride == 0) {
         OutputDebugStringA("ShaderPack::Create: invalid device, path or vertex layout\n");
         return ShaderPack{};
@@ -43,7 +46,7 @@ ShaderPack ShaderPack::Create(ID3D11Device* device, const std::wstring& path,
 	// Компиляция шейдеров
     const auto vsByteCode = CompileShaderFromFile(path, "VSMain", "vs_5_0");
     if (!vsByteCode) return ShaderPack{};
-    const auto psByteCode = CompileShaderFromFile(path, "PSMain", "ps_5_0");
+    const auto psByteCode = CompileShaderFromFile(path, pixelEntry, "ps_5_0");
     if (!psByteCode) return ShaderPack{};
 
 	// Разметка
@@ -146,7 +149,8 @@ RenderState RenderState::CreateTransparent(ID3D11Device& device)
 	D3D11_DEPTH_STENCIL_DESC dd{};
 	dd.DepthEnable = TRUE;
 	dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
-	dd.DepthFunc = D3D11_COMPARISON_LESS;
+	// Оболочка может совпадать с поверхностью уже нарисованного меша.
+	dd.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
 	dd.StencilEnable = FALSE;
 	device.CreateDepthStencilState(&dd, rs.m_depth.ReleaseAndGetAddressOf());
 
@@ -427,9 +431,18 @@ void RenderServer::DrawScene(ID3D11RenderTargetView* target,
 	context->VSSetConstantBuffers(0, 2, constantBuffers);
 	context->PSSetConstantBuffers(0, 2, constantBuffers);
 
+#if defined(GG_EDITOR)
+	// Оболочки смешиваются с уже нарисованной сценой и не записывают глубину.
+	for (int shellPass = 0; shellPass < 2; ++shellPass)
+#endif
 	for (const RenderItem* item : renderList) {
 		if (!item || !item->mesh || !item->material) // проверка, чтобы всё было
 			continue;
+#if defined(GG_EDITOR)
+		const bool shell = item->editorShellSize != nullptr;
+		if (shell != (shellPass != 0)) continue;
+		if (shell && (!item->editorGame || !item->editorGame->isEditorMode())) continue;
+#endif
 
 		const Mesh& mesh = *item->mesh;
 		const Material& material = *item->material;
@@ -440,8 +453,12 @@ void RenderServer::DrawScene(ID3D11RenderTargetView* target,
 
 		//Устанавливаем объектный буфер
 		// Считываем актуальный узел непосредственно при отрисовке.
-		const DXMatrix world = item->transformNode
+		DXMatrix world = item->transformNode
 			? DXMatrix(item->transformNode->worldMatrix()) : DXMatrix::Identity;
+#if defined(GG_EDITOR)
+		// Читаем размер непосредственно перед Draw, включая изменения инспектора и Undo.
+		if (shell) world = DXMatrix::CreateScale(*item->editorShellSize) * world;
+#endif
 		DirectX::XMStoreFloat4x4(&objectCBData.world, DirectX::XMMatrixTranspose(world));
 		// Для вырожденного масштаба нормальная матрица не определена.
 		const float determinant = DirectX::XMVectorGetX(DirectX::XMMatrixDeterminant(world));
