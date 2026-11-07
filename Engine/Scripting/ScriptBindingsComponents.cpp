@@ -28,12 +28,20 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 			if (auto* typed = dynamic_cast<DirectionalLightComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "PointLight") {
 			if (auto* typed = dynamic_cast<PointLightComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "LuaScript") {
+			if (auto* typed = dynamic_cast<LuaScriptComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "BoxCollider") {
+			if (auto* typed = dynamic_cast<BoxColliderComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "DynamicRigidBody") {
 			if (auto* typed = dynamic_cast<DynamicRigidBodyComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "StaticRigidBody") {
 			if (auto* typed = dynamic_cast<StaticRigidBodyComponent*>(component)) return sol::make_object(lua, typed);
-		} else if (name == "BoxCollider") {
-			if (auto* typed = dynamic_cast<BoxColliderComponent*>(component)) return sol::make_object(lua, typed);
+#if defined(GG_EDITOR)
+		} else if (name == "EditorCamera") {
+			if (auto* typed = dynamic_cast<EditorCamera*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "CameraMovement") {
+			if (auto* typed = dynamic_cast<CameraMovementComponent*>(component)) return sol::make_object(lua, typed);
+#endif
 		}
 	}
 	return sol::make_object(lua, sol::lua_nil);
@@ -44,6 +52,28 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 void BindComponents(lua_State* L)
 {
 	sol::state_view lua(L);
+
+	// Поддерживать ComponentType, FindComponent и Lua-типы синхронно при добавлении/переименовании компонентов.
+	// Строковые константы доступны через ComponentType.PointLight; обычное присваивание запрещено.
+	auto componentTypes = lua.new_enum<true>("ComponentType",
+		"Mesh", "Mesh", "GameCamera", "GameCamera",
+		"DirectionalLight", "DirectionalLight", "PointLight", "PointLight",
+		"LuaScript", "LuaScript", "BoxCollider", "BoxCollider",
+		"DynamicRigidBody", "DynamicRigidBody", "StaticRigidBody", "StaticRigidBody"
+#if defined(GG_EDITOR)
+		, "EditorCamera", "EditorCamera", "CameraMovement", "CameraMovement"
+#endif
+	);
+	// Скрываем метатаблицу констант от обычных getmetatable/setmetatable.
+	sol::table componentTypesMeta = componentTypes[sol::metatable_key];
+	componentTypesMeta[sol::meta_function::metatable] = false;
+
+	// Эти типы пока доступны как ссылки без полей; конструкторы и владение остаются в C++.
+	lua.new_usertype<LuaScriptComponent>("LuaScript", sol::no_constructor);
+#if defined(GG_EDITOR)
+	lua.new_usertype<EditorCamera>("EditorCamera", sol::no_constructor);
+	lua.new_usertype<CameraMovementComponent>("CameraMovement", sol::no_constructor);
+#endif
 
 	// Компоненты и объекты передаются указателями; владение остаётся у C++.
 	lua.new_usertype<GameObject>("GameObject",
