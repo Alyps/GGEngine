@@ -53,8 +53,25 @@ struct PhysicsItem {
     bool hasActor() const { return bodyId != InvalidBodyId; }
     bool isSleeping() const { return sleeping; }
 
+    // Мировые векторы; линейные воздействия приложены к центру масс.
+    // Вызовы суммируются до ближайшего fixed-step, в том числе до создания актёра.
+    // Сила (Н) и момент (Н*м) действуют один шаг; импульсы (Н*с, Н*м*с) — однократно.
+    bool addForce(const DXVector3& force);
+    bool addImpulse(const DXVector3& impulse);
+    bool addTorque(const DXVector3& torque);
+    bool addAngularImpulse(const DXVector3& impulse);
+    // false: тело выключено/статично, вход или сумма не конечны; очередь не меняется.
+    // Без активного коллайдера воздействия сбрасываются на ближайшем шаге.
+
 private:
     friend class PhysicsServer;
+    bool accumulate(DXVector3& pending, const DXVector3& value);
+    void clearPendingActions();
+    // Runtime-команды принадлежат Item компонента, не SDK и не ресурсам сцены.
+    DXVector3 pendingForce = DXVector3::Zero;
+    DXVector3 pendingImpulse = DXVector3::Zero;
+    DXVector3 pendingTorque = DXVector3::Zero;
+    DXVector3 pendingAngularImpulse = DXVector3::Zero;
     PhysicsServer* server = nullptr;
     // SDK хранит тело; Item содержит только ID с номером поколения, без заголовков Jolt.
     static constexpr std::uint32_t InvalidBodyId = 0xffffffffu;

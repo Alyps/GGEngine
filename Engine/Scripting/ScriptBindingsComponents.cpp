@@ -5,6 +5,16 @@
 
 namespace {
 
+// Проверяем self и Vector3 до преобразования: ошибки типов sol2 в режиме без
+// исключений нельзя выпускать через его noexcept-переходник в C++-сборку Lua.
+template<bool (DynamicRigidBodyComponent::*Method)(const DXVector3&)>
+bool ApplyPhysicsAction(sol::variadic_args args)
+{
+	if (args.size() != 2 || !args[0].is<DynamicRigidBodyComponent*>() || !args[1].is<DXVector3>()) return false;
+	auto* body = args[0].as<DynamicRigidBodyComponent*>();
+	return body && (body->*Method)(args[1].as<DXVector3>());
+}
+
 // Ищет компонент по имени среди компонентов объекта; неизвестное имя даёт nil.
 sol::object FindComponent(sol::this_state state, GameObject& object, const std::string& name)
 {
@@ -18,6 +28,12 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 			if (auto* typed = dynamic_cast<DirectionalLightComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "PointLight") {
 			if (auto* typed = dynamic_cast<PointLightComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "DynamicRigidBody") {
+			if (auto* typed = dynamic_cast<DynamicRigidBodyComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "StaticRigidBody") {
+			if (auto* typed = dynamic_cast<StaticRigidBodyComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "BoxCollider") {
+			if (auto* typed = dynamic_cast<BoxColliderComponent*>(component)) return sol::make_object(lua, typed);
 		}
 	}
 	return sol::make_object(lua, sol::lua_nil);
@@ -40,6 +56,35 @@ void BindComponents(lua_State* L)
 
 	// Свойства камеры пока не доступны скриптам: тип нужен, чтобы найти и проверить компонент.
 	lua.new_usertype<GameCamera>("GameCamera", sol::no_constructor);
+
+	// Lua заимствует компоненты объекта, не получает Item или ID тела Jolt.
+	// Методы принимают мировые Vector3 и возвращают bool принятия команды.
+	lua.new_usertype<DynamicRigidBodyComponent>("DynamicRigidBody", sol::no_constructor,
+		"add_force", &ApplyPhysicsAction<&DynamicRigidBodyComponent::addForce>,
+		"add_impulse", &ApplyPhysicsAction<&DynamicRigidBodyComponent::addImpulse>,
+		"add_torque", &ApplyPhysicsAction<&DynamicRigidBodyComponent::addTorque>,
+		"add_angular_impulse", &ApplyPhysicsAction<&DynamicRigidBodyComponent::addAngularImpulse>,
+		// Команды суммируются до ближайшего fixed-step; сила и момент действуют один шаг.
+		// Состояние читается после завершённого шага, векторы возвращаются копиями.
+		"linear_velocity", sol::property([](const DynamicRigidBodyComponent& c) { return DXVector3(c.getPhysicsItem().linearVelocity); }),
+		"angular_velocity", sol::property([](const DynamicRigidBodyComponent& c) { return DXVector3(c.getPhysicsItem().angularVelocity); }),
+		"mass", sol::property([](const DynamicRigidBodyComponent& c) { return c.getPhysicsItem().mass; }),
+		"has_actor", sol::property([](const DynamicRigidBodyComponent& c) { return c.getPhysicsItem().hasActor(); }),
+		"is_sleeping", sol::property([](const DynamicRigidBodyComponent& c) { return c.getPhysicsItem().isSleeping(); }),
+		"enabled", sol::property([](const DynamicRigidBodyComponent& c) { return c.getPhysicsItem().enabled; },
+			[](DynamicRigidBodyComponent& c, bool enabled) { c.getPhysicsItem().enabled = enabled; }));
+
+	// Статическое тело не предоставляет методы сил и импульсов.
+	lua.new_usertype<StaticRigidBodyComponent>("StaticRigidBody", sol::no_constructor,
+		"has_actor", sol::property([](const StaticRigidBodyComponent& c) { return c.getPhysicsItem().hasActor(); }),
+		"enabled", sol::property([](const StaticRigidBodyComponent& c) { return c.getPhysicsItem().enabled; },
+			[](StaticRigidBodyComponent& c, bool enabled) { c.getPhysicsItem().enabled = enabled; }));
+
+	// Размер читается копией; включение коллайдера учитывается системой на fixed-step.
+	lua.new_usertype<BoxColliderComponent>("BoxCollider", sol::no_constructor,
+		"size", sol::property([](const BoxColliderComponent& c) { return DXVector3(c.getColliderItem().size); }),
+		"enabled", sol::property([](const BoxColliderComponent& c) { return c.getColliderItem().enabled; },
+			[](BoxColliderComponent& c, bool enabled) { c.getColliderItem().enabled = enabled; }));
 #if defined(GG_GAME)
 	// Скрипты получают заимствованный GameInput через self.input; создавать его нельзя.
 	lua.new_usertype<GameInput>("GameInput", sol::no_constructor,

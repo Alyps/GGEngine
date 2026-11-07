@@ -162,6 +162,27 @@ struct PhysicsServer::Impl {
     std::vector<ColliderItem*> colliders;
 };
 
+bool PhysicsItem::accumulate(DXVector3& pending, const DXVector3& value)
+{
+    if (!enabled || type != PhysicsBodyType::Dynamic || !finite(value)) return false;
+    const DXVector3 total = pending + value;
+    // При переполнении оставляем ранее принятые команды без изменений.
+    if (!finite(total)) return false;
+    pending = total;
+    return true;
+}
+
+bool PhysicsItem::addForce(const DXVector3& force) { return accumulate(pendingForce, force); }
+bool PhysicsItem::addImpulse(const DXVector3& impulse) { return accumulate(pendingImpulse, impulse); }
+bool PhysicsItem::addTorque(const DXVector3& torque) { return accumulate(pendingTorque, torque); }
+bool PhysicsItem::addAngularImpulse(const DXVector3& impulse) { return accumulate(pendingAngularImpulse, impulse); }
+
+void PhysicsItem::clearPendingActions()
+{
+    pendingForce = pendingImpulse = DXVector3::Zero;
+    pendingTorque = pendingAngularImpulse = DXVector3::Zero;
+}
+
 PhysicsItem::~PhysicsItem() { if (server) server->removeItem(*this); }
 ColliderItem::~ColliderItem() { if (server) server->removeCollider(*this); }
 PhysicsServer::~PhysicsServer() { Shutdown(); }
@@ -230,6 +251,8 @@ void PhysicsServer::removeItem(PhysicsItem& item)
 {
     if (item.server != this) return;
     releaseActor(item);
+    // Команды старой сцены не должны переживать Shutdown/повторный Init компонента.
+    item.clearPendingActions();
     auto& items = impl->items;
     items.erase(std::remove(items.begin(), items.end(), &item), items.end());
     item.server = nullptr;
@@ -350,7 +373,11 @@ bool PhysicsServer::Update(double fixedInterval)
     }
     auto& bodies = impl->scene.GetBodyInterface();
     for (PhysicsItem* item : impl->items) {
-        if (!item->enabled) { releaseActor(*item); continue; }
+        if (!item->enabled) {
+            releaseActor(*item);
+            item->clearPendingActions();
+            continue;
+        }
         if (!validPose(item->transformNode)) return reportError("body needs a root transform");
         // Повреждённые скорости сбрасываем, массу ограничиваем рабочим диапазоном.
         if (!finite(item->linearVelocity)) item->linearVelocity = DXVector3::Zero;
@@ -361,7 +388,11 @@ bool PhysicsServer::Update(double fixedInterval)
         if (item->rebuild || item->type != item->appliedType || item->mass != item->appliedMass ||
             dimensions(item->transformNode->get_scale()) != item->appliedScale)
             if (!rebuildActor(*item)) return false;
-        if (!item->hasActor()) continue;
+        if (!item->hasActor()) {
+            // Нет коллайдера: не откладываем старый толчок до его появления.
+            item->clearPendingActions();
+            continue;
+        }
 
         const JPH::BodyID id(item->bodyId);
         const bool dynamic = item->type == PhysicsBodyType::Dynamic;
@@ -377,7 +408,18 @@ bool PhysicsServer::Update(double fixedInterval)
             // Не будим уснувшие тела, если скорости Item не менялись извне.
             if (vector(linear) != item->linearVelocity || vector(angular) != item->angularVelocity)
                 bodies.SetLinearAndAngularVelocity(id, vector(item->linearVelocity), vector(item->angularVelocity));
+
+            // После синхронизации скоростей: иначе старый Item затрёт результат импульса.
+            if (item->pendingImpulse != DXVector3::Zero)
+                bodies.AddImpulse(id, vector(item->pendingImpulse));
+            if (item->pendingAngularImpulse != DXVector3::Zero)
+                bodies.AddAngularImpulse(id, vector(item->pendingAngularImpulse));
+            // Jolt сам учитывает массу, инерцию и dt; ненулевое воздействие будит тело.
+            if (item->pendingForce != DXVector3::Zero || item->pendingTorque != DXVector3::Zero)
+                bodies.AddForceAndTorque(id, vector(item->pendingForce), vector(item->pendingTorque));
         }
+        // Следующий fixed-step не повторяет команды, даже если шагов в кадре несколько.
+        item->clearPendingActions();
     }
     const auto error = impl->scene.Update(dt, 1, &impl->allocator, &impl->jobs);
     if (error != JPH::EPhysicsUpdateError::None) return reportError("Jolt update capacity exceeded");
