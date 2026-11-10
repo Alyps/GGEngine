@@ -1,9 +1,59 @@
 #include "ScriptBindings.h"
 #include "core.h"
 #include <string>
+#include <tuple>
 #include <sol/sol.hpp>
 
 namespace {
+
+// Результат Lua: заимствованный объект и строка ошибки (пустая при успехе).
+std::tuple<GameObject*, std::string> CreateLevelObject(sol::variadic_args args)
+{
+	if (args.size() != 2 || !args[0].is<Level*>() || !args[1].is<std::string>())
+		return { nullptr, "Expected level:create_object(path)" };
+	auto* level = args[0].as<Level*>();
+	if (!level || !level->getOwner()) return { nullptr, "Level must belong to a Game" };
+	// Разрешаем путь так же, как при загрузке самого Lua-скрипта.
+	const auto path = level->getOwner()->getResourceManager().ResolvePath(args[1].as<std::string>());
+	if (path.empty()) return { nullptr, "Invalid object path" };
+	std::string error;
+	auto* object = level->LoadObjectFromFile(path, error);
+	return { object, error };
+}
+
+std::tuple<GameObject*, std::string> DuplicateLevelObject(sol::variadic_args args)
+{
+	if (args.size() != 2 || !args[0].is<Level*>() || !args[1].is<GameObject*>())
+		return { nullptr, "Expected level:duplicate_object(object)" };
+	auto* level = args[0].as<Level*>();
+	auto* source = args[1].as<GameObject*>();
+	if (!level || !level->getOwner() || !source || source->getOwner() != level || source->isPendingDestroy())
+		return { nullptr, "Object must belong to this level and not be pending destruction" };
+	// Копируем авторские данные через тот же формат, что использует редактор.
+	rapidjson::Document document;
+	std::string error;
+	auto json = source->Serialize(document.GetAllocator(), error);
+	if (json.IsNull()) return { nullptr, error };
+	auto* copy = GameObject::Deserialize(json, level->getOwner()->getComponentFactoryMap(), error);
+	if (!copy) return { nullptr, error };
+	// До успешного addObject копией владеет эта функция; затем — уровень.
+	if (!level->addObject(copy)) {
+		delete copy;
+		return { nullptr, "Cannot attach duplicated object to level" };
+	}
+	return { copy, std::string{} };
+}
+
+bool DestroyLevelObject(sol::variadic_args args)
+{
+	if (args.size() != 2 || !args[0].is<Level*>() || !args[1].is<GameObject*>()) return false;
+	auto* level = args[0].as<Level*>();
+	auto* object = args[1].as<GameObject*>();
+	if (!level || !object || object->getOwner() != level || object->isPendingDestroy()) return false;
+	// Удаление отложено уровнем: текущий обработчик Lua может завершиться.
+	level->destroyObject(object);
+	return true;
+}
 
 // Проверяем self и Vector3 до преобразования: ошибки типов sol2 в режиме без
 // исключений нельзя выпускать через его noexcept-переходник в C++-сборку Lua.
@@ -70,14 +120,23 @@ void BindComponents(lua_State* L)
 	sol::table componentTypesMeta = componentTypes[sol::metatable_key];
 	componentTypesMeta[sol::meta_function::metatable] = false;
 
-	// Эти типы пока доступны как ссылки без полей; конструкторы и владение остаются в C++.
-	lua.new_usertype<LuaScriptComponent>("LuaScript", sol::no_constructor);
+	// instance возвращает именно self компонента; свойство нельзя переназначить.
+	lua.new_usertype<LuaScriptComponent>("LuaScript", sol::no_constructor,
+		"instance", sol::property([](sol::this_state state, const LuaScriptComponent& component) {
+			component.PushInstance(state);
+			return sol::stack::pop<sol::object>(state);
+		}));
 #if defined(GG_EDITOR)
 	lua.new_usertype<EditorCamera>("EditorCamera", sol::no_constructor);
 	lua.new_usertype<CameraMovementComponent>("CameraMovement", sol::no_constructor);
 #endif
 
 	// Компоненты и объекты передаются указателями; владение остаётся у C++.
+	lua.new_usertype<Level>("Level", sol::no_constructor,
+		"create_object", &CreateLevelObject,
+		"duplicate_object", &DuplicateLevelObject,
+		"destroy_object", &DestroyLevelObject);
+
 	lua.new_usertype<GameObject>("GameObject",
 		sol::no_constructor,
 		"transform", sol::property([](GameObject& o) { return &o.getTransform(); }),

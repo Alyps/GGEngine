@@ -502,7 +502,7 @@ struct RenderItem {
 	const DXVector3* editorShellSize = nullptr;
 	const Game* editorGame = nullptr;
 #endif
-};
+};	
 
 class CameraComponent;
 

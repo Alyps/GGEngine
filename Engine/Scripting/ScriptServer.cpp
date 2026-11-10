@@ -21,9 +21,22 @@ bool ScriptServer::Init()
 	impl = new (std::nothrow) Impl();
 	if (!impl) return false;
 
-	// Без io, os, package и debug: скрипты не получают доступ к системе.
+	// package предоставляет require; ниже оставляем только загрузчики Lua-модулей.
 	impl->lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string,
-		sol::lib::table, sol::lib::utf8);
+		sol::lib::table, sol::lib::utf8, sol::lib::package);
+
+	// Имена модулей разрешаются от каталога проекта, как пути компонентов.
+	const std::string moduleFile = resources ? resources->ResolvePath("?.lua") : "./?.lua";
+	const std::string moduleInit = resources ? resources->ResolvePath("?/init.lua") : "./?/init.lua";
+	sol::table package = impl->lua["package"];
+	package["path"] = moduleFile + ";" + moduleInit;
+
+	// Не подключаем DLL: сохраняем только package.preload и поиск Lua-файлов.
+	package["cpath"] = "";
+	package["loadlib"] = sol::lua_nil;
+	sol::table searchers = package["searchers"];
+	searchers[3] = sol::lua_nil;
+	searchers[4] = sol::lua_nil;
 
 	// Типы движка регистрируем один раз: математика раньше типов, которые её используют.
 	BindMath(impl->lua.lua_state());

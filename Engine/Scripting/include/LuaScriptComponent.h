@@ -3,6 +3,7 @@
 #include "TransformableComponent.h"
 
 class GameObject;
+struct lua_State;
 
 // Запускает Lua-скрипт: файл возвращает таблицу с on_init(self) и on_update(self, dt).
 // У каждого компонента своя таблица self; общая таблица модуля доступна через __index.
@@ -26,6 +27,8 @@ public:
     const std::string& getScriptPath() const { return scriptPath; }
     // Новый путь используется при следующей инициализации компонента.
     void setScriptPath(const std::string& path) { scriptPath = path; }
+    // Кладёт runtime-таблицу или nil на стек того же Lua-состояния; владение не передаётся.
+    void PushInstance(lua_State* state) const;
     // Game (и его ScriptServer) должен жить дольше компонента.
     ~LuaScriptComponent() override;
     LuaScriptComponent(const LuaScriptComponent&) = delete;

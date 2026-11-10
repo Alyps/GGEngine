@@ -8,6 +8,20 @@ struct LuaScriptComponent::Impl {
     sol::table instance;
     sol::protected_function onInit;
     sol::protected_function onUpdate;
+    bool ready = false;
+
+    ~Impl()
+    {
+        if (!instance.valid()) return;
+        // Сохранённая другим скриптом таблица больше не ссылается на владельца.
+        instance.raw_set("is_valid", false);
+        instance.raw_set("object", sol::lua_nil);
+        instance.raw_set("transform", sol::lua_nil);
+        instance.raw_set("level", sol::lua_nil);
+        instance.raw_set("input", sol::lua_nil);
+        // Убираем методы модуля, не вызывая пользовательские метаметоды.
+        instance[sol::metatable_key] = sol::lua_nil;
+    }
 };
 
 LuaScriptComponent::LuaScriptComponent(std::string path)
@@ -16,6 +30,16 @@ LuaScriptComponent::LuaScriptComponent(std::string path)
 LuaScriptComponent::~LuaScriptComponent()
 {
     delete impl;
+}
+
+void LuaScriptComponent::PushInstance(lua_State* state) const
+{
+    // Не выдаём частично инициализированный экземпляр или таблицу другого состояния.
+    if (!impl || !impl->ready || failed || impl->instance.lua_state() != state) {
+        lua_pushnil(state);
+        return;
+    }
+    impl->instance.push(state);
 }
 
 void LuaScriptComponent::Init(Game& game)
@@ -60,6 +84,7 @@ void LuaScriptComponent::Init(Game& game)
 
     // self получает методы модуля через __index, но хранит своё состояние отдельно.
     impl->instance = lua.create_table();
+    impl->instance.raw_set("is_valid", true);
     sol::table meta = lua.create_table();
     meta[sol::meta_function::index] = module;
     impl->instance[sol::metatable_key] = meta;
@@ -67,6 +92,8 @@ void LuaScriptComponent::Init(Game& game)
     // Владелец берётся из Component; явно выбранную ветку сохраняем.
     if (GameObject* object = getOwner()) {
         impl->instance["object"] = object;
+        // Уровень владеет объектом и живёт дольше экземпляра скрипта.
+        impl->instance["level"] = object->getOwner();
         if (!transformNode) bind_to_node(&object->getTransform());
     }
     if (transformNode) impl->instance["transform"] = transformNode;
@@ -91,6 +118,8 @@ void LuaScriptComponent::Init(Game& game)
             failed = true;
         }
     }
+    // Другие компоненты получают экземпляр только после успешного on_init.
+    impl->ready = !failed;
 }
 
 void LuaScriptComponent::Update(Game& game, double deltaTime)
