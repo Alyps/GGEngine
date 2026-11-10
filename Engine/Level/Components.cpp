@@ -121,6 +121,7 @@ ComponentFactoryMap::ComponentFactoryMap()
     Register("DirectionalLightComponent", &DirectionalLightComponent::CreateFromJson);
     Register("PointLightComponent", &PointLightComponent::CreateFromJson);
     Register("LuaScriptComponent", &LuaScriptComponent::CreateFromJson);
+    Register("UtilityAIComponent", &UtilityAIComponent::CreateFromJson);
     Register("BoxColliderComponent", &BoxColliderComponent::CreateFromJson);
     Register("DynamicRigidBodyComponent", &DynamicRigidBodyComponent::CreateFromJson);
     Register("StaticRigidBodyComponent", &StaticRigidBodyComponent::CreateFromJson);

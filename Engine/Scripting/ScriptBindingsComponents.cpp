@@ -80,6 +80,8 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 			if (auto* typed = dynamic_cast<PointLightComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "LuaScript") {
 			if (auto* typed = dynamic_cast<LuaScriptComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "UtilityAI") {
+			if (auto* typed = dynamic_cast<UtilityAIComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "BoxCollider") {
 			if (auto* typed = dynamic_cast<BoxColliderComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "DynamicRigidBody") {
@@ -102,6 +104,7 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 void BindComponents(lua_State* L)
 {
 	sol::state_view lua(L);
+	BindUtilityAI(L);
 
 	// Поддерживать ComponentType, FindComponent и Lua-типы синхронно при добавлении/переименовании компонентов.
 	// Строковые константы доступны через ComponentType.PointLight; обычное присваивание запрещено.
@@ -109,6 +112,7 @@ void BindComponents(lua_State* L)
 		"Mesh", "Mesh", "GameCamera", "GameCamera",
 		"DirectionalLight", "DirectionalLight", "PointLight", "PointLight",
 		"LuaScript", "LuaScript", "BoxCollider", "BoxCollider",
+		"UtilityAI", "UtilityAI",
 		"DynamicRigidBody", "DynamicRigidBody", "StaticRigidBody", "StaticRigidBody"
 #if defined(GG_EDITOR)
 		, "EditorCamera", "EditorCamera", "CameraMovement", "CameraMovement"

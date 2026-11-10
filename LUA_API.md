@@ -523,3 +523,161 @@ print("Компонент найден:", self.object:get_component(ComponentTyp
 - [ResourceManager.cpp](Engine/Resources/ResourceManager.cpp) — разрешение путей.
 
 При изменении привязок обновляйте соответствующий раздел этого справочника.
+
+## 13. Utility AI без UI
+
+`UtilityAIComponent` выбирает одно действие по таблице полезности. Таблица и кривые —
+ресурсы `ResourceManager`; значения параметров, Lua-состояния и таймеры принадлежат
+конкретному компоненту NPC. В режиме редактора действия не запускаются.
+
+Компонент в JSON объекта:
+
+```json
+{
+  "type": "UtilityAIComponent",
+  "table_path": "res/AI/guard.utilityai.json",
+  "enabled": true
+}
+```
+
+Пример `guard.utilityai.json` (все показанные поля обязательны):
+
+```json
+{
+  "parameters": [
+    { "name": "Health", "type": "float", "default": 100 },
+    { "name": "Ammo", "type": "int", "default": 30 }
+  ],
+  "interval": 0.2,
+  "switch_threshold": 0.05,
+  "minimum_duration": 0.5,
+  "actions": [
+    {
+      "name": "Attack",
+      "script": "res/AI/attack.action.lua",
+      "curves": ["res/AI/healthy.curve.json", "res/AI/ammo.curve.json"]
+    },
+    {
+      "name": "Heal",
+      "script": "res/AI/heal.action.lua",
+      "curves": ["res/AI/injured.curve.json", null]
+    }
+  ]
+}
+```
+
+Порядок ячеек `curves` совпадает с порядком `parameters`. `null` исключает параметр
+из оценки строки. Нужна хотя бы одна кривая на действие. Имена параметров и имена
+действий уникальны внутри своих списков. Действия обязательно имеют суффикс `.action.lua`.
+Все пути разрешаются относительно корня проекта менеджером ресурсов, а не относительно
+файла таблицы. Без корня проекта пути считаются от рабочей директории процесса.
+
+Пример `injured.curve.json`:
+
+```json
+{
+  "points": [
+    { "x": 0, "y": 1 },
+    { "x": 50, "y": 0.7 },
+    { "x": 100, "y": 0 }
+  ]
+}
+```
+
+Нужны минимум две точки с конечными числами, строго возрастающими `x` и `y` в диапазоне
+0…1. Интерполяция линейная, вне диапазона возвращается значение крайней точки.
+`x` измеряется непосредственно в единицах параметра. Общая кривая переиспользуется
+по пути; горячая перезагрузка не реализована.
+
+### Параметры из обычного Lua-скрипта
+
+```lua
+local ai = self.object:get_component(ComponentType.UtilityAI)
+local health, error = ai:get_float("Health")
+if health ~= nil then
+    local ok, write_error = ai:set_float("Health", health - 10)
+    if not ok then print(write_error) end
+else
+    print(error)
+end
+
+for _, parameter in ipairs(ai:get_parameters()) do
+    print(parameter.name, parameter.type, parameter.value)
+end
+```
+
+| API | Результат |
+|---|---|
+| `get_float(name)`, `get_int(name)` | Значение и пустая строка; при ошибке `nil, error` |
+| `set_float(name, value)`, `set_int(name, value)` | `true, ""`; при ошибке `false, error` (неверные аргументы могут вернуть `nil, error`) |
+| `get_parameters()` | Новый массив `{name, type, value}`; его изменение не меняет компонент |
+| `current_action` | Имя действия или пустая строка, только чтение |
+| `last_error` | Последняя ошибка загрузки/исполнения, только чтение |
+| `enabled` | Флаг включения, доступен для записи |
+
+`float` хранится как конечное число двойной точности; `int` — целое в диапазоне
+−2147483648…2147483647. Тип доступа должен совпадать с описанием. Неизвестные имена,
+дробный `int`, NaN и бесконечности отклоняются. Setter не запускает пересчёт.
+Изменение `enabled` обрабатывается после текущего callback либо в следующем Update.
+
+Компоненты инициализируются в порядке объекта: для доступа из `on_init` обычного
+скрипта разместите UtilityAIComponent раньше него. До инициализации методы параметров
+возвращают ошибку. Параметры сбрасываются к значениям таблицы при повторной инициализации.
+Runtime-значения и ход действия не сохраняются в JSON объекта.
+
+### Контракт `.action.lua`
+
+Пример `heal.action.lua`:
+
+```lua
+return {
+    action_available = function(self, context)
+        local health = context.ai:get_float("Health")
+        return health ~= nil and health < 100
+    end,
+
+    action_entered = function(self, context)
+        self.elapsed = 0
+    end,
+
+    action_executing = function(self, context, dt)
+        self.elapsed = self.elapsed + dt
+        if self.elapsed < 1 then return "running" end
+        local health = context.ai:get_float("Health")
+        if health == nil then return "failure" end
+        local ok = context.ai:set_float("Health", math.min(100, health + 25))
+        return ok and "success" or "failure"
+    end,
+
+    action_exited = function(self, context, reason)
+        self.elapsed = 0
+    end
+}
+```
+
+Три функции жизненного цикла обязательны; `action_available` необязательна и должна
+возвращать boolean. `context.object` — владелец, `context.ai` — его компонент,
+`context.is_valid` — признак живого контекста. После Shutdown ссылки контекста очищаются.
+Не сохраняйте заимствованные указатели на удаляемые объекты/компоненты.
+
+У каждого действия каждого NPC собственные модуль и `self`. Lua-глобальные переменные
+остаются общими: индивидуальное состояние храните в `self`, сбрасывая его при входе.
+Проверки доступности не должны менять мир; запись AI-параметров в этой фазе запрещена,
+а чтение использует единый снимок текущего пересчёта.
+
+Полезность — среднее непустых ячеек. Побеждает максимум; при равенстве сохраняется
+текущее действие, иначе выбирается первая подходящая строка. Переключение требует
+превышения текущей оценки более чем на `switch_threshold` и истечения `minimum_duration`
+в секундах. Потеря доступности обнаруживается при пересчёте и отменяет эти ограничения.
+Если нет доступных действий, компонент ждёт следующего пересчёта.
+
+`action_executing` вызывается каждый игровой кадр, включая кадр успешного входа.
+После `success`/`failure` новый выбор происходит на следующем обновлении компонента.
+`action_exited` вызывается один раз после успешного входа; причины: `success`, `failure`,
+`interrupted`, `unavailable`, `disabled`, `shutdown`, `error`.
+При ошибке выполнения или доступности действие отключается до переинициализации;
+для уже активного действия делается одна защищённая попытка выхода. При ошибке входа
+выход не вызывается. Ошибки выводятся в консоль и доступны через `last_error`.
+
+Синхронизация здоровья/боезапаса с другими игровыми компонентами выполняется игровыми
+скриптами. Система не ищет цели, не строит маршруты и не содержит UI.
