@@ -119,7 +119,7 @@ Editor::~Editor()
 	RemovePropW(window, EditorProperty);
 	if (auto* movement = GetCameraMovement()) movement->enabled = false;
 	ReleaseViewport();
-	CloseTexturePreview();
+	CloseAssetEditor();
 	if (ui) {
 		ImGui::SetCurrentContext(ui);
 		if (rendererReady) ImGui_ImplDX11_Shutdown();
@@ -213,7 +213,7 @@ int Editor::Run()
 		ImGui::NewFrame();
 		ImGuizmo::BeginFrame();
 		scenePanelFocused = false;
-		textureInspectorFocused = false;
+		focusedAssetTab = AssetTab::None;
 		saveShortcut = false;
 		// Назначенное сохранение доступно и в полях инспектора до записи сцены.
 		if (!navigating && !settings.Held(EditorAction::Navigate) && GetForegroundWindow() == window
@@ -221,24 +221,29 @@ int Editor::Run()
 			saveShortcut = settings.Shortcut(EditorAction::Save);
 		if (saveShortcut) requestedSave = true;
 		DrawDockspace();
-		DrawTextureDialogs();
+		DrawAssetDialogs();
 		DrawProjectDialogs();
 		DrawSettings();
 		if (showHierarchy) DrawHierarchy();
 		if (showInspector) DrawInspector();
 		DrawViewport();
-		if (scenePanelFocused) historyTargetsTexture = false;
+		if (scenePanelFocused) historyAssetTab = AssetTab::None;
 		contentBrowser.Draw(showContentBrowser);
 		if (const auto file = contentBrowser.TakeObjectToOpen(); !file.empty()) QueueObjectOpen(file);
 		if (const auto file = contentBrowser.TakeSceneToOpen(); !file.empty()) QueueSceneOpen(file);
 		if (const auto file = contentBrowser.TakeTextureToOpen(); !file.empty()) {
-			RequestTextureAction(TextureAction::Open, file);
+			RequestAssetAction(AssetAction::OpenTexture, file);
+			showInspector = true;
+		}
+		if (const auto file = contentBrowser.TakeMaterialToOpen(); !file.empty()) {
+			RequestAssetAction(AssetAction::OpenMaterial, file);
 			showInspector = true;
 		}
 		// Закрываем жест также при смене выбора или скрытии панели.
 		if (editingTransform && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing()) FinishTransformEdit();
 		if (editingProperty && !ImGui::IsAnyItemActive()
 			&& !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) FinishProperty();
+		if (materialEditId && ImGui::GetActiveID() != materialEditId) FinishMaterialEdit();
 		HandleShortcuts();
 		ImGui::Render();
 		game.getRenderServer().BeginMainPass();
@@ -273,7 +278,7 @@ int Editor::Run()
 		game.EndFrame();
 		FinishStructures();
 		ApplyHistoryStep();
-		ApplyTextureActions();
+		ApplyAssetActions();
 		ApplyDocumentActions();
 		ApplyProjectAction();
 		ApplyObjectActions();
@@ -438,7 +443,7 @@ void Editor::HandleShortcuts()
 		|| ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive()
 		|| ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
 	if (contentBrowser.IsFocused()) return;
-	if (UseTextureHistory() && textureInspectorFocused) {
+	if (focusedAssetTab != AssetTab::None && ActiveHistoryAsset() == focusedAssetTab) {
 		if (settings.Shortcut(EditorAction::Undo)) Undo();
 		if (settings.Shortcut(EditorAction::Redo)) Redo();
 		return;

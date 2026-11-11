@@ -11,6 +11,7 @@ public:
     std::string TakeObjectToOpen() { std::string result; result.swap(objectToOpen); return result; }
     std::string TakeSceneToOpen() { std::string result; result.swap(sceneToOpen); return result; }
     std::string TakeTextureToOpen() { std::string result; result.swap(textureToOpen); return result; }
+    std::string TakeMaterialToOpen() { std::string result; result.swap(materialToOpen); return result; }
     void RefreshFiles() { if (!root.empty()) Refresh(); }
 
 private:
@@ -52,6 +53,7 @@ private:
     std::string objectToOpen;
     std::string sceneToOpen;
     std::string textureToOpen;
+    std::string materialToOpen;
     std::vector<std::string> navigation;
     size_t navigationPosition = 0;
     char search[256]{};

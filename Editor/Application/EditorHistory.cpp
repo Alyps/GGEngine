@@ -245,19 +245,25 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 	return false;
 }
 
-bool Editor::UseTextureHistory() const
+Editor::AssetTab Editor::ActiveHistoryAsset() const
 {
-	return historyTargetsTexture && showInspector && showTextureTab;
+	if (showInspector && historyAssetTab == AssetTab::Texture && showTextureTab) return AssetTab::Texture;
+	if (showInspector && historyAssetTab == AssetTab::Material && showMaterialTab) return AssetTab::Material;
+	return AssetTab::None;
 }
 
 const Editor::DocumentHistory& Editor::ActiveHistory() const
 {
-	return UseTextureHistory() ? textureHistory : documentHistory;
+	const auto asset = ActiveHistoryAsset();
+	if (asset == AssetTab::Texture) return textureHistory;
+	if (asset == AssetTab::Material) return materialHistory;
+	return documentHistory;
 }
 
 void Editor::PushHistory(HistoryEntry entry, DocumentHistory* destination)
 {
 	if (entry.kind == HistoryKind::TextureSettings ? entry.textureBefore == entry.textureAfter
+		: entry.kind == HistoryKind::MaterialSettings ? entry.materialBefore == entry.materialAfter
 		: entry.kind == HistoryKind::Group ? entry.children.empty()
 		: entry.kind == HistoryKind::Structure ? entry.objectBefore.json == entry.objectAfter.json : entry.before == entry.after) return;
 	auto& context = destination ? *destination : documentHistory;
@@ -274,6 +280,11 @@ void Editor::PushHistory(HistoryEntry entry, DocumentHistory* destination)
 		size_t bytes = sizeof(HistoryEntry) + action.name.size() + action.before.size() + action.after.size()
 			+ (action.selectedBefore.size() + action.selectedAfter.size()) * sizeof(HistoryId)
 			+ objectBytes(action.objectBefore) + objectBytes(action.objectAfter);
+		if (action.kind == HistoryKind::MaterialSettings) {
+			for (const auto* material : { &action.materialBefore, &action.materialAfter })
+				bytes += material->diffuse.size() + material->normal.size() + material->ao.size()
+					+ material->shader.size() + material->sampler.size() + material->renderState.size();
+		}
 		for (const auto& child : action.children) bytes += self(self, child);
 		return bytes;
 	};
@@ -439,6 +450,12 @@ bool Editor::ApplyHistoryEntry(const HistoryEntry& entry, bool undo)
 		textureSettingsError.clear();
 		return true;
 	}
+	if (entry.kind == HistoryKind::MaterialSettings) {
+		if (!materialReady) return false;
+		materialDraft = undo ? entry.materialBefore : entry.materialAfter;
+		materialSettingsError.clear();
+		return true;
+	}
 	bool applied = false;
 	if (entry.kind == HistoryKind::Group) {
 		if (entry.children.empty()) return false;
@@ -483,20 +500,20 @@ void Editor::RestoreHistorySelection(HistoryId selection, HistoryId camera)
 void Editor::ApplyHistoryStep()
 {
 	const int direction = requestedHistoryStep; requestedHistoryStep = 0;
-	const bool texture = requestedTextureHistoryStep; requestedTextureHistoryStep = false;
+	const auto asset = requestedHistoryAsset; requestedHistoryAsset = AssetTab::None;
 	// Получатель фиксируется при запросе: последующая смена фокуса не перенаправляет команду.
-	auto& context = texture ? textureHistory : documentHistory;
+	auto& context = asset == AssetTab::Texture ? textureHistory : asset == AssetTab::Material ? materialHistory : documentHistory;
 	if (!direction || (direction < 0 ? context.position == 0 : context.position >= context.entries.size())) return;
 	const size_t index = direction < 0 ? context.position - 1 : context.position;
 	const auto& entry = context.entries[index];
 	const bool applied = ApplyHistoryEntry(entry, direction < 0);
 	if (!applied) {
-		auto& error = texture ? textureSettingsError : documentError;
+		auto& error = asset == AssetTab::Texture ? textureSettingsError : asset == AssetTab::Material ? materialSettingsError : documentError;
 		if (error.empty()) error = "Cannot apply history operation.";
 		return;
 	}
 	context.position = direction < 0 ? index : index + 1;
-	if (!texture) { meshPathDrafts.clear(); nameDraftNode = nullptr; checkSceneDirty = true; }
+	if (asset == AssetTab::None) { meshPathDrafts.clear(); nameDraftNode = nullptr; checkSceneDirty = true; }
 	game.getTimeManager().reset();
 }
 
@@ -623,13 +640,13 @@ void Editor::FinishTransformEdit()
 void Editor::Undo()
 {
 	if (!editingTransform && !editingProperty && ActiveHistory().position > 0) {
-		requestedHistoryStep = -1; requestedTextureHistoryStep = UseTextureHistory();
+		requestedHistoryStep = -1; requestedHistoryAsset = ActiveHistoryAsset();
 	}
 }
 void Editor::Redo()
 {
 	const auto& history = ActiveHistory();
 	if (!editingTransform && !editingProperty && history.position < history.entries.size()) {
-		requestedHistoryStep = 1; requestedTextureHistoryStep = UseTextureHistory();
+		requestedHistoryStep = 1; requestedHistoryAsset = ActiveHistoryAsset();
 	}
 }

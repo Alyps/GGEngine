@@ -150,6 +150,7 @@ void ContentBrowser::Activate(const Entry& entry, std::string& directory)
     if (entry.directory) directory = path;
     else if (Category(entry.name, entry.mesh) == 1) sceneToOpen = path;
     else if (Category(entry.name, entry.mesh) == 2) objectToOpen = path;
+    else if (Category(entry.name, entry.mesh) == 4) materialToOpen = path;
     else if (Category(entry.name, entry.mesh) == 5) textureToOpen = path;
 }
 
@@ -500,9 +501,11 @@ size_t ContentBrowser::DrawFileList(float footerHeight, DrawRequests& requests)
                 }
                 if (ImGui::BeginPopupContextItem("Entry menu")) {
                     const int category = Category(entry.name, entry.mesh);
-                    const bool canOpen = !entry.link && (entry.directory || category == 1 || category == 2 || category == 5);
+                    const bool canOpen = !entry.link && (entry.directory || category == 1 || category == 2 || category == 4 || category == 5);
                     if (ImGui::MenuItem("Open", "Enter", false, canOpen)) Activate(entry, requests.directory);
-                    if (!entry.directory && !entry.link && category == 5 && ImGui::MenuItem("Edit texture")) Activate(entry, requests.directory);
+                    if (!entry.directory && !entry.link && (category == 4 || category == 5)) {
+                        if (ImGui::MenuItem(category == 4 ? "Edit material" : "Edit texture")) Activate(entry, requests.directory);
+                    }
                     if (ImGui::MenuItem("Open containing folder")) OpenFolder(current);
                     if (ImGui::MenuItem("Copy project-relative path")) ImGui::SetClipboardText(ResourcePath(path).c_str());
                     if (ImGui::MenuItem("Copy absolute path")) ImGui::SetClipboardText(path.c_str());

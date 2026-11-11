@@ -4,8 +4,22 @@
 #include "EditorFileUtils.h"
 #include <cmath>
 #include <limits>
+#include <string_view>
 using EditorAction = EditorSettings::Action;
 namespace {
+	constexpr const char* ResourcePathPayload = "GG_RESOURCE_PATH";
+
+	std::string_view DroppedResourcePath()
+	{
+		const auto* payload = ImGui::GetDragDropPayload();
+		if (!payload || !payload->IsDataType(ResourcePathPayload) || payload->DataSize <= 1) return {};
+		// Content Browser передаёт непустой путь с одним завершающим NUL.
+		const auto* bytes = static_cast<const char*>(payload->Data);
+		const std::string_view path(bytes, payload->DataSize - 1);
+		if (bytes[path.size()] != '\0' || path.find('\0') != std::string_view::npos) return {};
+		return path;
+	}
+
 	const char* TextureFormatName(DXGI_FORMAT format)
 	{
 		// ImGui использует Texture2D<float4>; целочисленные, depth и массивы не подменяем цветом.
@@ -548,18 +562,26 @@ void Editor::DrawTransformField(TransformField field, const char* label, bool fr
 	TrackTransformEdit(before, fromGroupCenter);
 }
 
+void Editor::CloseAssetEditor()
+{
+	CloseTexturePreview();
+	CloseMaterialEditor();
+}
+
 void Editor::CloseTexturePreview()
 {
 	if (texturePreviewView) texturePreviewView->Release();
 	texturePreviewView = nullptr;
 	textureDescription = {}; textureFormat = DXGI_FORMAT_UNKNOWN;
-	pendingTextureFile.clear(); textureFile.clear(); textureError.clear();
-	showTextureTab = focusTextureTab = false;
+	textureFile.clear(); textureError.clear();
+	showTextureTab = false;
+	if (focusAssetTab == AssetTab::Texture) focusAssetTab = AssetTab::None;
 	textureSettings = {}; textureSettingsDraft = {};
 	textureSettingsReady = false;
 	textureSettingsError.clear();
 	textureHistory = {};
-	historyTargetsTexture = textureInspectorFocused = false;
+	if (historyAssetTab == AssetTab::Texture) historyAssetTab = AssetTab::None;
+	if (focusedAssetTab == AssetTab::Texture) focusedAssetTab = AssetTab::None;
 }
 
 void Editor::OpenTexturePreview(const std::string& file)
@@ -567,8 +589,9 @@ void Editor::OpenTexturePreview(const std::string& file)
 	FinishTransformEdit(); FinishProperty();
 	CloseTexturePreview();
 	textureFile = file;
-	showTextureTab = focusTextureTab = true;
-	historyTargetsTexture = true;
+	showTextureTab = true;
+	focusAssetTab = AssetTab::Texture;
+	historyAssetTab = AssetTab::Texture;
 	fitTexture = true; textureZoom = 100.0f;
 	resetTextureScroll = true;
 	auto* resource = game.getResourceManager().load<TextureResource>(file, game.getRenderServer().Device());
@@ -576,6 +599,32 @@ void Editor::OpenTexturePreview(const std::string& file)
 	textureSettings = textureSettingsDraft = resource->GetSettings();
 	textureSettingsReady = true;
 	RefreshTexturePreview(*resource);
+}
+
+void Editor::CloseMaterialEditor()
+{
+	showMaterialTab = materialReady = false;
+	if (focusAssetTab == AssetTab::Material) focusAssetTab = AssetTab::None;
+	materialFile.clear(); materialSettingsError.clear();
+	materialSettings = {}; materialDraft = {};
+	materialHistory = {};
+	materialEditId = 0;
+	materialEditName = nullptr;
+	if (historyAssetTab == AssetTab::Material) historyAssetTab = AssetTab::None;
+	if (focusedAssetTab == AssetTab::Material) focusedAssetTab = AssetTab::None;
+}
+
+void Editor::OpenMaterialEditor(const std::string& file)
+{
+	FinishTransformEdit(); FinishProperty();
+	CloseMaterialEditor();
+	materialFile = file;
+	showMaterialTab = true;
+	focusAssetTab = AssetTab::Material;
+	historyAssetTab = AssetTab::Material;
+	// Читаем описание даже при недоступной карте, чтобы её можно было заменить.
+	materialReady = materialSettings.Load(file, materialSettingsError);
+	materialDraft = materialSettings;
 }
 
 void Editor::RefreshTexturePreview(TextureResource& resource)
@@ -611,6 +660,59 @@ bool Editor::TextureSettingsDirty() const
 	return textureSettingsReady && textureSettingsDraft != textureSettings;
 }
 
+bool Editor::AssetSettingsDirty() const
+{
+	return MaterialSettingsDirty() || TextureSettingsDirty();
+}
+
+bool Editor::MaterialSettingsDirty() const
+{
+	return materialReady && materialDraft != materialSettings;
+}
+
+void Editor::RecordMaterialSettings(const MaterialData& before, const MaterialData& after, const char* name)
+{
+	if (before == after) return;
+	HistoryEntry entry;
+	entry.kind = HistoryKind::MaterialSettings;
+	entry.name = name;
+	entry.materialBefore = before;
+	entry.materialAfter = after;
+	PushHistory(std::move(entry), &materialHistory);
+	materialSettingsError.clear();
+}
+
+void Editor::TrackMaterialEdit(const MaterialData& before, const char* name, bool changed)
+{
+	const auto id = ImGui::GetItemID();
+	if (ImGui::IsItemActivated() || (changed && materialEditId != id)) {
+		FinishMaterialEdit();
+		materialEditId = id;
+		materialEditName = name;
+		materialEditBefore = materialEditAfter = before;
+	}
+	// Храним последнее состояние этого поля, даже если следующий виджет уже изменил черновик.
+	if (materialEditId != id) return;
+	if (changed) { materialEditAfter = materialDraft; materialSettingsError.clear(); }
+	if (ImGui::IsItemDeactivated()) FinishMaterialEdit();
+}
+
+void Editor::FinishMaterialEdit()
+{
+	if (!materialEditId) return;
+	RecordMaterialSettings(materialEditBefore, materialEditAfter, materialEditName);
+	materialEditId = 0;
+	materialEditName = nullptr;
+}
+
+void Editor::RevertMaterialSettings()
+{
+	FinishMaterialEdit();
+	const auto before = materialDraft;
+	materialDraft = materialSettings;
+	RecordMaterialSettings(before, materialDraft, "Revert material settings");
+}
+
 void Editor::RecordTextureSettings(const TextureSettings& before, const char* name)
 {
 	HistoryEntry entry;
@@ -641,77 +743,135 @@ bool Editor::ApplyTextureSettings()
 	return true;
 }
 
-void Editor::RequestTextureAction(TextureAction action, const std::string& file)
+bool Editor::ApplyMaterialSettings()
 {
-	// Во время подтверждения исходный запрос не заменяется другим действием.
-	if (texturePromptActive) return;
-	textureAction = action;
-	pendingTextureFile = file;
-}
+	auto& resources = game.getResourceManager();
+	if (!resources.ApplyMaterial(materialFile, materialDraft, game.getRenderServer().Device())) {
+		materialSettingsError = resources.GetLastError();
+		game.getTimeManager().reset();
+		return false;
+	}
+	materialSettings = materialDraft;
+	materialSettingsError.clear();
 
-void Editor::ContinueTextureAction()
-{
-	const auto action = textureAction;
-	const auto file = std::move(pendingTextureFile);
-	textureAction = TextureAction::None;
-	pendingTextureFile.clear();
-	if (action == TextureAction::Open) OpenTexturePreview(file);
-	else if (action == TextureAction::Close) CloseTexturePreview();
-	else if (action == TextureAction::HideInspector) showInspector = false;
-	else if (action == TextureAction::ContinueDocument) checkPendingAction = true;
-	else if (action == TextureAction::ContinueSave) requestedSave = true;
-}
-
-void Editor::ApplyTextureActions()
-{
-	// SRV из текущего draw list уже использован; материалы получат новую текстуру в следующем кадре.
-	if (requestedTextureApply) {
-		requestedTextureApply = false;
-		if (!ApplyTextureSettings()) { continueAfterTextureApply = false; return; }
-		if (continueAfterTextureApply) {
-			continueAfterTextureApply = false;
-			closeTextureDialog = true; texturePromptActive = false;
-			ContinueTextureAction();
+	// После исправления файла повторяем привязку мешей, которые использовали запасной материал.
+	if (auto* level = game.getLevel()) {
+		const auto path = resources.ResolvePath(materialFile);
+		for (auto* object : level->getObjects()) {
+			if (object->isPendingDestroy()) continue;
+			for (auto* component : object->getComponents()) {
+				auto* mesh = dynamic_cast<MeshComponent*>(component);
+				if (mesh && !mesh->isPendingDestroy() && !mesh->getMaterialError().empty()
+					&& resources.ResolvePath(mesh->getMaterialPath()) == path)
+					mesh->setMaterialPath(mesh->getMaterialPath());
+			}
 		}
 	}
-	if (proceedTextureAction) {
-		proceedTextureAction = false; texturePromptActive = false;
-		ContinueTextureAction();
-	}
-	if (textureAction == TextureAction::None || texturePromptActive) return;
-	if (TextureSettingsDirty()) { showUnsavedTextureDialog = texturePromptActive = true; }
-	else ContinueTextureAction();
+	game.getTimeManager().reset();
+	return true;
 }
 
-void Editor::DrawTextureDialogs()
+void Editor::RequestAssetAction(AssetAction action, const std::string& file)
 {
-	// Закрытие Inspector через Window также проверяет черновик текстуры.
-	if (!showInspector && TextureSettingsDirty()) {
-		showInspector = true;
-		RequestTextureAction(TextureAction::HideInspector);
+	// Во время подтверждения исходный запрос не заменяется другим действием.
+	if (assetPrompt != AssetTab::None) return;
+	if (action == AssetAction::OpenTexture && showTextureTab && file == textureFile) {
+		focusAssetTab = AssetTab::Texture;
+		return;
 	}
-	if (showUnsavedTextureDialog) { showUnsavedTextureDialog = false; ImGui::OpenPopup("Unsaved texture settings"); }
-	if (!ImGui::BeginPopupModal("Unsaved texture settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-	if (closeTextureDialog) { closeTextureDialog = false; ImGui::CloseCurrentPopup(); }
+	if (action == AssetAction::OpenMaterial && showMaterialTab && file == materialFile) {
+		focusAssetTab = AssetTab::Material;
+		return;
+	}
+	assetAction = action;
+	pendingAssetFile = file;
+}
+
+Editor::AssetTab Editor::PendingAssetConfirmation() const
+{
+	switch (assetAction) {
+	case AssetAction::None: return AssetTab::None;
+	case AssetAction::OpenTexture:
+	case AssetAction::CloseTexture:
+		return TextureSettingsDirty() ? AssetTab::Texture : AssetTab::None;
+	case AssetAction::OpenMaterial:
+	case AssetAction::CloseMaterial:
+		return MaterialSettingsDirty() ? AssetTab::Material : AssetTab::None;
+	default:
+		// Смена проекта и закрытие инспектора проверяют оба черновика по очереди.
+		if (TextureSettingsDirty()) return AssetTab::Texture;
+		return MaterialSettingsDirty() ? AssetTab::Material : AssetTab::None;
+	}
+}
+
+void Editor::ContinueAssetAction()
+{
+	const auto action = assetAction;
+	const auto file = std::move(pendingAssetFile);
+	assetAction = AssetAction::None;
+	pendingAssetFile.clear();
+	if (action == AssetAction::OpenTexture) OpenTexturePreview(file);
+	else if (action == AssetAction::OpenMaterial) OpenMaterialEditor(file);
+	else if (action == AssetAction::CloseTexture) CloseTexturePreview();
+	else if (action == AssetAction::CloseMaterial) CloseMaterialEditor();
+	else if (action == AssetAction::HideInspector) showInspector = false;
+	else if (action == AssetAction::ContinueDocument) checkPendingAction = true;
+	else if (action == AssetAction::ContinueSave) requestedSave = true;
+}
+
+void Editor::ApplyAssetActions()
+{
+	// Кадр уже отправлен на GPU. Изменения материала и текстуры видны со следующего кадра.
+	if (requestedAssetApply != AssetTab::None) {
+		const auto tab = requestedAssetApply;
+		requestedAssetApply = AssetTab::None;
+		if (!(tab == AssetTab::Material ? ApplyMaterialSettings() : ApplyTextureSettings())) return;
+	}
+	if (assetAction == AssetAction::None) return;
+	const auto next = PendingAssetConfirmation();
+	if (next != AssetTab::None) {
+		if (assetPrompt == AssetTab::None) showUnsavedAssetDialog = true;
+		assetPrompt = next;
+		return;
+	}
+	// Один диалог остаётся открыт, пока не обработаны все затронутые черновики.
+	closeAssetDialog = assetPrompt != AssetTab::None;
+	assetPrompt = AssetTab::None;
+	ContinueAssetAction();
+}
+
+void Editor::DrawAssetDialogs()
+{
+	// Закрытие Inspector через Window также проверяет черновик ресурса.
+	if (!showInspector && AssetSettingsDirty()) {
+		showInspector = true;
+		RequestAssetAction(AssetAction::HideInspector);
+	}
+	if (showUnsavedAssetDialog) { showUnsavedAssetDialog = false; ImGui::OpenPopup("Unsaved asset settings"); }
+	if (!ImGui::BeginPopupModal("Unsaved asset settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+	if (closeAssetDialog) { closeAssetDialog = false; ImGui::CloseCurrentPopup(); }
 	else {
-		ImGui::TextUnformatted("Apply texture settings before continuing?");
-		ImGui::TextWrapped("%s", textureFile.c_str());
-		if (!textureSettingsError.empty()) ImGui::TextWrapped("%s", textureSettingsError.c_str());
-		if (ImGui::Button("Apply and continue")) { requestedTextureApply = continueAfterTextureApply = true; }
+		const bool material = assetPrompt == AssetTab::Material;
+		const auto& file = material ? materialFile : textureFile;
+		const auto& error = material ? materialSettingsError : textureSettingsError;
+		ImGui::TextUnformatted(material ? "Apply material changes before continuing?" : "Apply texture settings before continuing?");
+		ImGui::TextWrapped("%s", file.c_str());
+		if (!error.empty()) ImGui::TextWrapped("%s", error.c_str());
+		if (ImGui::Button("Apply and continue")) requestedAssetApply = assetPrompt;
 		ImGui::SameLine();
 		if (ImGui::Button("Discard")) {
-			RevertTextureSettings();
-			proceedTextureAction = true;
-			ImGui::CloseCurrentPopup();
+			if (material) RevertMaterialSettings();
+			else RevertTextureSettings();
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-			if (textureAction == TextureAction::ContinueDocument) {
+			if (assetAction == AssetAction::ContinueDocument) {
 				pendingAction = PendingAction::None;
 				checkPendingAction = resumeAfterSave = closeAfterReturn = openSceneAfterReturn = false;
 			}
-			textureAction = TextureAction::None; pendingTextureFile.clear();
-			texturePromptActive = false;
+			assetAction = AssetAction::None; pendingAssetFile.clear();
+			assetPrompt = AssetTab::None;
+			requestedAssetApply = AssetTab::None;
 			ImGui::CloseCurrentPopup();
 		}
 	}
@@ -747,15 +907,15 @@ void Editor::DrawTextureInspector()
 			RecordTextureSettings(before, "Texture mipmaps");
 		}
 		ImGui::BeginDisabled(!TextureSettingsDirty());
-		if (ImGui::Button("Apply")) requestedTextureApply = true;
+		if (ImGui::Button("Apply")) requestedAssetApply = AssetTab::Texture;
 		ImGui::SameLine();
 		if (ImGui::Button("Revert")) RevertTextureSettings();
 		ImGui::EndDisabled();
 		ImGui::BeginDisabled(textureHistory.position == 0);
-		if (ImGui::Button("Undo")) { historyTargetsTexture = true; Undo(); }
+		if (ImGui::Button("Undo")) { historyAssetTab = AssetTab::Texture; Undo(); }
 		ImGui::EndDisabled(); ImGui::SameLine();
 		ImGui::BeginDisabled(textureHistory.position >= textureHistory.entries.size());
-		if (ImGui::Button("Redo")) { historyTargetsTexture = true; Redo(); }
+		if (ImGui::Button("Redo")) { historyAssetTab = AssetTab::Texture; Redo(); }
 		ImGui::EndDisabled();
 		if (!textureSettingsError.empty()) ImGui::TextWrapped("%s", textureSettingsError.c_str());
 	}
@@ -803,6 +963,109 @@ void Editor::DrawTextureInspector()
 	ImGui::EndChild();
 }
 
+void Editor::DrawMaterialInspector()
+{
+	ImGui::TextWrapped("%s", EditorFiles::Utf8Path(EditorFiles::DiskPath(materialFile).filename()).c_str());
+	if (!materialSettingsError.empty()) ImGui::TextWrapped("%s", materialSettingsError.c_str());
+	if (!materialReady) return;
+
+	ImGui::SeparatorText("Texture maps");
+	const auto& resources = game.getResourceManager();
+	const auto resourceRoot = EditorFiles::DiskPath(resources.ResolvePath(resources.GetResourceDirectory()));
+	const auto projectRoot = EditorFiles::DiskPath(project.Root());
+	ImGui::TextDisabled("Paths are relative to %s.", resources.GetResourceDirectory().c_str());
+	const auto drawMap = [&](const char* label, std::string& path) {
+		ImGui::PushID(label);
+		ImGui::TextUnformatted(label);
+		const auto clearWidth = ImGui::CalcTextSize("Clear").x + ImGui::GetStyle().FramePadding.x * 2;
+		ImGui::SetNextItemWidth((std::max)(1.0f, ImGui::GetContentRegionAvail().x - clearWidth - ImGui::GetStyle().ItemSpacing.x));
+		std::vector<char> buffer((std::max)(size_t(32768), path.size() + 1), '\0');
+		std::copy(path.begin(), path.end(), buffer.begin());
+		const auto before = materialDraft;
+		const bool changed = ImGui::InputTextWithHint("##path", "Drop a texture here", buffer.data(), buffer.size());
+		if (changed) {
+			path = buffer.data();
+			std::replace(path.begin(), path.end(), '\\', '/');
+		}
+		TrackMaterialEdit(before, label, changed);
+
+		if (ImGui::BeginDragDropTarget()) {
+			// Браузер передаёт путь от проекта. В файле материала он хранится от res.
+			if (const auto source = DroppedResourcePath(); !source.empty()) {
+				const auto relative = (projectRoot / EditorFiles::DiskPath(std::string(source)))
+					.lexically_normal().lexically_relative(resourceRoot);
+				auto extension = EditorFiles::Utf8Path(relative.extension());
+				for (char& c : extension) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+				const bool image = extension == ".png" || extension == ".jpg" || extension == ".jpeg"
+					|| extension == ".bmp" || extension == ".dds" || extension == ".tga" || extension == ".hdr";
+				if (image && !relative.empty() && !relative.has_root_path() && *relative.begin() != L".."
+					&& ImGui::AcceptDragDropPayload(ResourcePathPayload)) {
+					if (ImGui::GetActiveID() == ImGui::GetID("##path")) ImGui::ClearActiveID();
+					FinishMaterialEdit();
+					const auto previous = materialDraft;
+					path = EditorFiles::Utf8Path(relative);
+					RecordMaterialSettings(previous, materialDraft, label);
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Clear")) {
+			FinishMaterialEdit();
+			const auto previous = materialDraft;
+			path.clear();
+			RecordMaterialSettings(previous, materialDraft, label);
+		}
+		ImGui::PopID();
+	};
+	drawMap("Base Color", materialDraft.diffuse);
+	drawMap("Normal", materialDraft.normal);
+	drawMap("AO", materialDraft.ao);
+	ImGui::TextDisabled("AO uses the red channel.");
+
+	ImGui::SeparatorText("Surface");
+	const char* samplers[] = { "wrap_linear", "wrap_point", "clamp_linear", "clamp_point" };
+	if (ImGui::BeginCombo("Sampler", materialDraft.sampler.c_str())) {
+		for (const char* sampler : samplers) {
+			if (!ImGui::Selectable(sampler, materialDraft.sampler == sampler)) continue;
+			FinishMaterialEdit();
+			const auto before = materialDraft;
+			materialDraft.sampler = sampler;
+			RecordMaterialSettings(before, materialDraft, "Material sampler");
+		}
+		ImGui::EndCombo();
+	}
+	int mode = materialDraft.renderState == "wireframe" ? 1 : 0;
+	if (ImGui::Combo("Render mode", &mode, "Opaque\0Wireframe\0")) {
+		FinishMaterialEdit();
+		const auto before = materialDraft;
+		materialDraft.renderState = mode ? "wireframe" : "opaque";
+		RecordMaterialSettings(before, materialDraft, "Material render mode");
+	}
+	// Один жест ввода или перетаскивания числа даёт одну команду Undo.
+	auto before = materialDraft;
+	bool changed = ImGui::DragFloat("Specular strength", &materialDraft.specularStrength, 0.01f,
+		Material::MinSpecularStrength, Material::MaxSpecularStrength, nullptr, ImGuiSliderFlags_AlwaysClamp);
+	TrackMaterialEdit(before, "Material specular strength", changed);
+	before = materialDraft;
+	changed = ImGui::DragFloat("Shininess", &materialDraft.shininess, 0.5f,
+		Material::MinShininess, Material::MaxShininess, nullptr, ImGuiSliderFlags_AlwaysClamp);
+	TrackMaterialEdit(before, "Material shininess", changed);
+
+	if (materialEditId && ImGui::GetActiveID() != materialEditId) FinishMaterialEdit();
+	ImGui::BeginDisabled(!MaterialSettingsDirty());
+	if (ImGui::Button("Apply")) requestedAssetApply = AssetTab::Material;
+	ImGui::SameLine();
+	if (ImGui::Button("Revert")) RevertMaterialSettings();
+	ImGui::EndDisabled();
+	ImGui::BeginDisabled(materialHistory.position == 0);
+	if (ImGui::Button("Undo")) { historyAssetTab = AssetTab::Material; Undo(); }
+	ImGui::EndDisabled(); ImGui::SameLine();
+	ImGui::BeginDisabled(materialHistory.position >= materialHistory.entries.size());
+	if (ImGui::Button("Redo")) { historyAssetTab = AssetTab::Material; Redo(); }
+	ImGui::EndDisabled();
+}
+
 void Editor::DrawInspector()
 {
 	if (ImGui::Begin("Inspector", &showInspector)) {
@@ -812,23 +1075,34 @@ void Editor::DrawInspector()
 				DrawObjectInspector();
 				ImGui::EndTabItem();
 			}
-			bool open = showTextureTab;
-			// Отмечаем черновик и сохраняем вкладку до решения в диалоге закрытия.
-			const ImGuiTabItemFlags flags = (focusTextureTab ? ImGuiTabItemFlags_SetSelected : 0)
-				| (TextureSettingsDirty() ? ImGuiTabItemFlags_UnsavedDocument : 0);
-			if (showTextureTab && ImGui::BeginTabItem("Texture", &open, flags)) {
-				focusTextureTab = false;
-				textureInspectorFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-				if (textureInspectorFocused) historyTargetsTexture = true;
-				DrawTextureInspector();
-				ImGui::EndTabItem();
-			}
-			if (showTextureTab && !open) RequestTextureAction(TextureAction::Close);
+			const auto drawAssetTab = [&](const char* label, AssetTab tab, bool visible, bool dirty,
+				AssetAction close, void (Editor::*draw)()) {
+				if (!visible) return;
+				// Открытая вкладка остаётся видимой до решения в диалоге закрытия.
+				bool open = true;
+				const ImGuiTabItemFlags flags = (focusAssetTab == tab ? ImGuiTabItemFlags_SetSelected : 0)
+					| (dirty ? ImGuiTabItemFlags_UnsavedDocument : 0);
+				if (ImGui::BeginTabItem(label, &open, flags)) {
+					if (focusAssetTab == tab) {
+						focusAssetTab = AssetTab::None;
+						historyAssetTab = tab;
+					}
+					if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+						focusedAssetTab = historyAssetTab = tab;
+					(this->*draw)();
+					ImGui::EndTabItem();
+				}
+				if (!open) RequestAssetAction(close);
+			};
+			drawAssetTab("Texture", AssetTab::Texture, showTextureTab, TextureSettingsDirty(),
+				AssetAction::CloseTexture, &Editor::DrawTextureInspector);
+			drawAssetTab("Material", AssetTab::Material, showMaterialTab, MaterialSettingsDirty(),
+				AssetAction::CloseMaterial, &Editor::DrawMaterialInspector);
 			ImGui::EndTabBar();
 		}
 	}
 	ImGui::End();
-	if (!showInspector && TextureSettingsDirty()) { showInspector = true; RequestTextureAction(TextureAction::HideInspector); }
+	if (!showInspector && AssetSettingsDirty()) { showInspector = true; RequestAssetAction(AssetAction::HideInspector); }
 }
 
 void Editor::DrawObjectInspector()
@@ -992,15 +1266,8 @@ void Editor::DrawMeshInspector(MeshComponent& mesh)
 
 		if (ImGui::BeginDragDropTarget()) {
 			// Проверяем тип до Accept: неподходящий файл не подсвечивает поле как цель.
-			const ImGuiPayload* payload = ImGui::GetDragDropPayload();
-			if (payload && payload->IsDataType("GG_RESOURCE_PATH") && payload->DataSize > 1) {
-				const char* bytes = static_cast<const char*>(payload->Data);
-				if (bytes[payload->DataSize - 1] == '\0') {
-					const std::string value(bytes, payload->DataSize - 1);
-					if (value.find('\0') == std::string::npos && supported(value))
-						if (ImGui::AcceptDragDropPayload("GG_RESOURCE_PATH")) apply(value);
-				}
-			}
+			const std::string value(DroppedResourcePath());
+			if (!value.empty() && supported(value) && ImGui::AcceptDragDropPayload(ResourcePathPayload)) apply(value);
 			ImGui::EndDragDropTarget();
 		}
 		ImGui::SameLine();

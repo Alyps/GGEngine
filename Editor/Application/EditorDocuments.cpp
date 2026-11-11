@@ -174,15 +174,15 @@ void Editor::ContinuePendingAction()
 void Editor::ApplyDocumentActions()
 {
 	// Проект/процесс не должен закрыть предпросмотр или запустить игру с несохранёнными настройками.
-	if (checkPendingAction && TextureSettingsDirty() && (pendingAction == PendingAction::Close
+	if (checkPendingAction && AssetSettingsDirty() && (pendingAction == PendingAction::Close
 		|| pendingAction == PendingAction::NewProject || pendingAction == PendingAction::OpenProject || pendingAction == PendingAction::Play)) {
 		checkPendingAction = false;
-		RequestTextureAction(TextureAction::ContinueDocument);
+		RequestAssetAction(AssetAction::ContinueDocument);
 		return;
 	}
-	if (requestedSave && (temporaryProject || project.filePath.empty()) && TextureSettingsDirty()) {
+	if (requestedSave && (temporaryProject || project.filePath.empty()) && AssetSettingsDirty()) {
 		requestedSave = false;
-		RequestTextureAction(TextureAction::ContinueSave);
+		RequestAssetAction(AssetAction::ContinueSave);
 		return;
 	}
 	// Снимки снимаются между кадрами, после применения создания и удаления объектов.
@@ -248,7 +248,7 @@ void Editor::ApplyProjectAction()
 			game.getResourceManager().SetProjectDirectory(projectCreationTarget.Root());
 			project = std::move(projectCreationTarget);
 			temporaryProject = false;
-			CloseTexturePreview();
+			CloseAssetEditor();
 			contentBrowser = ContentBrowser(project.ResourceRoot(), project.Root());
 			recentProjects.Remember(project.filePath, projectError);
 			projectCreationCompleted = true;
@@ -302,7 +302,7 @@ void Editor::ApplyProjectAction()
 	game.getRenderServer().setCamera(camera);
 	game.getRenderServer().setAmbientColor({ 0.12f, 0.12f, 0.12f });
 	project = std::move(pendingProject);
-	CloseTexturePreview();
+	CloseAssetEditor();
 	sceneFile = project.startupScene;
 	temporaryProject = createDemo;
 	savedScene.clear();

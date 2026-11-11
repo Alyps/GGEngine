@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -32,6 +33,19 @@ std::string ResourceManager::ResolvePath(const std::string& path) const
 }
 
 namespace {
+
+	struct MaterialMapField {
+		const char* name;
+		std::string MaterialData::* path;
+		bool writeNull;
+	};
+
+	// Формат версии 1 сохраняет пустой diffuse как null и пропускает пустые карты данных.
+	constexpr MaterialMapField materialMapFields[] = {
+		{ "diffuse", &MaterialData::diffuse, true },
+		{ "normal", &MaterialData::normal, false },
+		{ "ao", &MaterialData::ao, false }
+	};
 
 	bool Fail(std::string& error, const std::string& message)
 	{
@@ -186,20 +200,23 @@ bool MaterialData::Validate(std::string& error) const
 	if (sampler != "wrap_linear" && sampler != "clamp_linear" &&
 		sampler != "wrap_point" && sampler != "clamp_point")
 		return Fail(error, "sampler: unknown sampler identifier");
-	if (!std::isfinite(specularStrength) || specularStrength < 0.0f)
-		return Fail(error, "specular_strength: expected a finite nonnegative number");
-	if (!std::isfinite(shininess) || shininess <= 0.0f)
-		return Fail(error, "shininess: expected a finite positive number");
+	if (!std::isfinite(specularStrength) || specularStrength < Material::MinSpecularStrength ||
+		specularStrength > Material::MaxSpecularStrength)
+		return Fail(error, "specular_strength: expected a number between 0 and 1");
+	if (!std::isfinite(shininess) || shininess < Material::MinShininess || shininess > Material::MaxShininess)
+		return Fail(error, "shininess: expected a number between 1 and 256");
 
 	// Ссылка на текстуру переносима между папками проекта и не выходит из его корня.
-	if (!diffuse.empty()) {
+	for (const auto& field : materialMapFields) {
+		const auto& path = this->*field.path;
+		if (path.empty()) continue;
 		std::wstring wide;
-		if (!WidePath(diffuse, wide, error)) return false;
+		if (!WidePath(path, wide, error)) return false;
 		const std::filesystem::path relative(wide);
 		if (relative.has_root_path() || wide.find_first_of(L":*?\"<>|") != std::wstring::npos)
-			return Fail(error, "diffuse: expected a path relative to the resource root");
+			return Fail(error, std::string(field.name) + ": expected a path relative to the resource root");
 		for (const auto& part : relative)
-			if (part == L"..") return Fail(error, "diffuse: parent directory traversal is not allowed");
+			if (part == L"..") return Fail(error, std::string(field.name) + ": parent directory traversal is not allowed");
 	}
 	return true;
 }
@@ -226,8 +243,9 @@ bool MaterialData::Load(const std::string& path, std::string& error)
 	// Опечатки и повторные поля не должны незаметно менять смысл материала.
 	for (auto field = json.MemberBegin(); field != json.MemberEnd(); ++field) {
 		const std::string name(field->name.GetString(), field->name.GetStringLength());
+		const bool isMap = std::ranges::any_of(materialMapFields, [&](const auto& map) { return name == map.name; });
 		if (name != "version" && name != "shader" && name != "render_state" &&
-			name != "sampler" && name != "diffuse" && name != "specular_strength" && name != "shininess")
+			name != "sampler" && name != "specular_strength" && name != "shininess" && !isMap)
 			return Fail(error, "Unknown material field: " + name);
 		for (auto previous = json.MemberBegin(); previous != field; ++previous)
 			if (previous->name == field->name) return Fail(error, "Duplicate material field: " + name);
@@ -243,10 +261,15 @@ bool MaterialData::Load(const std::string& path, std::string& error)
 		!ReadString(json, "sampler", loaded.sampler, error) ||
 		!ReadFloat(json, "specular_strength", loaded.specularStrength, error) ||
 		!ReadFloat(json, "shininess", loaded.shininess, error)) return false;
-	const auto diffuseField = json.FindMember("diffuse");
-	if (diffuseField != json.MemberEnd() && !diffuseField->value.IsNull()) {
-		if (!ReadString(json, "diffuse", loaded.diffuse, error)) return false;
-		if (loaded.diffuse.empty()) return Fail(error, "diffuse: use null instead of an empty path");
+	// Старые материалы могли содержать значения вне новых пределов.
+	loaded.specularStrength = std::clamp(loaded.specularStrength, Material::MinSpecularStrength, Material::MaxSpecularStrength);
+	loaded.shininess = std::clamp(loaded.shininess, Material::MinShininess, Material::MaxShininess);
+	for (const auto& map : materialMapFields) {
+		const auto field = json.FindMember(map.name);
+		if (field == json.MemberEnd() || field->value.IsNull()) continue;
+		auto& path = loaded.*map.path;
+		if (!ReadString(json, map.name, path, error)) return false;
+		if (path.empty()) return Fail(error, std::string(map.name) + ": use null instead of an empty path");
 	}
 	if (!loaded.Validate(error)) return false;
 	*this = std::move(loaded);
@@ -258,9 +281,6 @@ bool MaterialData::Save(const std::string& path, std::string& error) const
 	if (!Validate(error)) return false;
 	std::wstring wide;
 	if (!WidePath(path, wide, error)) return false;
-	if (diffuse.size() > (std::numeric_limits<rapidjson::SizeType>::max)())
-		return Fail(error, "diffuse: path is too long");
-
 	// PrettyWriter экранирует строки и записывает числа независимо от локали.
 	rapidjson::StringBuffer buffer;
 	rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
@@ -269,9 +289,13 @@ bool MaterialData::Save(const std::string& path, std::string& error) const
 	writer.Key("shader"); writer.String(shader.c_str());
 	writer.Key("render_state"); writer.String(renderState.c_str());
 	writer.Key("sampler"); writer.String(sampler.c_str());
-	writer.Key("diffuse");
-	if (diffuse.empty()) writer.Null();
-	else writer.String(diffuse.data(), static_cast<rapidjson::SizeType>(diffuse.size()));
+	for (const auto& map : materialMapFields) {
+		const auto& texturePath = this->*map.path;
+		if (texturePath.empty() && !map.writeNull) continue;
+		writer.Key(map.name);
+		if (texturePath.empty()) writer.Null();
+		else writer.String(texturePath.data(), static_cast<rapidjson::SizeType>(texturePath.size()));
+	}
 	writer.Key("specular_strength"); writer.Double(specularStrength);
 	writer.Key("shininess"); writer.Double(shininess);
 	writer.EndObject();
@@ -295,45 +319,102 @@ MaterialResource::~MaterialResource()
 
 bool MaterialResource::load(const std::string& path)
 {
-	if (!device) return Fail(loadError, "DX11 device is null");
-	if (!data.Load(path, loadError)) return false;
+	MaterialData options;
+	return options.Load(path, loadError) && Build(std::move(options), loadError);
+}
+
+bool MaterialResource::Build(MaterialData options, std::string& error)
+{
+	if (!options.Validate(error)) return false;
+	if (!device) return Fail(error, "DX11 device is null");
+	data = std::move(options);
 	if (standardResourceDirectory.empty())
-		return Fail(loadError, "Standard resource directory is not configured");
+		return Fail(error, "Standard resource directory is not configured");
 	const auto& directory = standardResourceDirectory;
 	const std::filesystem::path standardPath(std::u8string(
 		reinterpret_cast<const char8_t*>(directory.data()), directory.size()));
 	const auto shaderPath = standardPath /
 		"Shaders" / "Simple.hlsl";
 	shader = ShaderPack::Create(device, shaderPath.native(), TexturedVertexType::Layout());
-	if (!shader.IsValid()) return Fail(loadError, "Cannot create builtin/simple shader");
+	if (!shader.IsValid()) return Fail(error, "Cannot create builtin/simple shader");
 
 	state = data.renderState == "wireframe"
 		? RenderState::CreateWireframe(*device) : RenderState::CreateOpaque(*device);
 	if (!state.Raster() || !state.Depth() || !state.Blend())
-		return Fail(loadError, "Cannot create material render state");
-	material = Material(shader, state);
-	if (!data.diffuse.empty()) {
+		return Fail(error, "Cannot create material render state");
+	TextureResource* diffuse = nullptr;
+	TextureResource* normal = nullptr;
+	TextureResource* ao = nullptr;
+	if (!data.diffuse.empty() || !data.normal.empty() || !data.ao.empty()) {
 		if (!resources || resources->GetResourceDirectory().empty())
-			return Fail(loadError, "Resource manager and resource directory are required for diffuse textures");
+			return Fail(error, "Resource manager and resource directory are required for material textures");
 		// Ссылки материала считаются от res, независимо от расположения самого JSON.
-		std::wstring root, relative;
-		if (!WidePath(resources->GetResourceDirectory(), root, loadError) ||
-			!WidePath(data.diffuse, relative, loadError)) return false;
-		const auto texturePath = (std::filesystem::path(root) / relative).generic_u8string();
-		auto* texture = resources->load<TextureResource>(
-			std::string(reinterpret_cast<const char*>(texturePath.data()), texturePath.size()), device);
-		if (!texture) return Fail(loadError, resources->GetLastError());
+		std::wstring root;
+		if (!WidePath(resources->GetResourceDirectory(), root, error)) return false;
+		const auto loadMap = [&](const std::string& path, const char* slot, bool linear, TextureResource*& result) {
+			if (path.empty()) return true;
+			std::wstring relative;
+			if (!WidePath(path, relative, error)) return false;
+			const auto texturePath = (std::filesystem::path(root) / relative).generic_u8string();
+			auto* texture = resources->load<TextureResource>(
+				std::string(reinterpret_cast<const char*>(texturePath.data()), texturePath.size()), device);
+			if (!texture) return Fail(error, std::string(slot) + ": " + resources->GetLastError());
+
+			D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+			texture->GetTexture().SRV()->GetDesc(&view);
+			UINT support = 0;
+			if (view.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D
+				|| FAILED(device->CheckFormatSupport(view.Format, &support)) || !(support & D3D11_FORMAT_SUPPORT_SHADER_SAMPLE))
+				return Fail(error, std::string(slot) + ": expected a sampleable 2D texture");
+			if (linear && !texture->RequireLinearTexture(error)) return false;
+			result = texture;
+			return true;
+		};
+		if (!loadMap(data.diffuse, "Base Color", false, diffuse)
+			|| !loadMap(data.normal, "Normal", true, normal)
+			|| !loadMap(data.ao, "AO", true, ao)) return false;
 
 		// Все допустимые значения sampler преобразуются в существующие DX11-описания.
 		const auto& description = data.sampler == "wrap_linear" ? SamplerDescs::WrapLinear :
 			data.sampler == "wrap_point" ? SamplerDescs::WrapPoint :
 			data.sampler == "clamp_linear" ? SamplerDescs::ClampLinear : SamplerDescs::ClampPoint;
 		if (FAILED(device->CreateSamplerState(&description, &samplerState)))
-			return Fail(loadError, "Cannot create material sampler");
-		material = Material(shader, texture->GetTexture(), samplerState, state);
+			return Fail(error, "Cannot create material sampler");
 	}
+	material = Material(shader, state, samplerState, diffuse ? &diffuse->GetTexture() : nullptr,
+		normal ? &normal->GetLinearTexture() : nullptr, ao ? &ao->GetLinearTexture() : nullptr);
 	material.specularStrength = data.specularStrength;
 	material.shininess = data.shininess;
+	return true;
+}
+
+void MaterialResource::Adopt(MaterialResource& candidate)
+{
+	// RenderItem сохраняет адрес material; ссылки внутри него привязываем к новым данным.
+	const auto* diffuse = candidate.material.Diffuse();
+	const auto* normal = candidate.material.Normal();
+	const auto* ao = candidate.material.AmbientOcclusion();
+	shader = std::move(candidate.shader);
+	state = std::move(candidate.state);
+	std::swap(samplerState, candidate.samplerState);
+	data = std::move(candidate.data);
+	material = Material(shader, state, samplerState, diffuse, normal, ao);
+	material.specularStrength = data.specularStrength;
+	material.shininess = data.shininess;
+}
+
+bool ResourceManager::ApplyMaterial(const std::string& path, const MaterialData& options, ID3D11Device* device)
+{
+	const auto resolved = ResolvePath(path);
+	if (resolved.empty()) return Fail(lastError, "Invalid material path");
+	const auto found = resources.find(resolved);
+	auto* current = found == resources.end() ? nullptr : dynamic_cast<MaterialResource*>(found->second);
+	if (found != resources.end() && !current) return Fail(lastError, "Cached resource has a different type");
+
+	// Загрузка карты может расширить кеш. Удерживаем только адрес ресурса, без итератора.
+	MaterialResource candidate(device, standardResourceDirectory, this);
+	if (!candidate.Build(options, lastError) || !options.Save(resolved, lastError)) return false;
+	if (current) current->Adopt(candidate);
 	return true;
 }
 
@@ -474,9 +555,32 @@ bool TextureResource::load(const std::string& path)
 bool TextureResource::ApplySettings(const TextureSettings& options, std::string& error)
 {
 	Texture candidate;
-	if (!BuildTexture(sourcePath, options, candidate, error) || !options.Save(sourcePath, error)) return false;
+	if (!BuildTexture(sourcePath, options, candidate, error)) return false;
+	Texture linearCandidate;
+	if (linearTexture.IsValid() && !BuildLinearTexture(candidate, options, linearCandidate, error)) return false;
+	if (!options.Save(sourcePath, error)) return false;
 	// Материалы заимствуют адрес m_texture: заменяется содержимое, а не объект ресурса.
 	m_texture = std::move(candidate);
+	linearTexture = std::move(linearCandidate);
 	settings = options;
+	return true;
+}
+
+bool TextureResource::RequireLinearTexture(std::string& error)
+{
+	return linearTexture.IsValid() || BuildLinearTexture(m_texture, settings, linearTexture, error);
+}
+
+bool TextureResource::BuildLinearTexture(const Texture& primary, TextureSettings options, Texture& result, std::string& error) const
+{
+	if (DirectX::IsSRGB(primary.Format())) {
+		options.colorSpace = TextureSettings::ColorSpace::Linear;
+		return BuildTexture(sourcePath, options, result, error);
+	}
+	// Уже линейная карта использует тот же SRV по стабильному для материала адресу Texture.
+	result.m_srv = primary.m_srv;
+	result.m_width = primary.m_width;
+	result.m_height = primary.m_height;
+	result.m_format = primary.m_format;
 	return true;
 }
