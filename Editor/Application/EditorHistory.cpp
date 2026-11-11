@@ -224,6 +224,15 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 			return true;
 		}
 		if (auto* mesh = dynamic_cast<MeshComponent*>(component)) return mesh->ApplyDescription(json, documentError);
+		if (auto* ai = dynamic_cast<UtilityAIComponent*>(component)) {
+			std::string path;
+			bool enabled;
+			if (!Deserialization::String(json, "table_path", path, documentError)
+				|| !Deserialization::Bool(json, "enabled", enabled, documentError)) return false;
+			ai->SetEnabled(enabled);
+			if (path != ai->GetTablePath()) ai->SetTablePath(game, std::move(path));
+			return true;
+		}
 		if (auto* collider = dynamic_cast<BoxColliderComponent*>(component)) {
 			float size[3];
 			if (!Deserialization::Floats(json, "size", size, 3, documentError)) return false;

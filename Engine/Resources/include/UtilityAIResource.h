@@ -2,15 +2,28 @@
 #include "ResourceManager.h"
 #include <vector>
 
+struct UtilityCurveData {
+    struct Point {
+        double x, y;
+        bool operator==(const Point&) const = default;
+    };
+    std::vector<Point> points;
+    bool operator==(const UtilityCurveData&) const = default;
+    bool Read(const std::string& path, std::string& error);
+    bool Validate(std::string& error) const;
+    bool Save(const std::string& path, std::string& error) const;
+    // Вызывается для кривой, прошедшей Validate.
+    double Evaluate(double value) const;
+};
+
 // Менеджер владеет кривой; таблицы только заимствуют её.
 class UtilityCurveResource final : public Resource {
     friend class ResourceManager;
-    struct Point { double x, y; };
-    std::vector<Point> points;
+    UtilityCurveData data;
     UtilityCurveResource() = default;
     bool load(const std::string& path) override;
 public:
-    double Evaluate(double value) const;
+    double Evaluate(double value) const { return data.Evaluate(value); }
 };
 
 enum class UtilityParameterType { Float, Int };
@@ -18,6 +31,23 @@ struct UtilityParameter {
     std::string name;
     UtilityParameterType type;
     double initialValue = 0;
+    bool operator==(const UtilityParameter&) const = default;
+};
+
+// Черновик хранит пути от проекта, даже если файлы ещё недоступны.
+struct UtilityTableData {
+    struct Action {
+        std::string name, scriptPath;
+        std::vector<std::string> curvePaths;
+        bool operator==(const Action&) const = default;
+    };
+    std::vector<UtilityParameter> parameters;
+    std::vector<Action> actions;
+    double interval = 0.2, switchThreshold = 0.05, minimumDuration = 0;
+    bool operator==(const UtilityTableData&) const = default;
+    bool Read(const std::string& path, std::string& error);
+    bool Validate(std::string& error) const;
+    bool Save(const std::string& path, std::string& error) const;
 };
 
 struct UtilityAction {

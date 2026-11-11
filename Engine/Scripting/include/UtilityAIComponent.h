@@ -27,6 +27,8 @@ public:
     void Update(Game&, double dt) override;
     bool Get(const std::string&, UtilityParameterType, double&, std::string&) const;
     bool Set(const std::string&, UtilityParameterType, double, std::string&);
+    const std::string& GetTablePath() const { return tablePath; }
+    void SetTablePath(Game& game, std::string path);
     const UtilityAITable* GetTable() const { return table; }
     std::string GetCurrentAction() const;
     const std::string& GetLastError() const { return lastError; }

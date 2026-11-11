@@ -2,9 +2,11 @@
 #include "imgui_internal.h"
 #include "RenderPresets.h"
 #include "EditorFileUtils.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string_view>
+#include <unordered_set>
 using EditorAction = EditorSettings::Action;
 namespace {
 	constexpr const char* ResourcePathPayload = "GG_RESOURCE_PATH";
@@ -18,6 +20,34 @@ namespace {
 		const std::string_view path(bytes, payload->DataSize - 1);
 		if (bytes[path.size()] != '\0' || path.find('\0') != std::string_view::npos) return {};
 		return path;
+	}
+
+	std::string LowerAssetName(std::string name)
+	{
+		for (char& c : name) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+		return name;
+	}
+
+	void UtilityInputText(const char* label, const char* hint, std::string& value, ImGuiInputTextFlags flags = 0)
+	{
+		std::vector<char> buffer(value.size() + 256, '\0');
+		std::copy(value.begin(), value.end(), buffer.begin());
+		if (ImGui::InputTextWithHint(label, hint, buffer.data(), buffer.size(), flags)) value = buffer.data();
+	}
+
+	void UtilityPathField(const char* label, const char* suffix, std::string& path, ImGuiInputTextFlags flags = 0)
+	{
+		UtilityInputText(label, suffix, path, flags);
+		if (!ImGui::BeginDragDropTarget()) return;
+		const std::string dropped(DroppedResourcePath());
+		// Скрипты должны иметь точный суффикс runtime, кривые распознаются по имени в браузере.
+		const bool supported = suffix == std::string_view(".action.lua") ? dropped.ends_with(suffix)
+			: LowerAssetName(dropped).ends_with(suffix);
+		if (supported && ImGui::AcceptDragDropPayload(ResourcePathPayload)) {
+			if (ImGui::GetActiveID() == ImGui::GetItemID()) ImGui::ClearActiveID();
+			path = dropped;
+		}
+		ImGui::EndDragDropTarget();
 	}
 
 	const char* TextureFormatName(DXGI_FORMAT format)
@@ -425,7 +455,10 @@ void Editor::ApplyTreeAction()
 	case TreeOperation::AddComponent: {
 		Component* component = nullptr;
 		const bool physics = action.kind == ComponentKind::Collider || action.kind == ComponentKind::StaticBody || action.kind == ComponentKind::DynamicBody;
-		if (physics && node->get_parent()) { sceneActionError = "Physics components must use the root branch."; break; }
+		if ((physics || action.kind == ComponentKind::UtilityAI) && node->get_parent()) {
+			sceneActionError = "This component must use the root branch.";
+			break;
+		}
 		if (action.kind == ComponentKind::StaticBody || action.kind == ComponentKind::DynamicBody) {
 			bool hasBody = false;
 			for (auto* existing : node->get_components()) if (!existing->isPendingDestroy() && dynamic_cast<RigidBodyComponent*>(existing)) hasBody = true;
@@ -440,6 +473,7 @@ void Editor::ApplyTreeAction()
 		case ComponentKind::Collider: component = node->create_component<BoxColliderComponent>(); break;
 		case ComponentKind::StaticBody: component = node->create_component<StaticRigidBodyComponent>(); break;
 		case ComponentKind::DynamicBody: component = node->create_component<DynamicRigidBodyComponent>(); break;
+		case ComponentKind::UtilityAI: component = node->getOwner()->createComponent<UtilityAIComponent>(std::string{}); break;
 		}
 		changed = component != nullptr;
 		if (!changed) sceneActionError = "Cannot allocate component.";
@@ -566,6 +600,14 @@ void Editor::CloseAssetEditor()
 {
 	CloseTexturePreview();
 	CloseMaterialEditor();
+	utilityTable = {};
+	utilityCurve = {};
+	curvePointDrag = {};
+	focusUtilityTable = false;
+	utilityTableDetached = utilityCurveInTable = false;
+	utilityTableDock = UtilityTableDock::None;
+	utilityParameterPage = 0;
+	if (focusAssetTab == AssetTab::UtilityCurve) focusAssetTab = AssetTab::None;
 }
 
 void Editor::CloseTexturePreview()
@@ -662,7 +704,12 @@ bool Editor::TextureSettingsDirty() const
 
 bool Editor::AssetSettingsDirty() const
 {
-	return MaterialSettingsDirty() || TextureSettingsDirty();
+	return MaterialSettingsDirty() || TextureSettingsDirty() || utilityCurve.Dirty() || utilityTable.Dirty();
+}
+
+bool Editor::InspectorAssetSettingsDirty() const
+{
+	return MaterialSettingsDirty() || TextureSettingsDirty() || (!utilityCurveInTable && utilityCurve.Dirty());
 }
 
 bool Editor::MaterialSettingsDirty() const
@@ -783,6 +830,15 @@ void Editor::RequestAssetAction(AssetAction action, const std::string& file)
 		focusAssetTab = AssetTab::Material;
 		return;
 	}
+	if (action == AssetAction::OpenUtilityTable && file == utilityTable.file) {
+		focusUtilityTable = true;
+		return;
+	}
+	const bool inTable = action == AssetAction::OpenUtilityCurveInTable;
+	if ((inTable || action == AssetAction::OpenUtilityCurve) && file == utilityCurve.file) {
+		ShowUtilityCurve(inTable);
+		return;
+	}
 	assetAction = action;
 	pendingAssetFile = file;
 }
@@ -797,10 +853,19 @@ Editor::AssetTab Editor::PendingAssetConfirmation() const
 	case AssetAction::OpenMaterial:
 	case AssetAction::CloseMaterial:
 		return MaterialSettingsDirty() ? AssetTab::Material : AssetTab::None;
+	case AssetAction::OpenUtilityTable:
+	case AssetAction::CloseUtilityTable:
+		return utilityTable.Dirty() ? AssetTab::UtilityTable : AssetTab::None;
+	case AssetAction::OpenUtilityCurve:
+	case AssetAction::OpenUtilityCurveInTable:
+	case AssetAction::CloseUtilityCurve:
+		return utilityCurve.Dirty() ? AssetTab::UtilityCurve : AssetTab::None;
 	default:
-		// Смена проекта и закрытие инспектора проверяют оба черновика по очереди.
+		// Обрабатываем черновики по одному, включая центральную таблицу при смене документа.
 		if (TextureSettingsDirty()) return AssetTab::Texture;
-		return MaterialSettingsDirty() ? AssetTab::Material : AssetTab::None;
+		if (MaterialSettingsDirty()) return AssetTab::Material;
+		if (utilityCurve.Dirty() && (assetAction != AssetAction::HideInspector || !utilityCurveInTable)) return AssetTab::UtilityCurve;
+		return assetAction != AssetAction::HideInspector && utilityTable.Dirty() ? AssetTab::UtilityTable : AssetTab::None;
 	}
 }
 
@@ -814,6 +879,27 @@ void Editor::ContinueAssetAction()
 	else if (action == AssetAction::OpenMaterial) OpenMaterialEditor(file);
 	else if (action == AssetAction::CloseTexture) CloseTexturePreview();
 	else if (action == AssetAction::CloseMaterial) CloseMaterialEditor();
+	else if (action == AssetAction::OpenUtilityTable) {
+		utilityTable.Open(file);
+		utilityParameterPage = 0;
+		focusUtilityTable = true;
+	}
+	else if (action == AssetAction::OpenUtilityCurve || action == AssetAction::OpenUtilityCurveInTable) {
+		utilityCurve.Open(file);
+		ShowUtilityCurve(action == AssetAction::OpenUtilityCurveInTable);
+	}
+	else if (action == AssetAction::CloseUtilityTable) {
+		utilityTable = {};
+		focusUtilityTable = utilityTableDetached = false;
+		utilityTableDock = UtilityTableDock::None;
+		if (utilityCurveInTable) ShowUtilityCurve(false);
+	}
+	else if (action == AssetAction::CloseUtilityCurve) {
+		utilityCurve = {};
+		utilityCurveInTable = false;
+		curvePointDrag = {};
+		if (focusAssetTab == AssetTab::UtilityCurve) focusAssetTab = AssetTab::None;
+	}
 	else if (action == AssetAction::HideInspector) showInspector = false;
 	else if (action == AssetAction::ContinueDocument) checkPendingAction = true;
 	else if (action == AssetAction::ContinueSave) requestedSave = true;
@@ -825,7 +911,9 @@ void Editor::ApplyAssetActions()
 	if (requestedAssetApply != AssetTab::None) {
 		const auto tab = requestedAssetApply;
 		requestedAssetApply = AssetTab::None;
-		if (!(tab == AssetTab::Material ? ApplyMaterialSettings() : ApplyTextureSettings())) return;
+		const bool saved = tab == AssetTab::Material ? ApplyMaterialSettings()
+			: tab == AssetTab::Texture ? ApplyTextureSettings() : ApplyUtilityAsset(tab);
+		if (!saved) return;
 	}
 	if (assetAction == AssetAction::None) return;
 	const auto next = PendingAssetConfirmation();
@@ -843,24 +931,38 @@ void Editor::ApplyAssetActions()
 void Editor::DrawAssetDialogs()
 {
 	// Закрытие Inspector через Window также проверяет черновик ресурса.
-	if (!showInspector && AssetSettingsDirty()) {
+	if (!showInspector && InspectorAssetSettingsDirty()) {
 		showInspector = true;
 		RequestAssetAction(AssetAction::HideInspector);
 	}
 	if (showUnsavedAssetDialog) { showUnsavedAssetDialog = false; ImGui::OpenPopup("Unsaved asset settings"); }
+	const bool detachedAction = assetAction == AssetAction::CloseUtilityTable || assetAction == AssetAction::OpenUtilityCurveInTable
+		|| (assetAction == AssetAction::CloseUtilityCurve && utilityCurveInTable);
+	if (utilityTableDetached && detachedAction && ImGui::IsPopupOpen("Unsaved asset settings")) {
+		// Подтверждение должно появиться над окном, из которого закрывают или меняют ресурс.
+		const auto* tableWindow = ImGui::FindWindowByName("Utility AI");
+		if (tableWindow && tableWindow->Viewport) {
+			ImGui::SetNextWindowViewport(tableWindow->Viewport->ID);
+			ImGui::SetNextWindowPos(tableWindow->Viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+		}
+	}
 	if (!ImGui::BeginPopupModal("Unsaved asset settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
 	if (closeAssetDialog) { closeAssetDialog = false; ImGui::CloseCurrentPopup(); }
 	else {
 		const bool material = assetPrompt == AssetTab::Material;
-		const auto& file = material ? materialFile : textureFile;
-		const auto& error = material ? materialSettingsError : textureSettingsError;
-		ImGui::TextUnformatted(material ? "Apply material changes before continuing?" : "Apply texture settings before continuing?");
+		const bool table = assetPrompt == AssetTab::UtilityTable;
+		const bool curve = assetPrompt == AssetTab::UtilityCurve;
+		const auto& file = table ? utilityTable.file : curve ? utilityCurve.file : material ? materialFile : textureFile;
+		const auto& error = table ? utilityTable.error : curve ? utilityCurve.error : material ? materialSettingsError : textureSettingsError;
+		ImGui::TextUnformatted(table || curve ? "Save Utility AI changes before continuing?"
+			: material ? "Apply material changes before continuing?" : "Apply texture settings before continuing?");
 		ImGui::TextWrapped("%s", file.c_str());
 		if (!error.empty()) ImGui::TextWrapped("%s", error.c_str());
 		if (ImGui::Button("Apply and continue")) requestedAssetApply = assetPrompt;
 		ImGui::SameLine();
 		if (ImGui::Button("Discard")) {
-			if (material) RevertMaterialSettings();
+			if (table || curve) RevertUtilityAsset(assetPrompt);
+			else if (material) RevertMaterialSettings();
 			else RevertTextureSettings();
 		}
 		ImGui::SameLine();
@@ -1066,6 +1168,369 @@ void Editor::DrawMaterialInspector()
 	ImGui::EndDisabled();
 }
 
+void Editor::OpenUtilityAsset(const std::string& file)
+{
+	const auto name = LowerAssetName(file);
+	if (name.ends_with(".utilityai.json")) RequestAssetAction(AssetAction::OpenUtilityTable, file);
+	else if (name.ends_with(".curve.json")) RequestAssetAction(AssetAction::OpenUtilityCurve, file);
+}
+
+namespace {
+bool ValidateUtilityReferences(const UtilityTableData& table, const ResourceManager& resources, std::string& error)
+{
+	std::unordered_set<std::string> checkedCurves;
+	for (const auto& action : table.actions) {
+		const auto script = resources.ResolvePath(action.scriptPath);
+		std::error_code fileError;
+		if (script.empty() || !std::filesystem::is_regular_file(EditorFiles::DiskPath(script), fileError)) {
+			error = action.name + ": cannot find " + action.scriptPath;
+			return false;
+		}
+		// Проверяем сохранённый файл, потому что Play загрузит его в новый кеш.
+		for (const auto& path : action.curvePaths) {
+			if (path.empty()) continue;
+			const auto resolved = resources.ResolvePath(path);
+			if (!checkedCurves.insert(resolved).second) continue;
+			UtilityCurveData curve;
+			if (!curve.Read(resolved, error) || !curve.Validate(error)) {
+				error = action.name + ": " + path + ": " + error;
+				return false;
+			}
+		}
+	}
+	return true;
+}
+} // namespace
+
+bool Editor::ApplyUtilityAsset(AssetTab tab)
+{
+	if (tab == AssetTab::UtilityCurve) return utilityCurve.Save();
+	if (tab != AssetTab::UtilityTable || !utilityTable.ready) return false;
+	auto& asset = utilityTable;
+	return asset.draft.Validate(asset.error)
+		&& ValidateUtilityReferences(asset.draft, game.getResourceManager(), asset.error)
+		&& asset.Save();
+}
+
+void Editor::RevertUtilityAsset(AssetTab tab)
+{
+	if (tab == AssetTab::UtilityTable) utilityTable.Revert();
+	else if (tab == AssetTab::UtilityCurve) utilityCurve.Revert();
+}
+
+void Editor::DrawUtilitySaveControls(AssetTab tab, bool dirty)
+{
+	// Ctrl+S в активной вкладке сохраняет её ресурс вместо сцены.
+	if (saveShortcut && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
+		requestedSave = false;
+		if (dirty) requestedAssetApply = tab;
+	}
+	ImGui::BeginDisabled(!dirty);
+	if (ImGui::Button("Save")) requestedAssetApply = tab;
+	ImGui::SameLine();
+	if (ImGui::Button("Revert")) RevertUtilityAsset(tab);
+	ImGui::EndDisabled();
+}
+
+void Editor::ShowUtilityCurve(bool inTable)
+{
+	// Оба места показывают один черновик. Перенос не читает файл повторно.
+	utilityCurveInTable = inTable && utilityTableDetached;
+	curvePointDrag = {};
+	if (utilityCurveInTable) {
+		if (focusAssetTab == AssetTab::UtilityCurve) focusAssetTab = AssetTab::None;
+		focusUtilityTable = true;
+	} else {
+		showInspector = true;
+		focusAssetTab = AssetTab::UtilityCurve;
+	}
+}
+
+void Editor::DrawUtilityTable()
+{
+	if (utilityTable.file.empty()) return;
+	ImGuiWindowClass windowClass;
+	windowClass.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge;
+	ImGui::SetNextWindowClass(&windowClass);
+	if (utilityTableDock == UtilityTableDock::Detach) {
+		ImGui::SetNextWindowDockID(0);
+		const auto* main = ImGui::GetMainViewport();
+		ImGui::SetNextWindowPos(main->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+		ImGui::SetNextWindowSize(ImVec2(980, 620));
+	} else if (viewportDockId) {
+		ImGui::SetNextWindowDockID(viewportDockId, utilityTableDock == UtilityTableDock::Attach ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
+	}
+	utilityTableDock = UtilityTableDock::None;
+	const bool focusWindow = focusUtilityTable;
+	if (focusWindow) { ImGui::SetNextWindowFocus(); focusUtilityTable = false; }
+	bool open = true;
+	const ImGuiWindowFlags windowFlags = utilityTable.Dirty() ? ImGuiWindowFlags_UnsavedDocument : 0;
+	const bool visible = ImGui::Begin("Utility AI", &open, windowFlags);
+	utilityTableDetached = !ImGui::IsWindowDocked();
+	if (!utilityTableDetached && utilityCurveInTable) ShowUtilityCurve(false);
+	if (visible) {
+		ImGui::BeginDisabled(utilityTableDetached && !viewportDockId);
+		if (ImGui::SmallButton(utilityTableDetached ? "Dock to Viewport" : "Detach")) {
+			utilityTableDock = utilityTableDetached ? UtilityTableDock::Attach : UtilityTableDock::Detach;
+			focusUtilityTable = true;
+		}
+		ImGui::EndDisabled();
+		if (utilityCurveInTable && !utilityCurve.file.empty()) {
+			const float width = ImGui::GetContentRegionAvail().x;
+			const float tableWidth = std::floor(width * 0.65f);
+			if (ImGui::BeginChild("##detachedTable", ImVec2(tableWidth, 0))) DrawUtilityTableContents();
+			ImGui::EndChild();
+			ImGui::SameLine();
+			if (focusWindow) ImGui::SetNextWindowFocus();
+			if (ImGui::BeginChild("##detachedCurve", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+				if (ImGui::SmallButton("Close curve")) RequestAssetAction(AssetAction::CloseUtilityCurve);
+				DrawUtilityCurve();
+			}
+			ImGui::EndChild();
+		} else {
+			DrawUtilityTableContents();
+		}
+	}
+	ImGui::End();
+	if (!open) RequestAssetAction(AssetAction::CloseUtilityTable);
+}
+
+void Editor::DrawUtilityTableContents()
+{
+	ImGui::TextWrapped("%s", EditorFiles::Utf8Path(EditorFiles::DiskPath(utilityTable.file).filename()).c_str());
+	if (!utilityTable.error.empty()) ImGui::TextWrapped("%s", utilityTable.error.c_str());
+	if (!utilityTable.ready) return;
+	DrawUtilitySaveControls(AssetTab::UtilityTable, utilityTable.Dirty());
+	auto& data = utilityTable.draft;
+	if (ImGui::CollapsingHeader("Decision settings")) {
+		ImGui::InputDouble("Interval (s)", &data.interval, 0.01, 0.1, "%.6g");
+		ImGui::InputDouble("Switch threshold", &data.switchThreshold, 0.01, 0.1, "%.6g");
+		ImGui::InputDouble("Minimum duration (s)", &data.minimumDuration, 0.01, 0.1, "%.6g");
+	}
+	if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) DrawUtilityParameters(data);
+	if (ImGui::CollapsingHeader("Actions", ImGuiTreeNodeFlags_DefaultOpen)) DrawUtilityActions(data);
+}
+
+void Editor::DrawUtilityParameters(UtilityTableData& data)
+{
+	if (ImGui::Button("Add parameter")) {
+		data.parameters.push_back({ "", UtilityParameterType::Float, 0 });
+		for (auto& action : data.actions) action.curvePaths.emplace_back();
+	}
+	const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+	if (!ImGui::BeginTable("##ParameterFields", 3, flags)) return;
+	ImGui::TableSetupColumn("Name");
+	ImGui::TableSetupColumn("Type");
+	ImGui::TableSetupColumn("Default");
+	ImGui::TableHeadersRow();
+	const auto& style = ImGui::GetStyle();
+	const float removeWidth = ImGui::CalcTextSize("Remove").x + style.FramePadding.x * 2 + style.ItemSpacing.x;
+	size_t remove = data.parameters.size();
+	for (size_t i = 0; i < data.parameters.size(); ++i) {
+		auto& parameter = data.parameters[i];
+		ImGui::PushID(static_cast<int>(i));
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::SetNextItemWidth(-1);
+		UtilityInputText("##name", "Parameter name", parameter.name);
+		ImGui::TableNextColumn();
+		int type = parameter.type == UtilityParameterType::Int ? 1 : 0;
+		ImGui::SetNextItemWidth(-1);
+		if (ImGui::Combo("##type", &type, "float\0int\0")) parameter.type = type ? UtilityParameterType::Int : UtilityParameterType::Float;
+		ImGui::TableNextColumn();
+		ImGui::SetNextItemWidth((std::max)(1.0f, ImGui::GetContentRegionAvail().x - removeWidth));
+		ImGui::InputDouble("##default", &parameter.initialValue, 0, 0, "%.12g");
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Remove")) remove = i;
+		ImGui::PopID();
+	}
+	ImGui::EndTable();
+	if (remove == data.parameters.size()) return;
+	// Индекс параметра определяет ячейку каждой строки в JSON.
+	data.parameters.erase(data.parameters.begin() + remove);
+	for (auto& action : data.actions) action.curvePaths.erase(action.curvePaths.begin() + remove);
+}
+
+void Editor::DrawUtilityActions(UtilityTableData& data)
+{
+	if (ImGui::Button("Add action")) data.actions.push_back({ "", "", std::vector<std::string>(data.parameters.size()) });
+	ImGui::TextDisabled("Drop a script or curve from Content Browser. Paths are relative to the project.");
+	// Страницы позволяют открыть таблицу с любым количеством параметров в пределах ImGui.
+	constexpr size_t pageSize = 8;
+	const size_t lastPage = data.parameters.empty() ? 0 : (data.parameters.size() - 1) / pageSize;
+	utilityParameterPage = (std::min)(utilityParameterPage, lastPage);
+	if (lastPage) {
+		ImGui::BeginDisabled(utilityParameterPage == 0);
+		if (ImGui::SmallButton("<")) --utilityParameterPage;
+		ImGui::EndDisabled(); ImGui::SameLine();
+		ImGui::Text("Parameters %zu / %zu", utilityParameterPage + 1, lastPage + 1);
+		ImGui::SameLine(); ImGui::BeginDisabled(utilityParameterPage == lastPage);
+		if (ImGui::SmallButton(">")) ++utilityParameterPage;
+		ImGui::EndDisabled();
+	}
+	const size_t first = utilityParameterPage * pageSize;
+	const size_t count = (std::min)(pageSize, data.parameters.size() - first);
+	constexpr float actionWidth = 125.0f, scriptWidth = 175.0f, curveWidth = 155.0f;
+	const auto& style = ImGui::GetStyle();
+	const float minimumWidth = actionWidth + scriptWidth + curveWidth * count
+		+ style.CellPadding.x * 2 * (count + 2) + style.ScrollbarSize;
+	// В широкой панели столбцы заполняют таблицу, в узкой сохраняют ширину полей.
+	const bool scrollX = minimumWidth > ImGui::GetContentRegionAvail().x;
+	const auto columnWidth = scrollX ? ImGuiTableColumnFlags_WidthFixed : ImGuiTableColumnFlags_WidthStretch;
+	const ImGuiTableFlags flags = ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders
+		| ImGuiTableFlags_Resizable | (scrollX ? ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit
+			: ImGuiTableFlags_SizingStretchProp);
+	const float height = (std::max)(160.0f, ImGui::GetContentRegionAvail().y);
+	if (!ImGui::BeginTable("##ActionMatrix", static_cast<int>(count + 2), flags, ImVec2(0, height))) return;
+	ImGui::TableSetupScrollFreeze(1, 1);
+	ImGui::TableSetupColumn("Action", columnWidth, actionWidth);
+	ImGui::TableSetupColumn("Script", columnWidth, scriptWidth);
+	for (size_t i = 0; i < count; ++i) {
+		const auto& name = data.parameters[first + i].name;
+		const std::string label = name.empty() ? "Parameter " + std::to_string(first + i + 1) : name;
+		ImGui::TableSetupColumn(label.c_str(), columnWidth, curveWidth);
+	}
+	ImGui::TableHeadersRow();
+	size_t remove = data.actions.size(), move = data.actions.size();
+	for (size_t row = 0; row < data.actions.size(); ++row) {
+		auto& action = data.actions[row];
+		ImGui::PushID(static_cast<int>(row));
+		ImGui::TableNextRow();
+		if (ImGui::TableNextColumn()) {
+			ImGui::SetNextItemWidth(-1);
+			UtilityInputText("##action", "Action name", action.name);
+			// Кнопки остаются видимыми при горизонтальной прокрутке матрицы.
+			ImGui::BeginDisabled(row == 0);
+			if (ImGui::SmallButton("Up")) move = row;
+			ImGui::EndDisabled(); ImGui::SameLine();
+			if (ImGui::SmallButton("Remove")) remove = row;
+		}
+		if (ImGui::TableNextColumn()) {
+			ImGui::SetNextItemWidth(-1);
+			UtilityPathField("##script", ".action.lua", action.scriptPath);
+		}
+		for (size_t i = first; i < first + count; ++i) {
+			if (!ImGui::TableNextColumn()) continue;
+			auto& path = action.curvePaths[i];
+			ImGui::PushID(static_cast<int>(i));
+			ImGui::SetNextItemWidth((std::max)(1.0f, ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() * 1.5f));
+			UtilityPathField("##curve", ".curve.json", path);
+			ImGui::SameLine(); ImGui::BeginDisabled(path.empty());
+			if (ImGui::SmallButton("Edit")) {
+				const auto resolved = game.getResourceManager().ResolvePath(path);
+				if (!resolved.empty()) RequestAssetAction(utilityTableDetached ? AssetAction::OpenUtilityCurveInTable : AssetAction::OpenUtilityCurve, resolved);
+			}
+			ImGui::EndDisabled();
+			ImGui::PopID();
+		}
+		ImGui::PopID();
+	}
+	ImGui::EndTable();
+	if (remove < data.actions.size()) data.actions.erase(data.actions.begin() + remove);
+	else if (move > 0 && move < data.actions.size()) std::swap(data.actions[move], data.actions[move - 1]);
+}
+
+void Editor::DrawUtilityCurveGraph(UtilityCurveData& data)
+{
+	const ImVec2 origin = ImGui::GetCursorScreenPos();
+	const ImVec2 size((std::max)(16.0f, ImGui::GetContentRegionAvail().x), 120.0f);
+	ImGui::InvisibleButton("##curveGraph", size);
+	if (!ImGui::IsItemActive() || ImGui::IsItemActivated()) curvePointDrag.active = false;
+
+	// Небольшой запас по X позволяет тянуть крайние точки наружу.
+	constexpr double limit = (std::numeric_limits<double>::max)();
+	const double first = data.points.front().x, last = data.points.back().x;
+	const double left = curvePointDrag.active ? curvePointDrag.left : std::clamp(std::lerp(first, last, -0.08), -limit, limit);
+	const double right = curvePointDrag.active ? curvePointDrag.right : std::clamp(std::lerp(first, last, 1.08), -limit, limit);
+	const double scale = std::isfinite(right - left) ? 1.0 : 0.5;
+	const float width = size.x - 8, height = size.y - 8;
+	const auto normalizedX = [&](double x) { return (x * scale - left * scale) / (right * scale - left * scale); };
+	const auto screen = [&](const UtilityCurveData::Point& point) {
+		return ImVec2(origin.x + 4 + static_cast<float>(normalizedX(point.x)) * width,
+			origin.y + 4 + static_cast<float>(1 - point.y) * height);
+	};
+
+	size_t hovered = data.points.size();
+	if (ImGui::IsItemHovered()) {
+		const ImVec2 mouse = ImGui::GetMousePos();
+		float closest = 8.0f * 8.0f;
+		for (size_t i = 0; i < data.points.size(); ++i) {
+			const ImVec2 point = screen(data.points[i]);
+			const float dx = mouse.x - point.x, dy = mouse.y - point.y;
+			const float distance = dx * dx + dy * dy;
+			if (distance < closest) { hovered = i; closest = distance; }
+		}
+	}
+	if (hovered < data.points.size() && ImGui::IsItemActivated())
+		curvePointDrag = { hovered, data.points[hovered], left, right, true };
+
+	if (curvePointDrag.active && curvePointDrag.index < data.points.size()) {
+		const size_t i = curvePointDrag.index;
+		const auto delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+		const auto& start = curvePointDrag.start;
+		// Берём ближайшие представимые X внутри соседей, чтобы кривая оставалась валидной.
+		const double lower = i ? std::nextafter(data.points[i - 1].x, right) : left;
+		const double upper = i + 1 < data.points.size() ? std::nextafter(data.points[i + 1].x, left) : right;
+		const double u = std::clamp(normalizedX(start.x) + delta.x / width, 0.0, 1.0);
+		const double x = delta.x == 0 ? start.x : std::clamp(std::lerp(left, right, u), lower, upper);
+		data.points[i] = { x, std::clamp(start.y - delta.y / height, 0.0, 1.0) };
+		hovered = i;
+	}
+
+	auto* draw = ImGui::GetWindowDrawList();
+	draw->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y), ImGui::GetColorU32(ImGuiCol_FrameBg));
+	const ImU32 line = ImGui::GetColorU32(ImGuiCol_PlotLines);
+	for (size_t i = 1; i < data.points.size(); ++i)
+		draw->AddLine(screen(data.points[i - 1]), screen(data.points[i]), line, 2.0f);
+	for (size_t i = 0; i < data.points.size(); ++i) {
+		const bool highlight = i == hovered;
+		draw->AddCircleFilled(screen(data.points[i]), highlight ? 5.0f : 3.0f,
+			highlight ? ImGui::GetColorU32(ImGuiCol_PlotLinesHovered) : line);
+	}
+	if (hovered < data.points.size()) {
+		ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+		const auto& point = data.points[hovered];
+		ImGui::SetTooltip("X %.6g | Y %.6g", point.x, point.y);
+	}
+	ImGui::TextDisabled("X %.6g to %.6g | Y 0 to 1", left, right);
+}
+
+void Editor::DrawUtilityCurve()
+{
+	ImGui::TextWrapped("%s", EditorFiles::Utf8Path(EditorFiles::DiskPath(utilityCurve.file).filename()).c_str());
+	if (!utilityCurve.error.empty()) ImGui::TextWrapped("%s", utilityCurve.error.c_str());
+	if (!utilityCurve.ready) return;
+	DrawUtilitySaveControls(AssetTab::UtilityCurve, utilityCurve.Dirty());
+	auto& data = utilityCurve.draft;
+	std::string error;
+	if (data.Validate(error)) DrawUtilityCurveGraph(data);
+	else ImGui::TextWrapped("%s", error.c_str());
+	if (ImGui::Button("Add point")) {
+		const auto last = data.points.empty() ? UtilityCurveData::Point{ -1, 0 } : data.points.back();
+		data.points.push_back({ last.x + 1, last.y });
+	}
+	if (ImGui::BeginTable("Points", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
+		ImGui::TableSetupColumn("X");
+		ImGui::TableSetupColumn("Y");
+		ImGui::TableSetupColumn("##controls", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableHeadersRow();
+		size_t remove = data.points.size();
+		for (size_t i = 0; i < data.points.size(); ++i) {
+			ImGui::PushID(static_cast<int>(i));
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1);
+			ImGui::InputDouble("##X", &data.points[i].x, 0, 0, "%.12g");
+			ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1);
+			ImGui::InputDouble("##Y", &data.points[i].y, 0, 0, "%.12g");
+			ImGui::TableNextColumn();
+			if (ImGui::SmallButton("Remove")) remove = i;
+			ImGui::PopID();
+		}
+		ImGui::EndTable();
+		if (remove < data.points.size()) data.points.erase(data.points.begin() + remove);
+	}
+}
+
 void Editor::DrawInspector()
 {
 	if (ImGui::Begin("Inspector", &showInspector)) {
@@ -1098,11 +1563,13 @@ void Editor::DrawInspector()
 				AssetAction::CloseTexture, &Editor::DrawTextureInspector);
 			drawAssetTab("Material", AssetTab::Material, showMaterialTab, MaterialSettingsDirty(),
 				AssetAction::CloseMaterial, &Editor::DrawMaterialInspector);
+			drawAssetTab("Curve", AssetTab::UtilityCurve, !utilityCurveInTable && !utilityCurve.file.empty(), utilityCurve.Dirty(),
+				AssetAction::CloseUtilityCurve, &Editor::DrawUtilityCurve);
 			ImGui::EndTabBar();
 		}
 	}
 	ImGui::End();
-	if (!showInspector && AssetSettingsDirty()) { showInspector = true; RequestAssetAction(AssetAction::HideInspector); }
+	if (!showInspector && InspectorAssetSettingsDirty()) { showInspector = true; RequestAssetAction(AssetAction::HideInspector); }
 }
 
 void Editor::DrawObjectInspector()
@@ -1134,7 +1601,8 @@ void Editor::DrawObjectInspector()
 		if (selectedObjects.size() > 1) ImGui::TextDisabled("Component properties: active object");
 		if (ImGui::Button("Add component")) ImGui::OpenPopup("Add component");
 		if (ImGui::BeginPopup("Add component")) {
-			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Box collider", "Static body", "Dynamic body" };
+			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script",
+				"Box collider", "Static body", "Dynamic body", "Utility AI" };
 			for (int kind = 0; kind < IM_ARRAYSIZE(labels); ++kind)
 				if (ImGui::MenuItem(labels[kind], nullptr, false, kind < static_cast<int>(ComponentKind::Collider) || !selectedNode->get_parent())) {
 					treeAction = { TreeOperation::AddComponent, selectedNode }; treeAction.kind = static_cast<ComponentKind>(kind);
@@ -1203,10 +1671,51 @@ void Editor::DrawObjectInspector()
 			else if (auto* mesh = dynamic_cast<MeshComponent*>(component)) {
 				DrawMeshInspector(*mesh);
 			}
+			else if (auto* ai = dynamic_cast<UtilityAIComponent*>(component)) DrawUtilityComponentInspector(*ai);
 			else ImGui::TextUnformatted("Component");
 			ImGui::PopID();
 		}
 	}
+}
+
+void Editor::DrawUtilityComponentInspector(UtilityAIComponent& component)
+{
+	bool enabled = component.IsEnabled();
+	if (ImGui::Checkbox("Enabled", &enabled)) {
+		BeginProperty(HistoryKind::Component, Id(&component), ComponentProperties(component), "Utility AI enabled");
+		component.SetEnabled(enabled);
+		FinishProperty();
+		checkSceneDirty = true;
+	}
+
+	ImGui::TextUnformatted("Utility AI table");
+	ImGui::SetNextItemWidth(-1);
+	std::string path = component.GetTablePath();
+	// Ввод фиксируется по Enter. Перетаскивание сразу даёт готовый путь от проекта.
+	UtilityPathField("##table", ".utilityai.json", path, ImGuiInputTextFlags_EnterReturnsTrue);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a table or enter a project-relative path and press Enter.");
+	ImGui::BeginDisabled(path.empty());
+	if (ImGui::Button("Edit table")) {
+		const auto resolved = game.getResourceManager().ResolvePath(path);
+		if (!resolved.empty()) OpenUtilityAsset(resolved);
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Clear")) path.clear();
+	ImGui::EndDisabled();
+
+	if (path != component.GetTablePath()) {
+		if (!path.empty() && !LowerAssetName(path).ends_with(".utilityai.json")) {
+			sceneActionError = "Expected a .utilityai.json file.";
+		} else {
+			sceneActionError.clear();
+			BeginProperty(HistoryKind::Component, Id(&component), ComponentProperties(component), "Utility AI table");
+			std::replace(path.begin(), path.end(), '\\', '/');
+			component.SetTablePath(game, std::move(path));
+			FinishProperty();
+			checkSceneDirty = true;
+		}
+	}
+	if (!component.GetLastError().empty()) ImGui::TextWrapped("%s", component.GetLastError().c_str());
 }
 
 void Editor::DrawMeshInspector(MeshComponent& mesh)

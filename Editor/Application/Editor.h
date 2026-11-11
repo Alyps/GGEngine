@@ -80,7 +80,7 @@ private:
 	void DrawTreeInspector();
 	void ApplyTreeAction();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
-	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, Collider, StaticBody, DynamicBody };
+	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, Collider, StaticBody, DynamicBody, UtilityAI };
 	struct TreeAction {
 		TreeOperation operation = TreeOperation::None;
 		TransformNode* node = nullptr;
@@ -136,8 +136,56 @@ private:
 	void RevertTextureSettings();
 	void DrawAssetDialogs();
 	void ApplyAssetActions();
-	enum class AssetAction { None, OpenTexture, OpenMaterial, CloseTexture, CloseMaterial, HideInspector, ContinueDocument, ContinueSave };
-	enum class AssetTab { None, Texture, Material };
+	enum class AssetAction { None, OpenTexture, OpenMaterial, OpenUtilityTable, OpenUtilityCurve, OpenUtilityCurveInTable, CloseTexture,
+		CloseMaterial, CloseUtilityTable, CloseUtilityCurve, HideInspector, ContinueDocument, ContinueSave };
+	enum class AssetTab { None, Texture, Material, UtilityTable, UtilityCurve };
+	void OpenUtilityAsset(const std::string& file);
+	void DrawUtilityTable();
+	void DrawUtilityTableContents();
+	void ShowUtilityCurve(bool inTable);
+	void DrawUtilityParameters(UtilityTableData& data);
+	void DrawUtilityActions(UtilityTableData& data);
+	void DrawUtilityCurve();
+	void DrawUtilitySaveControls(AssetTab tab, bool dirty);
+	bool ApplyUtilityAsset(AssetTab tab);
+	void RevertUtilityAsset(AssetTab tab);
+	bool InspectorAssetSettingsDirty() const;
+	template<class Data> struct UtilityAssetDraft {
+		std::string file, error;
+		Data saved, draft;
+		bool ready = false;
+		void Open(std::string path) {
+			*this = {};
+			file = std::move(path);
+			ready = saved.Read(file, error);
+			draft = saved;
+		}
+		bool Dirty() const { return ready && draft != saved; }
+		bool Save() {
+			if (!ready || !draft.Save(file, error)) return false;
+			saved = draft;
+			return true;
+		}
+		void Revert() {
+			draft = saved;
+			error.clear();
+		}
+	};
+	UtilityAssetDraft<UtilityTableData> utilityTable;
+	UtilityAssetDraft<UtilityCurveData> utilityCurve;
+	struct CurvePointDrag {
+		size_t index = 0;
+		UtilityCurveData::Point start{};
+		double left = 0, right = 0;
+		bool active = false;
+	} curvePointDrag;
+	void DrawUtilityCurveGraph(UtilityCurveData& data);
+	ImGuiID viewportDockId = 0;
+	size_t utilityParameterPage = 0;
+	bool focusUtilityTable = false;
+	bool utilityTableDetached = false, utilityCurveInTable = false;
+	enum class UtilityTableDock { None, Detach, Attach };
+	UtilityTableDock utilityTableDock = UtilityTableDock::None;
 	void RequestAssetAction(AssetAction action, const std::string& file = {});
 	void ContinueAssetAction();
 	AssetTab PendingAssetConfirmation() const;
@@ -166,6 +214,7 @@ private:
 	float textureZoom = 100.0f;
 	int textureBackground = 0;
 	void DrawMeshInspector(MeshComponent& mesh);
+	void DrawUtilityComponentInspector(UtilityAIComponent& component);
 	enum class TransformField { Position, Rotation, Scale };
 	static constexpr float MinimumScale = 0.001f;
 	static bool IsValidEditorScale(const DXVector3& scale);

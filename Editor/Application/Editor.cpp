@@ -135,7 +135,7 @@ bool Editor::Init()
 	ui = ImGui::CreateContext();
 	if (!ui) return false;
 	ImGuiIO& io = ImGui::GetIO();
-	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_ViewportsEnable;
 	// Клик без движения включает ввод числа; перетаскивание с ЛКМ меняет значение.
 	io.ConfigDragClickToInputText = true;
 	// Пока нет проекта сцены, не создаём imgui.ini в исходниках.
@@ -193,7 +193,16 @@ int Editor::Run()
 		}
 		// При сворачивании не создаём цели нулевого размера и не тратим GPU.
 		const HWND window = game.getWindow().getWindow();
-		if (IsIconic(window)) {
+		const bool mainMinimized = IsIconic(window);
+		bool platformWindowVisible = false;
+		if (mainMinimized) for (const auto* view : ImGui::GetPlatformIO().Viewports) {
+			const auto handle = static_cast<HWND>(view->PlatformHandleRaw);
+			if (handle && handle != window && IsWindowVisible(handle) && !IsIconic(handle)) {
+				platformWindowVisible = true;
+				break;
+			}
+		}
+		if (mainMinimized && !platformWindowVisible) {
 			if (auto* movement = GetCameraMovement()) movement->enabled = false;
 			WaitMessage();
 			game.getTimeManager().reset();
@@ -201,7 +210,7 @@ int Editor::Run()
 		}
 		RECT client{};
 		GetClientRect(window, &client);
-		if (!game.getRenderServer().ResizeMainTarget(client.right, client.bottom)) {
+		if (!mainMinimized && !game.getRenderServer().ResizeMainTarget(client.right, client.bottom)) {
 			std::cerr << "Cannot resize editor back buffer\n";
 			return 1;
 		}
@@ -216,7 +225,7 @@ int Editor::Run()
 		focusedAssetTab = AssetTab::None;
 		saveShortcut = false;
 		// Назначенное сохранение доступно и в полях инспектора до записи сцены.
-		if (!navigating && !settings.Held(EditorAction::Navigate) && GetForegroundWindow() == window
+		if (!navigating && !settings.Held(EditorAction::Navigate) && ImGui::FindViewportByPlatformHandle(GetForegroundWindow())
 			&& !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
 			saveShortcut = settings.Shortcut(EditorAction::Save);
 		if (saveShortcut) requestedSave = true;
@@ -225,8 +234,9 @@ int Editor::Run()
 		DrawProjectDialogs();
 		DrawSettings();
 		if (showHierarchy) DrawHierarchy();
-		if (showInspector) DrawInspector();
 		DrawViewport();
+		DrawUtilityTable();
+		if (showInspector) DrawInspector();
 		if (scenePanelFocused) historyAssetTab = AssetTab::None;
 		contentBrowser.Draw(showContentBrowser);
 		if (const auto file = contentBrowser.TakeObjectToOpen(); !file.empty()) QueueObjectOpen(file);
@@ -239,6 +249,7 @@ int Editor::Run()
 			RequestAssetAction(AssetAction::OpenMaterial, file);
 			showInspector = true;
 		}
+		if (const auto file = contentBrowser.TakeUtilityAssetToOpen(); !file.empty()) OpenUtilityAsset(file);
 		// Закрываем жест также при смене выбора или скрытии панели.
 		if (editingTransform && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing()) FinishTransformEdit();
 		if (editingProperty && !ImGui::IsAnyItemActive()
@@ -246,9 +257,14 @@ int Editor::Run()
 		if (materialEditId && ImGui::GetActiveID() != materialEditId) FinishMaterialEdit();
 		HandleShortcuts();
 		ImGui::Render();
-		game.getRenderServer().BeginMainPass();
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-		game.getRenderServer().Present();
+		if (!mainMinimized) {
+			game.getRenderServer().BeginMainPass();
+			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+		}
+		// Win32/DX11 backend обслуживает swap chain каждого откреплённого окна.
+		ImGui::UpdatePlatformWindows();
+		ImGui::RenderPlatformWindowsDefault();
+		if (!mainMinimized) game.getRenderServer().Present();
 		// Структурные операции выполняются после обходов и рисования текущего кадра.
 		ApplyTreeAction();
 		ApplySceneActions();

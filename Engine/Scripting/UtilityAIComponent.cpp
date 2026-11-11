@@ -60,6 +60,8 @@ void UtilityAIComponent::Init(Game& game)
 {
     Shutdown(game);
     lastError.clear(); decisionTime = 0;
+    // Пустой путь оставляет добавленный из инспектора компонент без назначенной таблицы.
+    if (tablePath.empty()) return;
     auto& resources = game.getResourceManager();
     table = resources.load<UtilityAITable>(tablePath, &resources);
     if (!table) { lastError = resources.GetLastError(); std::cout << "[UtilityAI] " << lastError << std::endl; return; }
@@ -97,6 +99,12 @@ void UtilityAIComponent::Init(Game& game)
             *functions[f] = function.as<sol::protected_function>();
         }
     }
+}
+
+void UtilityAIComponent::SetTablePath(Game& game, std::string path)
+{
+    tablePath = std::move(path);
+    Init(game);
 }
 
 int UtilityAIComponent::Find(const std::string& name, UtilityParameterType type, std::string& error) const
@@ -215,7 +223,6 @@ Component* UtilityAIComponent::CreateFromJson(const rapidjson::Value& json, std:
     std::string path;
     bool active = true;
     if (!Deserialization::String(json, "table_path", path, error) || !Deserialization::Bool(json, "enabled", active, error)) return nullptr;
-    if (path.empty()) { error = "Empty UtilityAI table path"; return nullptr; }
     auto* component = new (std::nothrow) UtilityAIComponent(std::move(path));
     if (!component) { error = "Cannot allocate UtilityAIComponent"; return nullptr; }
     component->enabled = active;

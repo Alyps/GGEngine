@@ -12,6 +12,7 @@ public:
     std::string TakeSceneToOpen() { std::string result; result.swap(sceneToOpen); return result; }
     std::string TakeTextureToOpen() { std::string result; result.swap(textureToOpen); return result; }
     std::string TakeMaterialToOpen() { std::string result; result.swap(materialToOpen); return result; }
+    std::string TakeUtilityAssetToOpen() { std::string result; result.swap(utilityAssetToOpen); return result; }
     void RefreshFiles() { if (!root.empty()) Refresh(); }
 
 private:
@@ -38,7 +39,7 @@ private:
     void Activate(const Entry& entry, std::string& directory);
     void OpenFolder(const std::string& path);
     std::string ResourcePath(const std::string& path) const;
-    enum class CreateType { Folder, Scene, MeshObject, Object, Material, LuaScript };
+    enum class CreateType { Folder, Scene, MeshObject, Object, Material, LuaScript, UtilityTable, UtilityCurve, UtilityAction };
     void CreateEntry();
     bool PrepareEntryName(std::string& name);
     bool BuildEntryContents(std::string& contents);
@@ -54,6 +55,7 @@ private:
     std::string sceneToOpen;
     std::string textureToOpen;
     std::string materialToOpen;
+    std::string utilityAssetToOpen;
     std::vector<std::string> navigation;
     size_t navigationPosition = 0;
     char search[256]{};
