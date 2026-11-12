@@ -602,6 +602,8 @@ void Editor::CloseAssetEditor()
 	CloseMaterialEditor();
 	utilityTable = {};
 	utilityCurve = {};
+	utilityPreviewInputs.clear();
+	ClearUtilityAssetChecks();
 	curvePointDrag = {};
 	focusUtilityTable = false;
 	utilityTableDetached = utilityCurveInTable = false;
@@ -881,6 +883,8 @@ void Editor::ContinueAssetAction()
 	else if (action == AssetAction::CloseMaterial) CloseMaterialEditor();
 	else if (action == AssetAction::OpenUtilityTable) {
 		utilityTable.Open(file);
+		utilityPreviewInputs.clear();
+		ClearUtilityAssetChecks();
 		utilityParameterPage = 0;
 		focusUtilityTable = true;
 	}
@@ -890,6 +894,8 @@ void Editor::ContinueAssetAction()
 	}
 	else if (action == AssetAction::CloseUtilityTable) {
 		utilityTable = {};
+		utilityPreviewInputs.clear();
+		ClearUtilityAssetChecks();
 		focusUtilityTable = utilityTableDetached = false;
 		utilityTableDock = UtilityTableDock::None;
 		if (utilityCurveInTable) ShowUtilityCurve(false);
@@ -1204,7 +1210,11 @@ bool ValidateUtilityReferences(const UtilityTableData& table, const ResourceMana
 
 bool Editor::ApplyUtilityAsset(AssetTab tab)
 {
-	if (tab == AssetTab::UtilityCurve) return utilityCurve.Save();
+	if (tab == AssetTab::UtilityCurve) {
+		if (!utilityCurve.Save()) return false;
+		utilityCurveChecks.clear();
+		return true;
+	}
 	if (tab != AssetTab::UtilityTable || !utilityTable.ready) return false;
 	auto& asset = utilityTable;
 	return asset.draft.Validate(asset.error)
@@ -1214,21 +1224,36 @@ bool Editor::ApplyUtilityAsset(AssetTab tab)
 
 void Editor::RevertUtilityAsset(AssetTab tab)
 {
-	if (tab == AssetTab::UtilityTable) utilityTable.Revert();
+	if (tab == AssetTab::UtilityTable) {
+		utilityTable.Revert();
+		utilityPreviewInputs.clear();
+	}
 	else if (tab == AssetTab::UtilityCurve) utilityCurve.Revert();
 }
 
 void Editor::DrawUtilitySaveControls(AssetTab tab, bool dirty)
 {
-	// Ctrl+S в активной вкладке сохраняет её ресурс вместо сцены.
-	if (saveShortcut && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
-		requestedSave = false;
-		if (dirty) requestedAssetApply = tab;
+	// В откреплённом окне у таблицы и кривой разные дочерние панели и свой фокус.
+	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
+		focusedAssetTab = historyAssetTab = tab;
+		if (saveShortcut) {
+			requestedSave = false;
+			if (dirty) requestedAssetApply = tab;
+		}
 	}
 	ImGui::BeginDisabled(!dirty);
 	if (ImGui::Button("Save")) requestedAssetApply = tab;
 	ImGui::SameLine();
 	if (ImGui::Button("Revert")) RevertUtilityAsset(tab);
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	const bool table = tab == AssetTab::UtilityTable;
+	ImGui::BeginDisabled(!(table ? utilityTable.CanStep(-1) : utilityCurve.CanStep(-1)));
+	if (ImGui::Button("Undo")) { historyAssetTab = tab; Undo(); }
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!(table ? utilityTable.CanStep(1) : utilityCurve.CanStep(1)));
+	if (ImGui::Button("Redo")) { historyAssetTab = tab; Redo(); }
 	ImGui::EndDisabled();
 }
 
@@ -1302,6 +1327,15 @@ void Editor::DrawUtilityTableContents()
 	if (!utilityTable.ready) return;
 	DrawUtilitySaveControls(AssetTab::UtilityTable, utilityTable.Dirty());
 	auto& data = utilityTable.draft;
+	const auto before = data;
+	utilityPreviewInputs.resize(data.parameters.size());
+	ImGui::Checkbox("Score preview", &utilityScorePreview);
+	if (utilityScorePreview) {
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Reset preview values"))
+			std::fill(utilityPreviewInputs.begin(), utilityPreviewInputs.end(), std::nullopt);
+		ImGui::TextWrapped("Scores use saved curves. Lua availability and switching rules are checked in Play.");
+	}
 	if (ImGui::CollapsingHeader("Decision settings")) {
 		ImGui::InputDouble("Interval (s)", &data.interval, 0.01, 0.1, "%.6g");
 		ImGui::InputDouble("Switch threshold", &data.switchThreshold, 0.01, 0.1, "%.6g");
@@ -1309,19 +1343,22 @@ void Editor::DrawUtilityTableContents()
 	}
 	if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) DrawUtilityParameters(data);
 	if (ImGui::CollapsingHeader("Actions", ImGuiTreeNodeFlags_DefaultOpen)) DrawUtilityActions(data);
+	utilityTable.RecordEdit(before, ImGui::GetActiveID());
 }
 
 void Editor::DrawUtilityParameters(UtilityTableData& data)
 {
 	if (ImGui::Button("Add parameter")) {
 		data.parameters.push_back({ "", UtilityParameterType::Float, 0 });
+		utilityPreviewInputs.emplace_back();
 		for (auto& action : data.actions) action.curvePaths.emplace_back();
 	}
 	const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
-	if (!ImGui::BeginTable("##ParameterFields", 3, flags)) return;
+	if (!ImGui::BeginTable("##ParameterFields", utilityScorePreview ? 4 : 3, flags)) return;
 	ImGui::TableSetupColumn("Name");
 	ImGui::TableSetupColumn("Type");
 	ImGui::TableSetupColumn("Default");
+	if (utilityScorePreview) ImGui::TableSetupColumn("Preview value");
 	ImGui::TableHeadersRow();
 	const auto& style = ImGui::GetStyle();
 	const float removeWidth = ImGui::CalcTextSize("Remove").x + style.FramePadding.x * 2 + style.ItemSpacing.x;
@@ -1342,19 +1379,106 @@ void Editor::DrawUtilityParameters(UtilityTableData& data)
 		ImGui::InputDouble("##default", &parameter.initialValue, 0, 0, "%.12g");
 		ImGui::SameLine();
 		if (ImGui::SmallButton("Remove")) remove = i;
+		if (utilityScorePreview) {
+			ImGui::TableNextColumn();
+			// Без введённого значения предпросмотр следует за текущим Default.
+			double probe = utilityPreviewInputs[i].value_or(parameter.initialValue);
+			ImGui::SetNextItemWidth(-1);
+			if (ImGui::InputDouble("##probe", &probe, 0, 0, "%.12g")) utilityPreviewInputs[i] = probe;
+		}
 		ImGui::PopID();
 	}
 	ImGui::EndTable();
 	if (remove == data.parameters.size()) return;
 	// Индекс параметра определяет ячейку каждой строки в JSON.
 	data.parameters.erase(data.parameters.begin() + remove);
+	utilityPreviewInputs.erase(utilityPreviewInputs.begin() + remove);
 	for (auto& action : data.actions) action.curvePaths.erase(action.curvePaths.begin() + remove);
+}
+
+void Editor::ClearUtilityAssetChecks()
+{
+	utilityCurveChecks.clear();
+	utilityScriptChecks.clear();
+}
+
+const Editor::UtilityCurveCheck& Editor::CheckUtilityCurve(const std::string& path)
+{
+	// Диагностика и предпросмотр используют один результат чтения сохранённой кривой.
+	auto [entry, inserted] = utilityCurveChecks.try_emplace(path);
+	auto& curve = entry->second;
+	if (inserted && curve.data.Read(game.getResourceManager().ResolvePath(path), curve.error)) curve.data.Validate(curve.error);
+	return curve;
+}
+
+const Editor::UtilityScriptCheck& Editor::CheckUtilityScript(const std::string& path)
+{
+	auto [entry, inserted] = utilityScriptChecks.try_emplace(path);
+	auto& script = entry->second;
+	if (!inserted) return script;
+	if (!path.ends_with(".action.lua")) {
+		script.error = "Assign a .action.lua script to this action.";
+		return script;
+	}
+	script.resolved = game.getResourceManager().ResolvePath(path);
+	std::error_code error;
+	if (script.resolved.empty() || !std::filesystem::is_regular_file(EditorFiles::DiskPath(script.resolved), error))
+		script.error = "Cannot find script: " + path;
+	return script;
+}
+
+std::vector<Editor::UtilityActionPreview> Editor::EvaluateUtilityPreview(const UtilityTableData& data)
+{
+	std::vector<UtilityActionPreview> results;
+	results.reserve(data.actions.size());
+	for (const auto& action : data.actions) {
+		auto& result = results.emplace_back();
+		result.contributions.resize(data.parameters.size());
+		double sum = 0;
+		size_t count = 0;
+		bool complete = true;
+		for (size_t i = 0; i < action.curvePaths.size(); ++i) {
+			const auto& path = action.curvePaths[i];
+			if (path.empty()) continue;
+			const auto& curve = CheckUtilityCurve(path);
+			const auto& parameter = data.parameters[i];
+			const double value = utilityPreviewInputs[i].value_or(parameter.initialValue);
+			const bool invalidInt = parameter.type == UtilityParameterType::Int
+				&& (std::trunc(value) != value || value < INT32_MIN || value > INT32_MAX);
+			if (!curve.error.empty() || !std::isfinite(value) || invalidInt) { complete = false; continue; }
+			const double contribution = curve.data.Evaluate(value);
+			result.contributions[i] = contribution;
+			sum += contribution;
+			++count;
+		}
+		// Движок усредняет оценки только по заполненным ячейкам строки.
+		if (complete && count) result.score = sum / static_cast<double>(count);
+	}
+	return results;
 }
 
 void Editor::DrawUtilityActions(UtilityTableData& data)
 {
 	if (ImGui::Button("Add action")) data.actions.push_back({ "", "", std::vector<std::string>(data.parameters.size()) });
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Reload assets")) ClearUtilityAssetChecks();
 	ImGui::TextDisabled("Drop a script or curve from Content Browser. Paths are relative to the project.");
+	std::unordered_map<std::string, size_t> scriptUses;
+	for (const auto& action : data.actions) {
+		const auto& script = CheckUtilityScript(action.scriptPath);
+		if (script.error.empty()) ++scriptUses[script.resolved];
+	}
+	const auto preview = utilityScorePreview ? EvaluateUtilityPreview(data) : std::vector<UtilityActionPreview>{};
+	size_t leader = preview.size();
+	for (size_t i = 0; i < preview.size(); ++i) {
+		if (preview[i].score && (leader == preview.size() || *preview[i].score > *preview[leader].score)) leader = i;
+	}
+	if (utilityScorePreview) {
+		if (leader < preview.size()) {
+			const auto& name = data.actions[leader].name;
+			ImGui::TextWrapped("Highest score: %s (%.3f)", name.empty() ? "Unnamed action" : name.c_str(), *preview[leader].score);
+		} else ImGui::TextDisabled("No scores available");
+	}
 	// Страницы позволяют открыть таблицу с любым количеством параметров в пределах ImGui.
 	constexpr size_t pageSize = 8;
 	const size_t lastPage = data.parameters.empty() ? 0 : (data.parameters.size() - 1) / pageSize;
@@ -1391,14 +1515,26 @@ void Editor::DrawUtilityActions(UtilityTableData& data)
 		ImGui::TableSetupColumn(label.c_str(), columnWidth, curveWidth);
 	}
 	ImGui::TableHeadersRow();
+	const ImVec4 errorColor(1.0f, 0.47f, 0.42f, 1.0f);
+	const ImVec4 warningColor(1.0f, 0.75f, 0.36f, 1.0f);
 	size_t remove = data.actions.size(), move = data.actions.size();
 	for (size_t row = 0; row < data.actions.size(); ++row) {
 		auto& action = data.actions[row];
 		ImGui::PushID(static_cast<int>(row));
 		ImGui::TableNextRow();
+		if (utilityScorePreview && row == leader)
+			ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImGuiCol_Header, 0.6f));
 		if (ImGui::TableNextColumn()) {
 			ImGui::SetNextItemWidth(-1);
 			UtilityInputText("##action", "Action name", action.name);
+			if (std::none_of(action.curvePaths.begin(), action.curvePaths.end(), [](const auto& path) { return !path.empty(); })) {
+				ImGui::TextColored(errorColor, "No curves");
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("Assign at least one curve to this action.");
+			}
+			if (utilityScorePreview) {
+				if (const auto score = preview[row].score) ImGui::Text("Score %.3f", *score);
+				else ImGui::TextDisabled("Score unavailable");
+			}
 			// Кнопки остаются видимыми при горизонтальной прокрутке матрицы.
 			ImGui::BeginDisabled(row == 0);
 			if (ImGui::SmallButton("Up")) move = row;
@@ -1408,6 +1544,15 @@ void Editor::DrawUtilityActions(UtilityTableData& data)
 		if (ImGui::TableNextColumn()) {
 			ImGui::SetNextItemWidth(-1);
 			UtilityPathField("##script", ".action.lua", action.scriptPath);
+			const auto& script = CheckUtilityScript(action.scriptPath);
+			const auto uses = scriptUses.find(script.resolved);
+			if (!script.error.empty()) {
+				ImGui::TextColored(errorColor, "Script error");
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", script.error.c_str());
+			} else if (uses != scriptUses.end() && uses->second > 1) {
+				ImGui::TextColored(warningColor, "Shared script");
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%zu actions use this script.", uses->second);
+			}
 		}
 		for (size_t i = first; i < first + count; ++i) {
 			if (!ImGui::TableNextColumn()) continue;
@@ -1421,6 +1566,16 @@ void Editor::DrawUtilityActions(UtilityTableData& data)
 				if (!resolved.empty()) RequestAssetAction(utilityTableDetached ? AssetAction::OpenUtilityCurveInTable : AssetAction::OpenUtilityCurve, resolved);
 			}
 			ImGui::EndDisabled();
+			if (!path.empty()) {
+				const auto& curve = CheckUtilityCurve(path);
+				if (!curve.error.empty()) {
+					ImGui::TextColored(errorColor, "Curve error");
+					if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", curve.error.c_str());
+				} else if (utilityScorePreview) {
+					if (const auto value = preview[row].contributions[i]) ImGui::TextDisabled("Value %.3f", *value);
+					else ImGui::TextDisabled("Unavailable");
+				}
+			}
 			ImGui::PopID();
 		}
 		ImGui::PopID();
@@ -1502,6 +1657,7 @@ void Editor::DrawUtilityCurve()
 	if (!utilityCurve.ready) return;
 	DrawUtilitySaveControls(AssetTab::UtilityCurve, utilityCurve.Dirty());
 	auto& data = utilityCurve.draft;
+	const auto before = data;
 	std::string error;
 	if (data.Validate(error)) DrawUtilityCurveGraph(data);
 	else ImGui::TextWrapped("%s", error.c_str());
@@ -1529,6 +1685,7 @@ void Editor::DrawUtilityCurve()
 		ImGui::EndTable();
 		if (remove < data.points.size()) data.points.erase(data.points.begin() + remove);
 	}
+	utilityCurve.RecordEdit(before, ImGui::GetActiveID());
 }
 
 void Editor::DrawInspector()

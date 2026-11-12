@@ -255,6 +255,9 @@ int Editor::Run()
 		if (editingProperty && !ImGui::IsAnyItemActive()
 			&& !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) FinishProperty();
 		if (materialEditId && ImGui::GetActiveID() != materialEditId) FinishMaterialEdit();
+		// Смена вкладки тоже завершает ввод или перетаскивание точки.
+		if (ImGui::GetActiveID() != utilityTable.editingItem) utilityTable.FinishEdit();
+		if (ImGui::GetActiveID() != utilityCurve.editingItem) utilityCurve.FinishEdit();
 		HandleShortcuts();
 		ImGui::Render();
 		if (!mainMinimized) {
@@ -346,10 +349,12 @@ void Editor::DrawDockspace()
 			const auto& history = ActiveHistory();
 			const auto& entries = history.entries;
 			const size_t position = history.position;
-			const std::string undo = position ? "Undo: " + entries[position - 1].name : "Undo";
-			const std::string redo = position < entries.size() ? "Redo: " + entries[position].name : "Redo";
-			if (ImGui::MenuItem(undo.c_str(), settings.Label(EditorAction::Undo).c_str(), false, !editingTransform && !editingProperty && position > 0)) Undo();
-			if (ImGui::MenuItem(redo.c_str(), settings.Label(EditorAction::Redo).c_str(), false, !editingTransform && !editingProperty && position < entries.size())) Redo();
+			const auto asset = ActiveHistoryAsset();
+			const bool utility = asset == AssetTab::UtilityTable || asset == AssetTab::UtilityCurve;
+			const std::string undo = !utility && position ? "Undo: " + entries[position - 1].name : "Undo";
+			const std::string redo = !utility && position < entries.size() ? "Redo: " + entries[position].name : "Redo";
+			if (ImGui::MenuItem(undo.c_str(), settings.Label(EditorAction::Undo).c_str(), false, CanStepHistory(-1))) Undo();
+			if (ImGui::MenuItem(redo.c_str(), settings.Label(EditorAction::Redo).c_str(), false, CanStepHistory(1))) Redo();
 			ImGui::Separator();
 			if (ImGui::MenuItem("Editor settings...")) openSettings = true;
 			ImGui::EndMenu();
@@ -455,7 +460,8 @@ void Editor::DrawSettings()
 void Editor::HandleShortcuts()
 {
 	// Не регистрируем Z/Y глобально во время ввода: ими пользуется текстовый редактор ImGui.
-	if (GetForegroundWindow() != game.getWindow().getWindow() || navigating || ImGuizmo::IsUsing()
+	const HWND foreground = GetForegroundWindow();
+	if (!foreground || !ImGui::FindViewportByPlatformHandle(foreground) || navigating || ImGuizmo::IsUsing()
 		|| ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive()
 		|| ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
 	if (contentBrowser.IsFocused()) return;
@@ -464,7 +470,7 @@ void Editor::HandleShortcuts()
 		if (settings.Shortcut(EditorAction::Redo)) Redo();
 		return;
 	}
-	if (!scenePanelFocused) return;
+	if (!scenePanelFocused || foreground != game.getWindow().getWindow()) return;
 	if (settings.Shortcut(EditorAction::Undo)) Undo();
 	if (settings.Shortcut(EditorAction::Redo)) Redo();
 	if (settings.Shortcut(EditorAction::Duplicate) && !editedObject && selectedObject) requestedDuplicate = selectedObject;

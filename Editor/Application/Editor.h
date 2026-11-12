@@ -5,6 +5,7 @@
 #include "ContentBrowser.h"
 #include "Project.h"
 #include "EditorSettings.h"
+#include <optional>
 #include <unordered_map>
 
 // Game и сцена живут дольше редактора; редактор владеет только UI и viewport.
@@ -154,11 +155,15 @@ private:
 		std::string file, error;
 		Data saved, draft;
 		bool ready = false;
+		std::vector<Data> history;
+		size_t historyPosition = 0;
+		ImGuiID editingItem = 0;
 		void Open(std::string path) {
 			*this = {};
 			file = std::move(path);
 			ready = saved.Read(file, error);
 			draft = saved;
+			if (ready) history.push_back(draft);
 		}
 		bool Dirty() const { return ready && draft != saved; }
 		bool Save() {
@@ -167,12 +172,70 @@ private:
 			return true;
 		}
 		void Revert() {
+			FinishEdit();
 			draft = saved;
+			RecordSnapshot(draft);
 			error.clear();
+		}
+		void RecordEdit(const Data& before, ImGuiID activeItem) {
+			// При смене виджета завершаем предыдущую команду состоянием до нового ввода.
+			if (editingItem && editingItem != activeItem) {
+				RecordSnapshot(before);
+				editingItem = 0;
+			}
+			if (draft == before) return;
+			if (activeItem) editingItem = activeItem;
+			else RecordSnapshot(draft);
+		}
+		void FinishEdit() {
+			if (!editingItem) return;
+			RecordSnapshot(draft);
+			editingItem = 0;
+		}
+		bool CanStep(int direction) const {
+			if (history.empty()) return false;
+			const bool pending = editingItem && draft != history[historyPosition];
+			return direction < 0 ? pending || historyPosition > 0 : !pending && historyPosition + 1 < history.size();
+		}
+		void Step(int direction) {
+			FinishEdit();
+			if (!CanStep(direction)) return;
+			if (direction < 0) --historyPosition;
+			else ++historyPosition;
+			draft = history[historyPosition];
+			error.clear();
+		}
+	private:
+		void RecordSnapshot(const Data& value) {
+			if (history.empty() || value == history[historyPosition]) return;
+			history.erase(history.begin() + historyPosition + 1, history.end());
+			history.push_back(value);
+			// Начальное состояние тоже занимает место в списке снимков.
+			if (history.size() > 129) history.erase(history.begin());
+			historyPosition = history.size() - 1;
 		}
 	};
 	UtilityAssetDraft<UtilityTableData> utilityTable;
 	UtilityAssetDraft<UtilityCurveData> utilityCurve;
+	struct UtilityCurveCheck {
+		UtilityCurveData data;
+		std::string error;
+	};
+	struct UtilityScriptCheck {
+		std::string resolved, error;
+	};
+	struct UtilityActionPreview {
+		std::vector<std::optional<double>> contributions;
+		std::optional<double> score;
+	};
+	bool utilityScorePreview = false;
+	std::vector<std::optional<double>> utilityPreviewInputs;
+	std::unordered_map<std::string, UtilityCurveCheck> utilityCurveChecks;
+	std::unordered_map<std::string, UtilityScriptCheck> utilityScriptChecks;
+	const UtilityCurveCheck& CheckUtilityCurve(const std::string& path);
+	const UtilityScriptCheck& CheckUtilityScript(const std::string& path);
+	void ClearUtilityAssetChecks();
+	std::vector<UtilityActionPreview> EvaluateUtilityPreview(const UtilityTableData& data);
 	struct CurvePointDrag {
 		size_t index = 0;
 		UtilityCurveData::Point start{};
@@ -290,6 +353,7 @@ private:
 	} documentHistory, parkedHistory, textureHistory, materialHistory;
 	AssetTab ActiveHistoryAsset() const;
 	const DocumentHistory& ActiveHistory() const;
+	bool CanStepHistory(int direction) const;
 	std::unordered_map<GameObject*, HistoryId> objectIds;
 	std::unordered_map<TransformNode*, HistoryId> nodeIds;
 	std::unordered_map<Component*, HistoryId> componentIds;

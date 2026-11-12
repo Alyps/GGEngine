@@ -258,6 +258,9 @@ Editor::AssetTab Editor::ActiveHistoryAsset() const
 {
 	if (showInspector && historyAssetTab == AssetTab::Texture && showTextureTab) return AssetTab::Texture;
 	if (showInspector && historyAssetTab == AssetTab::Material && showMaterialTab) return AssetTab::Material;
+	if (historyAssetTab == AssetTab::UtilityTable && !utilityTable.file.empty()) return AssetTab::UtilityTable;
+	if (historyAssetTab == AssetTab::UtilityCurve && !utilityCurve.file.empty() && (showInspector || utilityCurveInTable))
+		return AssetTab::UtilityCurve;
 	return AssetTab::None;
 }
 
@@ -267,6 +270,16 @@ const Editor::DocumentHistory& Editor::ActiveHistory() const
 	if (asset == AssetTab::Texture) return textureHistory;
 	if (asset == AssetTab::Material) return materialHistory;
 	return documentHistory;
+}
+
+bool Editor::CanStepHistory(int direction) const
+{
+	if (editingTransform || editingProperty) return false;
+	const auto asset = ActiveHistoryAsset();
+	if (asset == AssetTab::UtilityTable) return utilityTable.CanStep(direction);
+	if (asset == AssetTab::UtilityCurve) return utilityCurve.CanStep(direction);
+	const auto& history = ActiveHistory();
+	return direction < 0 ? history.position > 0 : history.position < history.entries.size();
 }
 
 void Editor::PushHistory(HistoryEntry entry, DocumentHistory* destination)
@@ -510,9 +523,21 @@ void Editor::ApplyHistoryStep()
 {
 	const int direction = requestedHistoryStep; requestedHistoryStep = 0;
 	const auto asset = requestedHistoryAsset; requestedHistoryAsset = AssetTab::None;
+	if (!direction) return;
 	// Получатель фиксируется при запросе: последующая смена фокуса не перенаправляет команду.
+	if (asset == AssetTab::UtilityTable) {
+		const auto parameterCount = utilityTable.draft.parameters.size();
+		utilityTable.Step(direction);
+		if (utilityTable.draft.parameters.size() != parameterCount) utilityPreviewInputs.clear();
+		return;
+	}
+	if (asset == AssetTab::UtilityCurve) {
+		utilityCurve.Step(direction);
+		curvePointDrag = {};
+		return;
+	}
 	auto& context = asset == AssetTab::Texture ? textureHistory : asset == AssetTab::Material ? materialHistory : documentHistory;
-	if (!direction || (direction < 0 ? context.position == 0 : context.position >= context.entries.size())) return;
+	if (direction < 0 ? context.position == 0 : context.position >= context.entries.size()) return;
 	const size_t index = direction < 0 ? context.position - 1 : context.position;
 	const auto& entry = context.entries[index];
 	const bool applied = ApplyHistoryEntry(entry, direction < 0);
@@ -648,14 +673,13 @@ void Editor::FinishTransformEdit()
 }
 void Editor::Undo()
 {
-	if (!editingTransform && !editingProperty && ActiveHistory().position > 0) {
+	if (CanStepHistory(-1)) {
 		requestedHistoryStep = -1; requestedHistoryAsset = ActiveHistoryAsset();
 	}
 }
 void Editor::Redo()
 {
-	const auto& history = ActiveHistory();
-	if (!editingTransform && !editingProperty && history.position < history.entries.size()) {
+	if (CanStepHistory(1)) {
 		requestedHistoryStep = 1; requestedHistoryAsset = ActiveHistoryAsset();
 	}
 }
