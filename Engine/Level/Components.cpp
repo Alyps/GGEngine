@@ -124,6 +124,10 @@ ComponentFactoryMap::ComponentFactoryMap()
     Register("BoxColliderComponent", &BoxColliderComponent::CreateFromJson);
     Register("DynamicRigidBodyComponent", &DynamicRigidBodyComponent::CreateFromJson);
     Register("StaticRigidBodyComponent", &StaticRigidBodyComponent::CreateFromJson);
+    Register("KinematicRigidBodyComponent", &KinematicRigidBodyComponent::CreateFromJson);
+    Register("CharacterMovementComponent", &CharacterMovementComponent::CreateFromJson);
+    Register("NavMeshVolumeComponent", &NavMeshVolumeComponent::CreateFromJson);
+    Register("NavAgentComponent", &NavAgentComponent::CreateFromJson);
 }
 
 bool ComponentFactoryMap::Register(const std::string& type, Factory factory)

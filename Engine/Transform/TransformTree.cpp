@@ -364,7 +364,8 @@ bool TransformNode::Deserialize(const rapidjson::Value& json, const ComponentFac
         if (!component) { error = name + "/components[" + std::to_string(i) + "]: " + error; return false; }
         auto* transformable = dynamic_cast<TransformableComponent*>(component);
         // Физические компоненты текущего движка могут работать только на корневом узле.
-        const bool rootOnly = dynamic_cast<BoxColliderComponent*>(component) || dynamic_cast<RigidBodyComponent*>(component);
+        const bool rootOnly = dynamic_cast<BoxColliderComponent*>(component) || dynamic_cast<RigidBodyComponent*>(component)
+            || dynamic_cast<CharacterMovementComponent*>(component) || dynamic_cast<NavAgentComponent*>(component);
         if (!transformable || (parent && rootOnly) || !add_component(*transformable)) {
             delete component;
             error = name + "/components[" + std::to_string(i) + "]: incompatible component or node";

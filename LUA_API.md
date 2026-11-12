@@ -42,6 +42,7 @@ return M
 | `self.object` | Объект `GameObject`, которому принадлежит компонент. |
 | `self.transform` | Узел, к которому привязан компонент скрипта. Если узел не выбран, используется корень объекта. |
 | `self.input` | Игровой ввод `GameInput`; предоставляется только в сборке с `GG_GAME`. |
+| `self.navigation` | Система навигации `Navigation`: поиск пути по статическому навмешу уровня. |
 | Собственные поля | Любое состояние скрипта: таймеры, параметры, найденные компоненты. |
 
 Методы модуля доступны через таблицу `self`. Для собственного метода можно написать `function M:jump()` и вызвать `self:jump()`.
@@ -81,6 +82,10 @@ self.transform.rotation = rotation
 | `ComponentType.BoxCollider` | `BoxCollider` |
 | `ComponentType.DynamicRigidBody` | `DynamicRigidBody` |
 | `ComponentType.StaticRigidBody` | `StaticRigidBody` |
+| `ComponentType.KinematicRigidBody` | `KinematicRigidBody` |
+| `ComponentType.CharacterMovement` | `CharacterMovement` |
+| `ComponentType.NavMeshVolume` | `NavMeshVolume` |
+| `ComponentType.NavAgent` | `NavAgent` |
 | `ComponentType.EditorCamera` | `EditorCamera`, только при `GG_EDITOR` |
 | `ComponentType.CameraMovement` | `CameraMovement`, только при `GG_EDITOR` |
 
@@ -304,6 +309,7 @@ return M
 | `StaticRigidBody` | `enabled` | Чтение/запись | Включение тела. |
 | `BoxCollider` | `size` | Чтение | Размер как копия `Vector3`. |
 | `BoxCollider` | `enabled` | Чтение/запись | Включение коллайдера. |
+| `BoxCollider` | `affects_navmesh` | Чтение/запись | Участвует ли коллайдер в генерации навмеша. Читается только генератором в редакторе. |
 
 У статического тела нет методов сил и импульсов. Изменение `enabled` учитывается физической системой на шаге. Для динамического тела настройте корневой узел и коллайдер в редакторе; Lua не создаёт их автоматически.
 
@@ -330,7 +336,128 @@ end
 return M
 ```
 
-## 9. Игровой ввод
+### KinematicRigidBody
+
+Тело движется только по командам: без гравитации, сил и реакции на удары. Использует те же `BoxCollider`, что и остальные тела. Толкает динамические тела, но статические его не останавливают: Jolt не создаёт контактов между кинематическими и статическими телами. Если объект должен упираться в стены, используйте `CharacterMovement`.
+
+| Свойство | Тип | Доступ | Значение |
+| --- | --- | --- | --- |
+| `linear_velocity` | `Vector3` | Чтение/запись | Мировая скорость; действует до следующей записи. |
+| `angular_velocity` | `Vector3` | Чтение/запись | Мировая угловая скорость в рад/с; действует до следующей записи. |
+| `has_actor` | `boolean` | Чтение | Создано ли физическое тело. |
+| `is_sleeping` | `boolean` | Чтение | Спит ли тело. |
+| `enabled` | `boolean` | Чтение/запись | Включено ли тело. |
+
+Запись позиции или поворота узла тоже перемещает тело, расталкивая динамические тела на пути.
+
+### CharacterMovement
+
+Персонаж на Jolt `CharacterVirtual` с формой-сферой: скользит вдоль стен, ходит по склонам и поднимается на ступени. Компонент работает только на корневом узле и не сочетается с `RigidBody` на том же объекте. Центр сферы находится в позиции узла; радиус не зависит от масштаба узла.
+
+| API | Тип | Доступ | Значение |
+| --- | --- | --- | --- |
+| `character:move(Vector3)` | `boolean` | Метод | Задать желаемую мировую скорость. Учитываются только X и Z; скорость действует до следующего вызова, для остановки передайте нулевой вектор. |
+| `velocity` | `Vector3` | Чтение | Скорость после последнего физического шага. |
+| `is_grounded` | `boolean` | Чтение | Стоит ли персонаж на поверхности, по которой можно идти. |
+| `radius` | Число | Чтение | Радиус сферы. |
+| `gravity_scale` | Число | Чтение/запись | Множитель гравитации, от 0 до 100. |
+| `step_height` | Число | Чтение/запись | Наибольшая высота ступени, от 0 до 10 м. |
+| `enabled` | `boolean` | Чтение/запись | Включён ли персонаж. |
+
+Запись позиции узла телепортирует персонажа и обнуляет его скорость. Прыжка пока нет. Недопустимое значение настройки игнорируется.
+
+## 9. Навигация
+
+Навмеш статический: дизайнер ставит в сцену объекты **Nav mesh volume**, нажимает в инспекторе объёма **Generate nav mesh** и сохраняет сцену. Данные лежат рядом со сценой (`Scenes/Main.level.json` -> `Scenes/Main.navmesh`), объёмы загружают их при инициализации уровня. Проходимая поверхность строится внутри объёмов по `BoxCollider` и `Mesh`. Объекты с `DynamicRigidBody`, `KinematicRigidBody` или `CharacterMovement` не учитываются. Снятый у коллайдера флаг **Affects navmesh** исключает этот коллайдер и все меши его объекта.
+
+Скрипт получает систему через `self.navigation`. Все точки мировые. Точка запроса проецируется на ближайший полигон в пределах ±2 м по горизонтали и ±4 м по вертикали; дальше от навмеша запрос не выполняется.
+
+| Вызов | Результат |
+| --- | --- |
+| `nav.has_navmesh` | `true`, если навмеш уровня загружен. |
+| `nav.last_error` | Причина последней неудачи: нет навмеша, точка далеко от навмеша, путь не найден. |
+| `nav:find_path(from, to)` | Массив `Vector3` (индексы с 1): углы пути, первый — проекция `from`. Если `to` недостижима, путь ведёт к ближайшей достижимой точке. При ошибке — `nil`. |
+| `nav:project_point(p)` | Ближайшая точка навмеша или `nil`. |
+| `nav:raycast(from, to)` | Два значения: `blocked` и точка. `true` — луч упёрся в край навмеша, точка — место остановки; `false` — путь по прямой свободен, точка равна `to`. При ошибке — `false, nil`. Луч идёт по поверхности в плоскости XZ. |
+| `nav:random_point(center, radius)` | Случайная достижимая точка в радиусе от `center` или `nil`. |
+
+Пример движения объекта к цели по углам пути:
+
+```lua
+local M = {}
+
+function M.on_init(self)
+    self.speed = 3.0
+    self.path = self.navigation:find_path(self.transform.world_position, Vector3.new(10, 0, 5))
+    self.index = 2 -- первый угол — текущая позиция
+    if not self.path then print("Путь не найден: " .. self.navigation.last_error) end
+end
+
+function M.on_update(self, dt)
+    if not self.path or self.index > #self.path then return end
+    local target = self.path[self.index]
+    local offset = target - self.transform.world_position
+    local distance = offset:length()
+    local step = self.speed * dt
+    if distance <= step then
+        -- Пример для объекта без родителя: мировая позиция совпадает с локальной.
+        self.transform.position = target
+        self.index = self.index + 1
+    else
+        self.transform:move(offset / distance * step)
+    end
+end
+
+return M
+```
+
+Навмеш не перестраивается во время игры: после изменения геометрии или объёмов сгенерируйте его заново в редакторе.
+
+### NavAgent
+
+Ведёт объект по навмешу, передавая скорость компоненту `CharacterMovement` того же объекта; без него агент не движется и переходит в состояние `"failed"`. Компонент работает только на корневом узле. Каждый агент независим: обхода других агентов и логики толпы нет, агенты лишь физически сталкиваются друг с другом. Сфера персонажа должна быть не больше радиуса агента, заданного в объёме навмеша.
+
+| API | Тип | Доступ | Значение |
+| --- | --- | --- | --- |
+| `agent:set_destination(Vector3)` | `boolean` | Метод | Построить путь к мировой точке. `false` — путь не построен, причина в `last_error`. В `on_init` запрос принимается всегда, а путь строится в первом кадре. |
+| `agent:stop()` | — | Метод | Остановиться и отменить путь. |
+| `agent:warp(Vector3)` | `boolean` | Метод | Перенести на ближайшую точку навмеша и отменить путь. В `on_init` навмеш может быть ещё не загружен, используйте `on_update`. |
+| `speed` | Число | Чтение/запись | Наибольшая скорость, м/с. |
+| `acceleration` | Число | Чтение/запись | Разгон и торможение, м/с². |
+| `angular_speed` | Число | Чтение/запись | Скорость поворота, градусы/с. |
+| `stopping_distance` | Число | Чтение/запись | Расстояние до цели, на котором агент останавливается, м. |
+| `update_rotation` | `boolean` | Чтение/запись | Поворачивать ли объект по направлению движения. Вперёд — локальная ось -Z. |
+| `state` | Строка | Чтение | `"idle"`, `"moving"`, `"arrived"` или `"failed"`. |
+| `destination` | `Vector3` | Чтение | Последняя заданная цель. |
+| `is_partial` | `boolean` | Чтение | Цель недостижима, и агент идёт к ближайшей достижимой точке. |
+| `remaining_distance` | Число | Чтение | Оставшаяся длина пути по XZ. |
+| `velocity` | `Vector3` | Чтение | Скорость персонажа. |
+| `path` | Массив `Vector3` | Чтение | Копия углов текущего пути. |
+| `last_error` | Строка | Чтение | Причина последней неудачи. |
+
+Если персонажа оттолкнули или он застрял, агент сам перестраивает путь. Недопустимое значение настройки игнорируется.
+
+```lua
+local M = {}
+
+function M.on_init(self)
+    self.agent = self.object:get_component(ComponentType.NavAgent)
+    if self.agent then self.agent:set_destination(Vector3.new(10, 0, 5)) end
+end
+
+function M.on_update(self, dt)
+    if self.agent and self.agent.state == "failed" then
+        print("Агент остановился: " .. self.agent.last_error)
+        self.agent:stop()
+    end
+end
+
+return M
+```
+
+Динамические препятствия и обход других агентов не поддерживаются.
+
+## 10. Игровой ввод
 
 `self.input`, тип `GameInput` и таблица `Keys` доступны при `GG_GAME`.
 
@@ -389,7 +516,7 @@ end
 return M
 ```
 
-## 10. Библиотеки Lua и отладка
+## 11. Библиотеки Lua и отладка
 
 Открыты базовая библиотека, `math`, `string`, `table`, `utf8`. Например, доступны `pairs`, `ipairs`, `type`, `tostring`, `math.sin`, `math.rad`, `string.format`, `table.insert`.
 
@@ -413,18 +540,18 @@ print("Компонент найден:", self.object:get_component(ComponentTyp
 7. Углы заданы в радианах, а индексы дочерних узлов начинаются с нуля.
 8. Для физики есть действующее тело и коллайдер; сообщение об ошибке ищется в выводе `[Lua]`.
 
-## 11. Что пока недоступно
+## 12. Что пока недоступно
 
 - Создание и удаление объектов, компонентов и узлов из Lua.
 - Доступ к уровню, поиск других объектов, загрузка ресурсов и переключение сцен через Lua API.
 - Поиск веток по именам и поиск компонента только на выбранном узле.
 - Изменение мешей, материалов и параметров камеры.
-- Настройка размера коллайдера, массы и скорости тела из Lua.
+- Настройка размера коллайдера, массы тела и скорости динамического тела из Lua.
 - Обработчики столкновений, fixed-step, завершения скрипта и автоматическая горячая перезагрузка.
 
-`Mesh`, `GameCamera`, `LuaScript`, а также редакторские `EditorCamera` и `CameraMovement` зарегистрированы как типы без пользовательских методов и свойств. Их можно найти и проверить на наличие. Наличие метода в C++ не означает, что он доступен в Lua.
+`Mesh`, `GameCamera`, `LuaScript`, `NavMeshVolume`, а также редакторские `EditorCamera` и `CameraMovement` зарегистрированы как типы без пользовательских методов и свойств. Их можно найти и проверить на наличие. Наличие метода в C++ не означает, что он доступен в Lua.
 
-## 12. Источники API в проекте
+## 13. Источники API в проекте
 
 - [ScriptBindingsMath.cpp](Engine/Scripting/ScriptBindingsMath.cpp) — `Vector3`, `Quaternion`, `Color`.
 - [ScriptBindingsTransform.cpp](Engine/Scripting/ScriptBindingsTransform.cpp) — `Transform`.
@@ -433,6 +560,7 @@ print("Компонент найден:", self.object:get_component(ComponentTyp
 - [ScriptServer.cpp](Engine/Scripting/ScriptServer.cpp) — библиотеки Lua и `print`.
 - [TransformTree.cpp](Engine/Transform/TransformTree.cpp) — реализация операций трансформации.
 - [PhysicsServer.cpp](Engine/Physics/PhysicsServer.cpp) — накопление команд и физический шаг.
+- [NavigationServer.cpp](Engine/Navigation/NavigationServer.cpp) — загрузка навмеша и запросы Detour.
 - [GameInput.cpp](Engine/Platform/GameInput.cpp) — поведение игрового ввода.
 - [ResourceManager.cpp](Engine/Resources/ResourceManager.cpp) — разрешение путей.
 

@@ -6,9 +6,11 @@
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/PhysicsMaterial.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include "PhysicsServer.h"
 #include "TransformTree.h"
@@ -146,6 +148,15 @@ namespace {
             apply(a, b, contact, settings);
         }
     };
+
+    // Внутреннее тело меньше внешней сферы, как рекомендует Jolt для CharacterVirtual.
+    constexpr float InnerBodyFraction = 0.9f;
+    // Только SDK Ref владеет персонажем Jolt: Item хранит настройки и не видит типы Jolt.
+    struct CharacterActor {
+        CharacterItem* item = nullptr;
+        JPH::Ref<JPH::CharacterVirtual> character;
+        CharacterSettings applied;
+    };
 }
 
 struct PhysicsServer::Impl {
@@ -160,6 +171,8 @@ struct PhysicsServer::Impl {
     // Оба списка заимствуют адреса: владельцами записей остаются компоненты.
     std::vector<PhysicsItem*> items;
     std::vector<ColliderItem*> colliders;
+    // Объявлен после scene: персонаж удаляет внутреннее тело, пока PhysicsSystem жив.
+    std::vector<CharacterActor> characters;
 };
 
 bool PhysicsItem::accumulate(DXVector3& pending, const DXVector3& value)
@@ -185,6 +198,29 @@ void PhysicsItem::clearPendingActions()
 
 PhysicsItem::~PhysicsItem() { if (server) server->removeItem(*this); }
 ColliderItem::~ColliderItem() { if (server) server->removeCollider(*this); }
+CharacterItem::~CharacterItem() { if (server) server->removeCharacter(*this); }
+
+bool CharacterItem::move(const DXVector3& desired)
+{
+    if (!enabled || !finite(desired)) return false;
+    desiredVelocity = desired;
+    return true;
+}
+
+bool CharacterSettings::Validate(std::string& error) const
+{
+    const float values[] = { radius, gravityScale, maxSlope, stepHeight, mass, maxStrength };
+    for (float value : values)
+        if (!std::isfinite(value)) { error = "Character settings must be finite numbers"; return false; }
+    if (radius < 0.01f || radius > 100.0f) { error = "Character radius must be in [0.01, 100]"; return false; }
+    if (gravityScale < 0.0f || gravityScale > 100.0f) { error = "Gravity scale must be in [0, 100]"; return false; }
+    if (maxSlope < 0.0f || maxSlope > 89.0f) { error = "Max slope must be in [0, 89] degrees"; return false; }
+    if (stepHeight < 0.0f || stepHeight > 10.0f) { error = "Step height must be in [0, 10]"; return false; }
+    if (mass < 0.001f || mass > 1000000.0f) { error = "Character mass must be in [0.001, 1000000]"; return false; }
+    if (maxStrength < 0.0f || maxStrength > 1000000000.0f) { error = "Max strength must be in [0, 1000000000]"; return false; }
+    error.clear();
+    return true;
+}
 PhysicsServer::~PhysicsServer() { Shutdown(); }
 
 bool PhysicsServer::reportError(const char* message)
@@ -240,6 +276,9 @@ bool PhysicsServer::addItem(PhysicsItem& item)
     for (const PhysicsItem* registered : impl->items)
         if (registered->transformNode == item.transformNode)
             return reportError("only one rigid body per root transform is supported");
+    for (const CharacterActor& actor : impl->characters)
+        if (actor.item->transformNode == item.transformNode)
+            return reportError("a character cannot share its root transform with a rigid body");
     // Регистрация возможна до коллайдеров: актёр собирается перед fixed-step.
     impl->items.push_back(&item);
     item.server = this;
@@ -280,12 +319,44 @@ void PhysicsServer::removeCollider(ColliderItem& item)
     item.server = nullptr;
 }
 
+bool PhysicsServer::addCharacter(CharacterItem& item)
+{
+    if (item.server) return item.server == this;
+    if (!validPose(item.transformNode)) return reportError("character needs a finite root pose and unit quaternion");
+    if (!Init()) return false;
+    for (const PhysicsItem* registered : impl->items)
+        if (registered->transformNode == item.transformNode)
+            return reportError("a character cannot share its root transform with a rigid body");
+    for (const CharacterActor& actor : impl->characters)
+        if (actor.item->transformNode == item.transformNode)
+            return reportError("only one character per root transform is supported");
+    // Объект Jolt создаётся перед fixed-step, как и актёры тел.
+    CharacterActor actor;
+    actor.item = &item;
+    impl->characters.push_back(std::move(actor));
+    item.server = this;
+    return true;
+}
+
+void PhysicsServer::removeCharacter(CharacterItem& item)
+{
+    if (item.server != this) return;
+    auto& characters = impl->characters;
+    // Удаление записи освобождает персонажа и его внутреннее тело.
+    characters.erase(std::remove_if(characters.begin(), characters.end(),
+        [&](const CharacterActor& actor) { return actor.item == &item; }), characters.end());
+    item.server = nullptr;
+    item.velocity = DXVector3::Zero;
+    item.grounded = false;
+}
+
 void PhysicsServer::Shutdown()
 {
     if (impl) {
         // Пережившие систему Item остаются валидными и больше не обращаются к ней.
         while (!impl->items.empty()) removeItem(*impl->items.back());
         while (!impl->colliders.empty()) removeCollider(*impl->colliders.back());
+        while (!impl->characters.empty()) removeCharacter(*impl->characters.back().item);
         delete impl;
         impl = nullptr;
         releaseSdk(); // Factory удаляется после последнего PhysicsSystem и всех его форм.
@@ -325,9 +396,12 @@ bool PhysicsServer::rebuildActor(PhysicsItem& item)
     }
 
     const bool dynamic = item.type == PhysicsBodyType::Dynamic;
+    // Кинематическое тело использует тот же слой столкновений, что и динамическое.
+    const bool moving = item.type != PhysicsBodyType::Static;
     JPH::BodyCreationSettings settings(shape, JPH::RVec3(vector(item.transformNode->get_position())),
-        rotation(*item.transformNode), dynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
-        dynamic ? DynamicLayer : StaticLayer);
+        rotation(*item.transformNode),
+        dynamic ? JPH::EMotionType::Dynamic : moving ? JPH::EMotionType::Kinematic : JPH::EMotionType::Static,
+        moving ? DynamicLayer : StaticLayer);
     if (dynamic) {
         // Инерция вычисляется по геометрии; полную массу задаёт компонент.
         settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
@@ -336,10 +410,10 @@ bool PhysicsServer::rebuildActor(PhysicsItem& item)
     }
     auto& bodies = impl->scene.GetBodyInterface();
     const auto id = bodies.CreateAndAddBody(settings,
-        dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
     if (id.IsInvalid()) return reportError("cannot create Jolt body: body capacity exceeded");
     item.bodyId = id.GetIndexAndSequenceNumber();
-    if (dynamic) {
+    if (moving) {
         // CreationSettings требует уже ограниченные скорости; BodyInterface ограничивает их сам.
         bodies.SetLinearAndAngularVelocity(id, vector(item.linearVelocity), vector(item.angularVelocity));
         JPH::Vec3 linear, angular;
@@ -383,7 +457,8 @@ bool PhysicsServer::Update(double fixedInterval)
         if (!finite(item->linearVelocity)) item->linearVelocity = DXVector3::Zero;
         if (!finite(item->angularVelocity)) item->angularVelocity = DXVector3::Zero;
         item->mass = bounded(item->mass, 1.0f, 0.001f, 1000000.0f);
-        if (item->type != PhysicsBodyType::Static && item->type != PhysicsBodyType::Dynamic)
+        if (item->type != PhysicsBodyType::Static && item->type != PhysicsBodyType::Dynamic &&
+            item->type != PhysicsBodyType::Kinematic)
             item->type = PhysicsBodyType::Dynamic;
         if (item->rebuild || item->type != item->appliedType || item->mass != item->appliedMass ||
             dimensions(item->transformNode->get_scale()) != item->appliedScale)
@@ -396,12 +471,22 @@ bool PhysicsServer::Update(double fixedInterval)
 
         const JPH::BodyID id(item->bodyId);
         const bool dynamic = item->type == PhysicsBodyType::Dynamic;
+        const bool kinematic = item->type == PhysicsBodyType::Kinematic;
         // Gizmo/Lua передают позу один раз; результат предыдущего шага не телепортируем.
-        if (item->transformNode->get_position() != item->lastPosition ||
-            item->transformNode->get_rotation() != item->lastRotation)
+        const bool poseChanged = item->transformNode->get_position() != item->lastPosition ||
+            item->transformNode->get_rotation() != item->lastRotation;
+        if (poseChanged && kinematic) {
+            // Jolt вычисляет скорость до новой позы, поэтому динамические тела расталкиваются.
+            bodies.MoveKinematic(id, JPH::RVec3(vector(item->transformNode->get_position())),
+                rotation(*item->transformNode), dt);
+        } else if (poseChanged) {
             // Допуск Jolt отсекает численный шум без лишнего пробуждения и обновления broadphase.
             bodies.SetPositionAndRotationWhenChanged(id, JPH::RVec3(vector(item->transformNode->get_position())),
                 rotation(*item->transformNode), dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        } else if (kinematic) {
+            // Без переноса узла тело движется заданными скоростями; нулевые его останавливают.
+            bodies.SetLinearAndAngularVelocity(id, vector(item->linearVelocity), vector(item->angularVelocity));
+        }
         if (dynamic) {
             JPH::Vec3 linear, angular;
             bodies.GetLinearAndAngularVelocity(id, linear, angular);
@@ -421,6 +506,7 @@ bool PhysicsServer::Update(double fixedInterval)
         // Следующий fixed-step не повторяет команды, даже если шагов в кадре несколько.
         item->clearPendingActions();
     }
+    if (!stepCharacters(dt)) return false;
     const auto error = impl->scene.Update(dt, 1, &impl->allocator, &impl->jobs);
     if (error != JPH::EPhysicsUpdateError::None) return reportError("Jolt update capacity exceeded");
     for (PhysicsItem* item : impl->items) {
@@ -440,8 +526,103 @@ bool PhysicsServer::Update(double fixedInterval)
             item->angularVelocity = vector(angular);
             item->sleeping = !bodies.IsActive(id);
         }
+        if (item->type == PhysicsBodyType::Kinematic) {
+            // Скорости Item остаются командой пользователя, в узел возвращается только поза.
+            const JPH::BodyID id(item->bodyId);
+            JPH::RVec3 position;
+            JPH::Quat orientation;
+            bodies.GetPositionAndRotation(id, position, orientation);
+            item->transformNode->set_position({static_cast<float>(position.GetX()),
+                static_cast<float>(position.GetY()), static_cast<float>(position.GetZ())});
+            item->transformNode->set_rotation({orientation.GetX(), orientation.GetY(), orientation.GetZ(), orientation.GetW()});
+            item->sleeping = !bodies.IsActive(id);
+        }
         item->lastPosition = item->transformNode->get_position();
         item->lastRotation = item->transformNode->get_rotation();
+    }
+    return true;
+}
+
+bool PhysicsServer::stepCharacters(float dt)
+{
+    // Персонаж проверяет столкновения как подвижное тело: со статикой и всеми телами.
+    const auto broadPhaseFilter = impl->scene.GetDefaultBroadPhaseLayerFilter(DynamicLayer);
+    const auto layerFilter = impl->scene.GetDefaultLayerFilter(DynamicLayer);
+    const JPH::BodyFilter bodyFilter;
+    const JPH::ShapeFilter shapeFilter;
+    for (CharacterActor& actor : impl->characters) {
+        CharacterItem& item = *actor.item;
+        if (!item.enabled) {
+            // Выключенный персонаж убирает внутреннее тело из мира.
+            actor.character = nullptr;
+            item.velocity = DXVector3::Zero;
+            item.grounded = false;
+            continue;
+        }
+        if (!validPose(item.transformNode)) return reportError("character needs a root transform");
+        TransformNode& node = *item.transformNode;
+        const CharacterSettings& settings = item.settings;
+        const CharacterSettings& applied = actor.applied;
+        // Гравитация и высота ступени читаются каждый шаг, остальное задаётся при создании.
+        if (!actor.character || settings.radius != applied.radius || settings.maxSlope != applied.maxSlope ||
+            settings.mass != applied.mass || settings.maxStrength != applied.maxStrength) {
+            const JPH::Vec3 keptVelocity = actor.character ? actor.character->GetLinearVelocity() : JPH::Vec3::sZero();
+            actor.character = nullptr;
+            // Контакты приводят материал к SurfaceMaterial, поэтому другой тип здесь недопустим.
+            const JPH::RefConst<SurfaceMaterial> material = new SurfaceMaterial(::PhysicsMaterial{});
+            // TODO: заменить сферу на капсулу с настройкой высоты.
+            JPH::SphereShapeSettings outer(settings.radius, material);
+            JPH::SphereShapeSettings inner(settings.radius * InnerBodyFraction, material);
+            const auto outerShape = outer.Create();
+            if (outerShape.HasError()) return reportError(outerShape.GetError().c_str());
+            const auto innerShape = inner.Create();
+            if (innerShape.HasError()) return reportError(innerShape.GetError().c_str());
+            JPH::Ref<JPH::CharacterVirtualSettings> created = new JPH::CharacterVirtualSettings;
+            created->mShape = outerShape.Get();
+            created->mInnerBodyShape = innerShape.Get();
+            created->mInnerBodyLayer = DynamicLayer;
+            created->mMaxSlopeAngle = JPH::DegreesToRadians(settings.maxSlope);
+            created->mMass = settings.mass;
+            created->mMaxStrength = settings.maxStrength;
+            // Опорой считаются только контакты нижней половины сферы.
+            created->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), 0.0f);
+            // TODO: добавить альтернативную реализацию на JPH::Character (твёрдое тело).
+            actor.character = new JPH::CharacterVirtual(created, JPH::RVec3(vector(node.get_position())),
+                JPH::Quat::sIdentity(), &impl->scene);
+            actor.character->SetLinearVelocity(keptVelocity);
+            actor.applied = settings;
+            item.lastPosition = node.get_position();
+        }
+        JPH::CharacterVirtual& character = *actor.character;
+        // Перенос узла скриптом или редактором телепортирует персонажа и гасит скорость.
+        if (node.get_position() != item.lastPosition) {
+            character.SetPosition(JPH::RVec3(vector(node.get_position())));
+            character.SetLinearVelocity(JPH::Vec3::sZero());
+        }
+        character.UpdateGroundVelocity();
+        const JPH::Vec3 up = character.GetUp();
+        const JPH::Vec3 vertical = up * character.GetLinearVelocity().Dot(up);
+        const JPH::Vec3 ground = character.GetGroundVelocity();
+        const JPH::Vec3 gravity = impl->scene.GetGravity() * settings.gravityScale;
+        // На земле наследуем её скорость, в воздухе сохраняем вертикальную и добавляем гравитацию.
+        const bool standing = character.GetGroundState() == JPH::CharacterVirtual::EGroundState::OnGround &&
+            (vertical - ground).Dot(up) < 0.1f;
+        const JPH::Vec3 base = (standing ? ground : vertical) + gravity * dt;
+        // Команда действует только по XZ и не толкает персонажа на слишком крутой склон.
+        const JPH::Vec3 desired(item.desiredVelocity.x, 0.0f, item.desiredVelocity.z);
+        character.SetLinearVelocity(base + character.CancelVelocityTowardsSteepSlopes(desired));
+
+        JPH::CharacterVirtual::ExtendedUpdateSettings update;
+        update.mWalkStairsStepUp = up * settings.stepHeight;
+        update.mStickToFloorStepDown = -up * (std::max)(settings.stepHeight, 0.1f);
+        character.ExtendedUpdate(dt, gravity, update, broadPhaseFilter, layerFilter, bodyFilter, shapeFilter, impl->allocator);
+
+        const JPH::RVec3 position = character.GetPosition();
+        node.set_position({static_cast<float>(position.GetX()),
+            static_cast<float>(position.GetY()), static_cast<float>(position.GetZ())});
+        item.lastPosition = node.get_position();
+        item.velocity = vector(character.GetLinearVelocity());
+        item.grounded = character.GetGroundState() == JPH::CharacterVirtual::EGroundState::OnGround;
     }
     return true;
 }

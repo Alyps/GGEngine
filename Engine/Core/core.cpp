@@ -23,6 +23,8 @@ Game::~Game() noexcept
 	// Уровень освобождается первым: его LuaScriptComponent используют состояние Lua.
 	delete currentLevel;
 	physicsServer.Shutdown();
+	// Навмеш и его отладочная геометрия освобождаются, пока жив RenderServer.
+	navigationServer.Shutdown();
 	delete scriptServer;
 	delete resourceManager;
 	delete renderServer;
@@ -67,6 +69,8 @@ bool Game::replaceLevel(Level* level, const std::string& projectDirectory)
 	delete currentLevel;
 	currentLevel = nullptr;
 	physicsServer.Shutdown();
+	// Объёмы уже сняты компонентами; навмеш новой сцены загрузят её объёмы.
+	navigationServer.Shutdown();
 	delete scriptServer;
 	delete resourceManager;
 	scriptServer = nextScripts;

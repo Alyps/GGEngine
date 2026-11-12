@@ -13,6 +13,7 @@
 #include "ScriptServer.h"
 #include "ResourceManager.h"
 #include "PhysicsServer.h"
+#include "NavigationServer.h"
 
 class Game;
 
@@ -86,6 +87,10 @@ public:
 
 	PhysicsServer& getPhysicsServer() noexcept { return physicsServer; }
 	const PhysicsServer& getPhysicsServer() const noexcept { return physicsServer; }
+
+	// Статический навмеш уровня и запросы пути; загружается объёмами навмеша.
+	NavigationServer& getNavigationServer() noexcept { return navigationServer; }
+	const NavigationServer& getNavigationServer() const noexcept { return navigationServer; }
 	// Оба приложения выполняют физику после BeginFrame и до Update.
 	bool StepPhysics();
 	// Редактор правит авторские данные; запуск игровых скриптов остаётся режиму игры.
@@ -125,6 +130,8 @@ private:
 	WindowMessageContext windowContext{};
 	TimeManager timeManager;
 	PhysicsServer physicsServer;
+	// Отладочная геометрия системы снимается в ~Game до удаления RenderServer.
+	NavigationServer navigationServer;
 #if defined(GG_GAME)
 	// Состояние живёт до уничтожения InputDevice, который хранит заимствованный адрес.
 	GameInput gameInput;

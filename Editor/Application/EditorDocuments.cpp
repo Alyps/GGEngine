@@ -193,6 +193,10 @@ void Editor::ApplyDocumentActions()
 			documentError = "Add a GameCamera to a transform node in this scene before playing.";
 			pendingAction = PendingAction::None;
 		}
+		else if (pendingAction == PendingAction::Play && navBuilder.isRunning()) {
+			documentError = "Wait for the navmesh generation to finish before playing.";
+			pendingAction = PendingAction::None;
+		}
 		else if (game.getLevel() && (sceneDirty || (pendingAction == PendingAction::Play && sceneFile.empty()))) showUnsavedDialog = true;
 		else ContinuePendingAction();
 	}
@@ -314,6 +318,9 @@ void Editor::ApplyProjectAction()
 
 void Editor::ResetSceneReferences()
 {
+	// Результат генерации относится к заменяемой сцене.
+	navBuilder.CancelAndJoin();
+	requestedNavBuild = false;
 	ClearDocumentHistory();
 	selectedObjects.clear();
 	selectedObject = nullptr; selectedNode = nameDraftNode = nullptr;

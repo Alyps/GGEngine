@@ -116,6 +116,8 @@ void Editor::DrawViewportToolbar()
 			ImGui::Checkbox("Snap", &useSnap);
 			ImGui::SetNextItemWidth(100);
 			ImGui::DragFloat("Step", &snap, 0.1f, 0.01f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			bool showNavMesh = game.getNavigationServer().isDebugViewVisible();
+			if (ImGui::Checkbox("Show navmesh", &showNavMesh)) game.getNavigationServer().SetDebugView(&game, showNavMesh);
 			ImGui::EndPopup();
 		}
 	};

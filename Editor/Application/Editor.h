@@ -5,6 +5,7 @@
 #include "ContentBrowser.h"
 #include "Project.h"
 #include "EditorSettings.h"
+#include "NavMeshBuilder.h"
 #include <unordered_map>
 
 // Game и сцена живут дольше редактора; редактор владеет только UI и viewport.
@@ -80,7 +81,8 @@ private:
 	void DrawTreeInspector();
 	void ApplyTreeAction();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
-	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, Collider, StaticBody, DynamicBody };
+	// Порядок совпадает с подписями меню; виды начиная с Collider доступны только на корне.
+	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, NavMeshVolume, Collider, StaticBody, DynamicBody, KinematicBody, CharacterMovement, NavAgent };
 	struct TreeAction {
 		TreeOperation operation = TreeOperation::None;
 		TransformNode* node = nullptr;
@@ -93,7 +95,7 @@ private:
 	TransformNode* nameDraftNode = nullptr;
 	std::string nodeNameDraft;
 	void DrawHierarchy();
-	enum class ObjectType { None, Empty, Cube, Sphere, Plane, DirectionalLight, PointLight, Mesh };
+	enum class ObjectType { None, Empty, Cube, Sphere, Plane, DirectionalLight, PointLight, Mesh, NavMeshVolume };
 	void DrawCreateMenu();
 	void ApplySceneActions();
 	void DrawObjectDropTarget(const ImVec2& minimum, const ImVec2& maximum, bool inViewport = false);
@@ -156,6 +158,16 @@ private:
 		std::string meshError, materialError;
 	};
 	std::unordered_map<MeshComponent*, MeshPathDraft> meshPathDrafts;
+	// Навигация: генератор работает в фоне, результат применяется между кадрами.
+	void DrawNavMeshVolumeInspector(NavMeshVolumeComponent& volume);
+	void DrawCharacterMovementInspector(CharacterMovementComponent& character);
+	void DrawNavAgentInspector(NavAgentComponent& agent);
+	void ApplyNavigationActions();
+	NavMeshBuilder navBuilder;
+	// Итог генерации, путь данных относительно проекта и ошибка последнего ввода параметров.
+	std::string navBuildMessage, navBuildPath, navSettingsError;
+	bool requestedNavBuild = false, navStale = false;
+	int navStaleCountdown = 0;
 	// Изображение сцены, панели вьюпорта и операции гизмо.
 	void DrawViewport();
 	void DrawViewportToolbar();

@@ -70,6 +70,19 @@ float4 PSColliderMain(VertexOutput input) : SV_TARGET
     return float4(0.15f, 0.9f, 0.35f, 0.22f);
 }
 
+// Оболочка объёма навмеша в редакторе.
+float4 PSNavVolumeMain(VertexOutput input) : SV_TARGET
+{
+    return float4(0.25f, 0.55f, 1.0f, 0.12f);
+}
+
+// Отладочная геометрия навмеша: мировая матрица единичная, поэтому нормаль приходит без
+// изменений и несёт цвет RGB, а u — альфу. Освещение не применяется.
+float4 PSNavMeshMain(VertexOutput input) : SV_TARGET
+{
+    return float4(input.normal, input.uv.x);
+}
+
 float4 PSMain(VertexOutput input) : SV_TARGET
 {
     float3 normal = SafeNormalize(input.normal);

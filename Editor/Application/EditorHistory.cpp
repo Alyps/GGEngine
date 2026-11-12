@@ -226,14 +226,21 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 		if (auto* mesh = dynamic_cast<MeshComponent*>(component)) return mesh->ApplyDescription(json, documentError);
 		if (auto* collider = dynamic_cast<BoxColliderComponent*>(component)) {
 			float size[3];
-			if (!Deserialization::Floats(json, "size", size, 3, documentError)) return false;
+			bool affectsNavmesh;
+			if (!Deserialization::Floats(json, "size", size, 3, documentError)
+				|| !Deserialization::Bool(json, "affects_navmesh", affectsNavmesh, documentError)) return false;
 			// Изменяем существующий Item, сохраняя регистрации физики и оболочки.
 			if (!collider->setSize(DXVector3(size))) {
 				documentError = "Invalid box collider size.";
 				return false;
 			}
+			collider->getColliderItem().affectsNavmesh = affectsNavmesh;
 			return true;
 		}
+		// Объём меняет размер и параметры, сохраняя регистрацию и путь данных.
+		if (auto* volume = dynamic_cast<NavMeshVolumeComponent*>(component)) return volume->ApplyDescription(json, documentError);
+		if (auto* character = dynamic_cast<CharacterMovementComponent*>(component)) return character->ApplyDescription(json, documentError);
+		if (auto* agent = dynamic_cast<NavAgentComponent*>(component)) return agent->ApplyDescription(json, documentError);
 		if (auto* script = dynamic_cast<LuaScriptComponent*>(component)) {
 			std::string path;
 			if (!Deserialization::String(json, "script_path", path, documentError)) return false;

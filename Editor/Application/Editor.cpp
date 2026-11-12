@@ -112,6 +112,8 @@ CameraMovementComponent* Editor::GetCameraMovement() const
 
 Editor::~Editor()
 {
+	// Рабочий поток генератора не должен пережить редактор.
+	navBuilder.CancelAndJoin();
 	// Возвращаем оконную процедуру до удаления контекста ImGui.
 	const HWND window = game.getWindow().getWindow();
 	if (previousProcedure && IsWindow(window))
@@ -156,6 +158,8 @@ bool Editor::Init()
 		reinterpret_cast<LONG_PTR>(&Editor::HandleMessage)));
 	if (!previousProcedure) return false;
 	if (auto* movement = GetCameraMovement()) movement->enabled = false;
+	// Навмеш виден в редакторе по умолчанию; переключатель — в инспекторе объёма и опциях viewport.
+	game.getNavigationServer().SetDebugView(&game, true);
 	return true;
 }
 
@@ -275,6 +279,7 @@ int Editor::Run()
 		ApplyHistoryStep();
 		ApplyTextureActions();
 		ApplyDocumentActions();
+		ApplyNavigationActions();
 		ApplyProjectAction();
 		ApplyObjectActions();
 	}

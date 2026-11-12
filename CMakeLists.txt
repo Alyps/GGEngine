@@ -62,6 +62,22 @@ function(add_mesh_importer)
 endfunction()
 add_mesh_importer()
 
+# Recast/Detour подключаются только библиотеками: без демо, тестов и примеров.
+function(add_navigation)
+	set(BUILD_SHARED_LIBS OFF)
+	set(RECASTNAVIGATION_DEMO OFF CACHE BOOL "" FORCE)
+	set(RECASTNAVIGATION_TESTS OFF CACHE BOOL "" FORCE)
+	set(RECASTNAVIGATION_EXAMPLES OFF CACHE BOOL "" FORCE)
+	# Проект объявляет cmake_minimum_required(3.1); CMake 4 без этого откажется его настраивать.
+	set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+	FetchContent_Declare(recastnavigation
+		GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+		GIT_TAG v1.6.0
+		GIT_SHALLOW TRUE)
+	FetchContent_MakeAvailable(recastnavigation)
+endfunction()
+add_navigation()
+
 FetchContent_Declare(
 	DirectXTK
 	GIT_REPOSITORY https://github.com/microsoft/DirectXTK.git

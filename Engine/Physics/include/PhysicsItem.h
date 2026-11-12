@@ -1,11 +1,13 @@
 #pragma once
 #include "GGMath.h"
 #include <cstdint>
+#include <string>
 
 struct TransformNode;
 class PhysicsServer;
 
-enum class PhysicsBodyType { Static, Dynamic };
+// Kinematic движется только по командам: без гравитации, сил и реакции на столкновения.
+enum class PhysicsBodyType { Static, Dynamic, Kinematic };
 
 struct PhysicsMaterial {
     float staticFriction = 0.6f;
@@ -19,6 +21,8 @@ struct ColliderItem {
     DXVector3 size = DXVector3::One; // Полные локальные размеры box.
     PhysicsMaterial material;
     bool enabled = true;
+    // false — коллайдер и меши его объекта не участвуют в генерации навмеша.
+    bool affectsNavmesh = true;
 
     ColliderItem() = default;
     ~ColliderItem();
@@ -84,4 +88,43 @@ private:
     // Отличаем изменение узла редактором от результата предыдущей симуляции.
     DXVector3 lastPosition = DXVector3::Zero;
     DXQuaternion lastRotation = DXQuaternion::Identity;
+};
+
+// Параметры персонажа сохраняются в сцене; длины в метрах, наклон в градусах.
+struct CharacterSettings {
+    float radius = 0.4f;
+    float gravityScale = 1.0f;
+    float maxSlope = 45.0f;
+    float stepHeight = 0.4f;
+    float mass = 70.0f;
+    float maxStrength = 100.0f;
+
+    bool operator==(const CharacterSettings&) const = default;
+    // Проверяет конечность и диапазоны, совпадающие с полями инспектора.
+    bool Validate(std::string& error) const;
+};
+
+// Компонент владеет записью; сервер заимствует её между Init и Shutdown и хранит объект Jolt у себя.
+struct CharacterItem {
+    TransformNode* transformNode = nullptr;
+    CharacterSettings settings;
+    bool enabled = true;
+    // Результат последнего физического шага.
+    DXVector3 velocity = DXVector3::Zero;
+    bool grounded = false;
+
+    CharacterItem() = default;
+    ~CharacterItem();
+    CharacterItem(const CharacterItem&) = delete;
+    CharacterItem& operator=(const CharacterItem&) = delete;
+    bool isRegistered() const { return server != nullptr; }
+    // Желаемая мировая скорость по XZ; действует до следующего вызова, Y задаёт гравитация.
+    bool move(const DXVector3& desired);
+
+private:
+    friend class PhysicsServer;
+    PhysicsServer* server = nullptr;
+    DXVector3 desiredVelocity = DXVector3::Zero;
+    // Отличаем перенос узла скриптом или редактором от результата шага.
+    DXVector3 lastPosition = DXVector3::Zero;
 };
