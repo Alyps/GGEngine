@@ -80,7 +80,7 @@ private:
 	void DrawTreeInspector();
 	void ApplyTreeAction();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
-	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, Collider, StaticBody, DynamicBody };
+	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, Collider, StaticBody, DynamicBody, Timer, BoxTrigger };
 	struct TreeAction {
 		TreeOperation operation = TreeOperation::None;
 		TransformNode* node = nullptr;

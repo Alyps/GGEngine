@@ -2,6 +2,32 @@
 #include "TransformableComponent.h"
 #include "PhysicsItem.h"
 struct RenderItem;
+class ScriptServer;
+struct lua_State;
+
+// Самостоятельная область пересечения: не добавляет твёрдую форму в RigidBody.
+class BoxTriggerComponent : public TransformableComponent {
+    TriggerItem triggerItem;
+    ScriptServer* scriptServer = nullptr; // Заимствован у Game, живёт дольше компонентов.
+    DelegateHandle enteredHandle, exitedHandle;
+    void releaseLuaEvents();
+#if defined(GG_EDITOR)
+    RenderItem* editorShell = nullptr; // Компонент владеет оболочкой и её ресурсами.
+    void releaseEditorShell();
+#endif
+public:
+    ~BoxTriggerComponent() override;
+    const char* GetSerializationType() const override { return "BoxTriggerComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
+    bool setSize(const DXVector3& size);
+    TriggerItem& getTriggerItem() { return triggerItem; }
+    const TriggerItem& getTriggerItem() const { return triggerItem; }
+    void PushEvent(lua_State* state, bool entered);
+    void Init(Game& game) override;
+    void Shutdown(Game& game) override;
+    void Update(Game& game, double deltaTime) override;
+};
 
 class BoxColliderComponent : public TransformableComponent {
 public:

@@ -80,8 +80,12 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 			if (auto* typed = dynamic_cast<PointLightComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "LuaScript") {
 			if (auto* typed = dynamic_cast<LuaScriptComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "Timer") {
+			if (auto* typed = dynamic_cast<TimerComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "BoxCollider") {
 			if (auto* typed = dynamic_cast<BoxColliderComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "BoxTrigger") {
+			if (auto* typed = dynamic_cast<BoxTriggerComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "DynamicRigidBody") {
 			if (auto* typed = dynamic_cast<DynamicRigidBodyComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "StaticRigidBody") {
@@ -109,6 +113,8 @@ void BindComponents(lua_State* L)
 		"Mesh", "Mesh", "GameCamera", "GameCamera",
 		"DirectionalLight", "DirectionalLight", "PointLight", "PointLight",
 		"LuaScript", "LuaScript", "BoxCollider", "BoxCollider",
+		"Timer", "Timer",
+		"BoxTrigger", "BoxTrigger",
 		"DynamicRigidBody", "DynamicRigidBody", "StaticRigidBody", "StaticRigidBody"
 #if defined(GG_EDITOR)
 		, "EditorCamera", "EditorCamera", "CameraMovement", "CameraMovement"
@@ -119,6 +125,20 @@ void BindComponents(lua_State* L)
 	// Скрываем метатаблицу констант от обычных getmetatable/setmetatable.
 	sol::table componentTypesMeta = componentTypes[sol::metatable_key];
 	componentTypesMeta[sol::meta_function::metatable] = false;
+
+	// Источник остаётся у Object; timeout выдаёт только возможность подписки.
+	lua.new_usertype<TimerComponent>("Timer", sol::no_constructor,
+		"start", &TimerComponent::start,
+		"stop", &TimerComponent::stop,
+		"wait_time", sol::property(&TimerComponent::getWaitTime, &TimerComponent::setWaitTime),
+		"repeating", sol::property(&TimerComponent::isRepeating, &TimerComponent::setRepeating),
+		"autostart", sol::property(&TimerComponent::isAutostart, &TimerComponent::setAutostart),
+		"running", sol::property(&TimerComponent::isRunning),
+		"time_left", sol::property(&TimerComponent::getTimeLeft),
+		"timeout", sol::property([](sol::this_state state, TimerComponent& timer) {
+			timer.PushTimeout(state);
+			return sol::stack::pop<sol::object>(state);
+		}));
 
 	// instance возвращает именно self компонента; свойство нельзя переназначить.
 	lua.new_usertype<LuaScriptComponent>("LuaScript", sol::no_constructor,
@@ -172,6 +192,20 @@ void BindComponents(lua_State* L)
 			[](StaticRigidBodyComponent& c, bool enabled) { c.getPhysicsItem().enabled = enabled; }));
 
 	// Размер читается копией; включение коллайдера учитывается системой на fixed-step.
+	lua.new_usertype<BoxTriggerComponent>("BoxTrigger", sol::no_constructor,
+		"size", sol::property([](const BoxTriggerComponent& c) { return c.getTriggerItem().size; },
+			[](BoxTriggerComponent& c, const DXVector3& size) { c.setSize(size); }),
+		"enabled", sol::property([](const BoxTriggerComponent& c) { return c.getTriggerItem().enabled; },
+			[](BoxTriggerComponent& c, bool enabled) { c.getTriggerItem().enabled = enabled; }),
+		"body_entered", sol::property([](sol::this_state state, BoxTriggerComponent& c) {
+			c.PushEvent(state, true);
+			return sol::stack::pop<sol::object>(state);
+		}),
+		"body_exited", sol::property([](sol::this_state state, BoxTriggerComponent& c) {
+			c.PushEvent(state, false);
+			return sol::stack::pop<sol::object>(state);
+		}));
+
 	lua.new_usertype<BoxColliderComponent>("BoxCollider", sol::no_constructor,
 		"size", sol::property([](const BoxColliderComponent& c) { return DXVector3(c.getColliderItem().size); }),
 		"enabled", sol::property([](const BoxColliderComponent& c) { return c.getColliderItem().enabled; },

@@ -3,6 +3,7 @@
 
 struct lua_State;
 class ResourceManager;
+class GameObject;
 
 // Владеет единственным состоянием Lua. Заголовок не включает Lua и sol2.
 class ScriptServer {
@@ -33,4 +34,10 @@ public:
 
 	// nullptr до успешного Init. Указатель действителен, пока жив сервер.
 	lua_State* getState() const;
+
+	// C++ владеет источником; реестр Lua хранит подписки до RemoveNativeEvents.
+	void PushNativeEvent(const void* owner, const char* name);
+	void EmitNativeEvent(const void* owner, const char* name);
+	void EmitNativeEvent(const void* owner, const char* name, GameObject* other);
+	void RemoveNativeEvents(const void* owner);
 };

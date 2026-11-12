@@ -234,6 +234,24 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 			}
 			return true;
 		}
+		if (auto* trigger = dynamic_cast<BoxTriggerComponent*>(component)) {
+			float size[3]; bool enabled;
+			if (!Deserialization::Floats(json, "size", size, 3, documentError)
+				|| !Deserialization::Bool(json, "enabled", enabled, documentError)) return false;
+			if (!trigger->setSize(DXVector3(size))) { documentError = "Invalid box trigger size."; return false; }
+			trigger->getTriggerItem().enabled = enabled;
+			return true;
+		}
+		if (auto* timer = dynamic_cast<TimerComponent*>(component)) {
+			float seconds; bool repeat, automatic;
+			using namespace Deserialization;
+			if (!Float(json, "wait_time", seconds, documentError) || !Bool(json, "repeat", repeat, documentError)
+				|| !Bool(json, "autostart", automatic, documentError)) return false;
+			if (!timer->setWaitTime(seconds)) { documentError = "Invalid timer wait time."; return false; }
+			timer->setRepeating(repeat);
+			timer->setAutostart(automatic);
+			return true;
+		}
 		if (auto* script = dynamic_cast<LuaScriptComponent*>(component)) {
 			std::string path;
 			if (!Deserialization::String(json, "script_path", path, documentError)) return false;

@@ -1,6 +1,7 @@
 #pragma once
 #include "GGMath.h"
 #include <cstdint>
+#include "Delegates.h"
 
 struct TransformNode;
 class PhysicsServer;
@@ -84,4 +85,26 @@ private:
     // Отличаем изменение узла редактором от результата предыдущей симуляции.
     DXVector3 lastPosition = DXVector3::Zero;
     DXQuaternion lastRotation = DXQuaternion::Identity;
+};
+
+class Component;
+class GameObject;
+
+// Компонент владеет областью и событиями; сервер заимствует запись до Shutdown.
+struct TriggerItem {
+    TransformNode* transformNode = nullptr;
+    Component* component = nullptr;
+    DXVector3 size = DXVector3::One;
+    bool enabled = true;
+    MulticastDelegate<GameObject*> bodyEntered;
+    MulticastDelegate<GameObject*> bodyExited;
+    TriggerItem() = default;
+    ~TriggerItem();
+    TriggerItem(const TriggerItem&) = delete;
+    TriggerItem& operator=(const TriggerItem&) = delete;
+private:
+    friend class PhysicsServer;
+    PhysicsServer* server = nullptr;
+    // Ссылки удаляются removeItem до освобождения записей физических тел.
+    std::vector<PhysicsItem*> overlaps;
 };

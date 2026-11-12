@@ -7,17 +7,22 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/PhysicsMaterial.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include "PhysicsServer.h"
 #include "TransformTree.h"
+#include "Object.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <new>
 #include <mutex>
 #include <vector>
+#include <unordered_map>
 
 namespace {
     // Factory общая для всех одновременно живущих Game; системы владеют ею совместно.
@@ -160,6 +165,7 @@ struct PhysicsServer::Impl {
     // Оба списка заимствуют адреса: владельцами записей остаются компоненты.
     std::vector<PhysicsItem*> items;
     std::vector<ColliderItem*> colliders;
+    std::vector<TriggerItem*> triggers;
 };
 
 bool PhysicsItem::accumulate(DXVector3& pending, const DXVector3& value)
@@ -185,6 +191,7 @@ void PhysicsItem::clearPendingActions()
 
 PhysicsItem::~PhysicsItem() { if (server) server->removeItem(*this); }
 ColliderItem::~ColliderItem() { if (server) server->removeCollider(*this); }
+TriggerItem::~TriggerItem() { if (server) server->removeTrigger(*this); }
 PhysicsServer::~PhysicsServer() { Shutdown(); }
 
 bool PhysicsServer::reportError(const char* message)
@@ -250,6 +257,11 @@ bool PhysicsServer::addItem(PhysicsItem& item)
 void PhysicsServer::removeItem(PhysicsItem& item)
 {
     if (item.server != this) return;
+    // Удаление тела не отправляет Lua ссылку на уже уничтожаемый объект.
+    for (auto* trigger : impl->triggers) {
+        auto& overlaps = trigger->overlaps;
+        overlaps.erase(std::remove(overlaps.begin(), overlaps.end(), &item), overlaps.end());
+    }
     releaseActor(item);
     // Команды старой сцены не должны переживать Shutdown/повторный Init компонента.
     item.clearPendingActions();
@@ -284,6 +296,7 @@ void PhysicsServer::Shutdown()
 {
     if (impl) {
         // Пережившие систему Item остаются валидными и больше не обращаются к ней.
+        while (!impl->triggers.empty()) removeTrigger(*impl->triggers.back());
         while (!impl->items.empty()) removeItem(*impl->items.back());
         while (!impl->colliders.empty()) removeCollider(*impl->colliders.back());
         delete impl;
@@ -291,6 +304,83 @@ void PhysicsServer::Shutdown()
         releaseSdk(); // Factory удаляется после последнего PhysicsSystem и всех его форм.
     }
     lastError.clear();
+}
+
+bool PhysicsServer::addTrigger(TriggerItem& item)
+{
+    if (item.server) return item.server == this;
+    if (!item.component || !validPose(item.transformNode))
+        return reportError("box trigger needs a component and root transform");
+    if (!Init()) return false;
+    impl->triggers.push_back(&item);
+    item.server = this;
+    item.overlaps.clear();
+    return true;
+}
+
+void PhysicsServer::removeTrigger(TriggerItem& item)
+{
+    if (item.server != this) return;
+    auto& triggers = impl->triggers;
+    triggers.erase(std::remove(triggers.begin(), triggers.end(), &item), triggers.end());
+    item.overlaps.clear();
+    item.server = nullptr;
+}
+
+bool PhysicsServer::updateTriggers()
+{
+    if (impl->triggers.empty()) return true;
+    struct Event { TriggerItem* trigger; PhysicsItem* body; bool entered; };
+    std::vector<Event> events;
+    // Номер поколения BodyID предотвращает смешение старого тела с новым.
+    std::unordered_map<std::uint32_t, PhysicsItem*> bodies;
+    for (auto* item : impl->items)
+        if (item->hasActor()) bodies.emplace(item->bodyId, item);
+
+    for (auto* trigger : impl->triggers) {
+        auto* owner = trigger->component->getOwner();
+        if (!owner || owner->isPendingDestroy() || trigger->component->isPendingDestroy()) continue;
+        std::vector<PhysicsItem*> current;
+        if (trigger->enabled) {
+            if (!validPose(trigger->transformNode)) return reportError("box trigger needs a root transform");
+            trigger->size = dimensions(trigger->size);
+            const auto half = dimensions(trigger->size * dimensions(trigger->transformNode->get_scale()) * 0.5f);
+            // Запрос не создаёт тело и не участвует в разрешении столкновений.
+            JPH::BoxShape shape(vector(half), (std::min)({0.05f, half.x, half.y, half.z}) * 0.1f);
+            const JPH::RVec3 position(vector(trigger->transformNode->get_position()));
+            const auto pose = JPH::RMat44::sRotationTranslation(rotation(*trigger->transformNode), position);
+            JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+            impl->scene.GetNarrowPhaseQuery().CollideShape(&shape, JPH::Vec3::sReplicate(1.0f),
+                pose, JPH::CollideShapeSettings{}, position, collector);
+            for (const auto& hit : collector.mHits) {
+                const auto found = bodies.find(hit.mBodyID2.GetIndexAndSequenceNumber());
+                if (found == bodies.end()) continue;
+                auto* body = found->second;
+                auto* other = body->transformNode->getOwner();
+                if (!other || other == owner || other->isPendingDestroy()) continue;
+                // Несколько форм одного тела дают один вход и один выход.
+                if (std::find(current.begin(), current.end(), body) == current.end()) current.push_back(body);
+            }
+        }
+        for (auto* body : trigger->overlaps)
+            if (std::find(current.begin(), current.end(), body) == current.end()) events.push_back({trigger, body, false});
+        for (auto* body : current)
+            if (std::find(trigger->overlaps.begin(), trigger->overlaps.end(), body) == trigger->overlaps.end())
+                events.push_back({trigger, body, true});
+        trigger->overlaps = std::move(current);
+    }
+
+    // Все запросы завершены и состояние обновлено до первого пользовательского callback.
+    for (const auto& event : events) {
+        if (std::find(impl->triggers.begin(), impl->triggers.end(), event.trigger) == impl->triggers.end()
+            || std::find(impl->items.begin(), impl->items.end(), event.body) == impl->items.end()) continue;
+        auto* owner = event.trigger->component->getOwner();
+        auto* other = event.body->transformNode->getOwner();
+        if (!owner || !other || owner->isPendingDestroy() || other->isPendingDestroy()
+            || event.trigger->component->isPendingDestroy()) continue;
+        (event.entered ? event.trigger->bodyEntered : event.trigger->bodyExited).Broadcast(other);
+    }
+    return true;
 }
 
 bool PhysicsServer::rebuildActor(PhysicsItem& item)
@@ -443,5 +533,5 @@ bool PhysicsServer::Update(double fixedInterval)
         item->lastPosition = item->transformNode->get_position();
         item->lastRotation = item->transformNode->get_rotation();
     }
-    return true;
+    return updateTriggers();
 }

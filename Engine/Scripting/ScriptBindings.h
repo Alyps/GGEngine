@@ -7,3 +7,5 @@ struct lua_State;
 void BindMath(lua_State* L);
 void BindTransform(lua_State* L);
 void BindComponents(lua_State* L);
+// Регистрирует делегаты и внутренние операции времени жизни скриптов.
+bool BindDelegates(lua_State* L);
