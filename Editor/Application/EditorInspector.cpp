@@ -3,6 +3,7 @@
 #include "RenderPresets.h"
 #include "EditorFileUtils.h"
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <string_view>
@@ -890,6 +891,12 @@ void Editor::ContinueAssetAction()
 	}
 	else if (action == AssetAction::OpenUtilityCurve || action == AssetAction::OpenUtilityCurveInTable) {
 		utilityCurve.Open(file);
+		utilityCurveXMin = 0; utilityCurveXMax = 1;
+		std::string curveError;
+		if (utilityCurve.ready && utilityCurve.draft.Validate(curveError)) {
+			utilityCurveXMin = utilityCurve.draft.points.front().x;
+			utilityCurveXMax = utilityCurve.draft.points.back().x;
+		}
 		ShowUtilityCurve(action == AssetAction::OpenUtilityCurveInTable);
 	}
 	else if (action == AssetAction::CloseUtilityTable) {
@@ -1592,11 +1599,9 @@ void Editor::DrawUtilityCurveGraph(UtilityCurveData& data)
 	ImGui::InvisibleButton("##curveGraph", size);
 	if (!ImGui::IsItemActive() || ImGui::IsItemActivated()) curvePointDrag.active = false;
 
-	// Небольшой запас по X позволяет тянуть крайние точки наружу.
+	// Ручной диапазон остаётся неизменным при редактировании точек.
 	constexpr double limit = (std::numeric_limits<double>::max)();
-	const double first = data.points.front().x, last = data.points.back().x;
-	const double left = curvePointDrag.active ? curvePointDrag.left : std::clamp(std::lerp(first, last, -0.08), -limit, limit);
-	const double right = curvePointDrag.active ? curvePointDrag.right : std::clamp(std::lerp(first, last, 1.08), -limit, limit);
+	const double left = utilityCurveXMin, right = utilityCurveXMax;
 	const double scale = std::isfinite(right - left) ? 1.0 : 0.5;
 	const float width = size.x - 8, height = size.y - 8;
 	const auto normalizedX = [&](double x) { return (x * scale - left * scale) / (right * scale - left * scale); };
@@ -1610,6 +1615,7 @@ void Editor::DrawUtilityCurveGraph(UtilityCurveData& data)
 		const ImVec2 mouse = ImGui::GetMousePos();
 		float closest = 8.0f * 8.0f;
 		for (size_t i = 0; i < data.points.size(); ++i) {
+			if (data.points[i].x < left || data.points[i].x > right) continue;
 			const ImVec2 point = screen(data.points[i]);
 			const float dx = mouse.x - point.x, dy = mouse.y - point.y;
 			const float distance = dx * dx + dy * dy;
@@ -1624,8 +1630,9 @@ void Editor::DrawUtilityCurveGraph(UtilityCurveData& data)
 		const auto delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
 		const auto& start = curvePointDrag.start;
 		// Берём ближайшие представимые X внутри соседей, чтобы кривая оставалась валидной.
-		const double lower = i ? std::nextafter(data.points[i - 1].x, right) : left;
-		const double upper = i + 1 < data.points.size() ? std::nextafter(data.points[i + 1].x, left) : right;
+		const double lower = i ? (std::max)(left, std::nextafter(data.points[i - 1].x, limit)) : left;
+		const double upper = i + 1 < data.points.size() ? (std::min)(right, std::nextafter(data.points[i + 1].x, -limit)) : right;
+		// Ограничиваем движение и границами оси, и соседними точками.
 		const double u = std::clamp(normalizedX(start.x) + delta.x / width, 0.0, 1.0);
 		const double x = delta.x == 0 ? start.x : std::clamp(std::lerp(left, right, u), lower, upper);
 		data.points[i] = { x, std::clamp(start.y - delta.y / height, 0.0, 1.0) };
@@ -1634,20 +1641,31 @@ void Editor::DrawUtilityCurveGraph(UtilityCurveData& data)
 
 	auto* draw = ImGui::GetWindowDrawList();
 	draw->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y), ImGui::GetColorU32(ImGuiCol_FrameBg));
+	// График не перекрывает остальные элементы UI.
+	draw->PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
 	const ImU32 line = ImGui::GetColorU32(ImGuiCol_PlotLines);
-	for (size_t i = 1; i < data.points.size(); ++i)
-		draw->AddLine(screen(data.points[i - 1]), screen(data.points[i]), line, 2.0f);
+	// Обрезаем в координатах кривой до преобразования в float экранных координат.
+	ImVec2 previous = screen({ left, data.Evaluate(left) });
+	for (const auto& point : data.points) {
+		if (point.x <= left || point.x >= right) continue;
+		const ImVec2 next = screen(point);
+		draw->AddLine(previous, next, line, 2.0f);
+		previous = next;
+	}
+	draw->AddLine(previous, screen({ right, data.Evaluate(right) }), line, 2.0f);
 	for (size_t i = 0; i < data.points.size(); ++i) {
+		if (data.points[i].x < left || data.points[i].x > right) continue;
 		const bool highlight = i == hovered;
 		draw->AddCircleFilled(screen(data.points[i]), highlight ? 5.0f : 3.0f,
 			highlight ? ImGui::GetColorU32(ImGuiCol_PlotLinesHovered) : line);
 	}
+	draw->PopClipRect();
 	if (hovered < data.points.size()) {
 		ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
 		const auto& point = data.points[hovered];
-		ImGui::SetTooltip("X %.6g | Y %.6g", point.x, point.y);
+		ImGui::SetTooltip("X (input) %.6g | Y (output) %.6g", point.x, point.y);
 	}
-	ImGui::TextDisabled("X %.6g to %.6g | Y 0 to 1", left, right);
+	ImGui::TextDisabled("X (input) %.6g to %.6g | Y (output) 0 to 1", left, right);
 }
 
 void Editor::DrawUtilityCurve()
@@ -1656,18 +1674,66 @@ void Editor::DrawUtilityCurve()
 	if (!utilityCurve.error.empty()) ImGui::TextWrapped("%s", utilityCurve.error.c_str());
 	if (!utilityCurve.ready) return;
 	DrawUtilitySaveControls(AssetTab::UtilityCurve, utilityCurve.Dirty());
+	ImGui::TextWrapped("X: input parameter value (any finite number). Y: output utility (0 to 1).");
+	ImGui::TextWrapped("X limits control the graph and dragging. Points outside the view are preserved and can be edited below.");
 	auto& data = utilityCurve.draft;
 	const auto before = data;
 	std::string error;
-	if (data.Validate(error)) DrawUtilityCurveGraph(data);
-	else ImGui::TextWrapped("%s", error.c_str());
-	if (ImGui::Button("Add point")) {
-		const auto last = data.points.empty() ? UtilityCurveData::Point{ -1, 0 } : data.points.back();
-		data.points.push_back({ last.x + 1, last.y });
+	const bool validCurve = data.Validate(error);
+	bool rangeChanged = ImGui::InputDouble("X min", &utilityCurveXMin, 0, 0, "%.12g");
+	rangeChanged |= ImGui::InputDouble("X max", &utilityCurveXMax, 0, 0, "%.12g");
+	ImGui::BeginDisabled(!validCurve);
+	if (ImGui::Button("Fit X to points")) {
+		utilityCurveXMin = data.points.front().x;
+		utilityCurveXMax = data.points.back().x;
+		rangeChanged = true;
 	}
+	ImGui::EndDisabled();
+	if (rangeChanged) curvePointDrag = {};
+	// Ошибочный диапазон не допускается до деления на его ширину.
+	const bool validRange = std::isfinite(utilityCurveXMin) && std::isfinite(utilityCurveXMax)
+		&& utilityCurveXMin < utilityCurveXMax;
+	if (!validRange) ImGui::TextWrapped("X limits must be finite, with min less than max.");
+	if (!validCurve) ImGui::TextWrapped("%s", error.c_str());
+	if (validCurve && validRange) DrawUtilityCurveGraph(data);
+	// Ищем самый широкий видимый промежуток с представимым числом внутри.
+	std::optional<double> newPointX;
+	double widest = -1;
+	if (validRange && (validCurve || data.points.size() < 2)) {
+		const double scale = std::isfinite(utilityCurveXMax - utilityCurveXMin) ? 1.0 : 0.5;
+		const auto considerGap = [&](double left, double right) {
+			const double middle = std::lerp(left, right, 0.5);
+			const double width = right * scale - left * scale;
+			if (middle > left && middle < right && width > widest) {
+				newPointX = middle;
+				widest = width;
+			}
+		};
+		double left = utilityCurveXMin;
+		for (const auto& point : data.points) {
+			if (point.x <= left) continue;
+			if (point.x >= utilityCurveXMax) break;
+			considerGap(left, point.x);
+			left = point.x;
+		}
+		considerGap(left, utilityCurveXMax);
+	}
+	ImGui::BeginDisabled(!newPointX.has_value());
+	if (ImGui::Button("Add point")) {
+		const double x = *newPointX;
+		const double y = validCurve ? data.Evaluate(x) : 0;
+		const auto position = std::lower_bound(data.points.begin(), data.points.end(), x,
+			[](const auto& point, double value) { return point.x < value; });
+		// Вставка на существующую кривую сохраняет её форму и порядок точек.
+		data.points.insert(position, { x, y });
+		curvePointDrag = {};
+	}
+	ImGui::EndDisabled();
+	if (!newPointX && validRange && validCurve) ImGui::TextDisabled("No room for another point within X limits.");
+	bool reorderPoints = false;
 	if (ImGui::BeginTable("Points", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
-		ImGui::TableSetupColumn("X");
-		ImGui::TableSetupColumn("Y");
+		ImGui::TableSetupColumn("X (input)");
+		ImGui::TableSetupColumn("Y (output)");
 		ImGui::TableSetupColumn("##controls", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableHeadersRow();
 		size_t remove = data.points.size();
@@ -1675,7 +1741,29 @@ void Editor::DrawUtilityCurve()
 			ImGui::PushID(static_cast<int>(i));
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1);
-			ImGui::InputDouble("##X", &data.points[i].x, 0, 0, "%.12g");
+			// Фиксируем X по Enter, чтобы промежуточный ввод не ломал кривую.
+			char xText[64]{};
+			std::to_chars(xText, xText + sizeof(xText) - 1, data.points[i].x,
+				std::chars_format::general, std::numeric_limits<double>::max_digits10);
+			// EnterReturnsTrue поддерживается InputText, но запрещён для InputDouble.
+			if (ImGui::InputText("##X", xText, sizeof(xText),
+				ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsScientific)) {
+				const std::string_view text(xText);
+				const char* first = xText + (text.starts_with('+') ? 1 : 0);
+				double x = 0;
+				const auto parsed = std::from_chars(first, xText + text.size(), x, std::chars_format::general);
+				const bool validNumber = parsed.ec == std::errc{} && parsed.ptr == xText + text.size();
+				bool duplicate = false;
+				for (size_t j = 0; j < data.points.size(); ++j)
+					if (j != i && data.points[j].x == x) duplicate = true;
+				if (!validNumber || !std::isfinite(x) || duplicate) utilityCurve.error = "X must be finite and different from other points. Value unchanged.";
+				else {
+					data.points[i].x = x;
+					reorderPoints = true;
+					utilityCurve.error.clear();
+				}
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press Enter to apply X. Points are sorted automatically.");
 			ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1);
 			ImGui::InputDouble("##Y", &data.points[i].y, 0, 0, "%.12g");
 			ImGui::TableNextColumn();
@@ -1684,6 +1772,11 @@ void Editor::DrawUtilityCurve()
 		}
 		ImGui::EndTable();
 		if (remove < data.points.size()) data.points.erase(data.points.begin() + remove);
+	}
+	if (reorderPoints) {
+		std::sort(data.points.begin(), data.points.end(), [](const auto& a, const auto& b) { return a.x < b.x; });
+		curvePointDrag = {};
+		ImGui::ClearActiveID();
 	}
 	utilityCurve.RecordEdit(before, ImGui::GetActiveID());
 }

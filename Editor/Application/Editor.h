@@ -242,6 +242,8 @@ private:
 		double left = 0, right = 0;
 		bool active = false;
 	} curvePointDrag;
+	// Диапазон отображения относится к открытому редактору, а не к ресурсу кривой.
+	double utilityCurveXMin = 0, utilityCurveXMax = 1;
 	void DrawUtilityCurveGraph(UtilityCurveData& data);
 	ImGuiID viewportDockId = 0;
 	size_t utilityParameterPage = 0;
