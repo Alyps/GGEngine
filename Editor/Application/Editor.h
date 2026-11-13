@@ -6,6 +6,7 @@
 #include "Project.h"
 #include "EditorSettings.h"
 #include "NavMeshBuilder.h"
+#include <optional>
 #include <unordered_map>
 
 // Game и сцена живут дольше редактора; редактор владеет только UI и viewport.
@@ -82,7 +83,7 @@ private:
 	void ApplyTreeAction();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
 	// Порядок совпадает с подписями меню; виды начиная с Collider доступны только на корне.
-	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, NavMeshVolume, Timer, Collider, StaticBody, DynamicBody, KinematicBody, CharacterMovement, NavAgent, BoxTrigger };
+	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, NavMeshVolume, Timer, Collider, StaticBody, DynamicBody, KinematicBody, CharacterMovement, NavAgent, BoxTrigger, UtilityAI };
 	struct TreeAction {
 		TreeOperation operation = TreeOperation::None;
 		TransformNode* node = nullptr;
@@ -119,34 +120,168 @@ private:
 	void DrawObjectInspector();
 	void OpenTexturePreview(const std::string& file);
 	void CloseTexturePreview();
+	void CloseAssetEditor();
+	void OpenMaterialEditor(const std::string& file);
+	void CloseMaterialEditor();
+	void DrawMaterialInspector();
+	bool ApplyMaterialSettings();
+	bool MaterialSettingsDirty() const;
+	void RecordMaterialSettings(const MaterialData& before, const MaterialData& after, const char* name);
+	void TrackMaterialEdit(const MaterialData& before, const char* name, bool changed);
+	void FinishMaterialEdit();
+	void RevertMaterialSettings();
+	bool AssetSettingsDirty() const;
 	void DrawTextureInspector();
 	void RefreshTexturePreview(TextureResource& resource);
 	bool ApplyTextureSettings();
 	bool TextureSettingsDirty() const;
 	void RecordTextureSettings(const TextureSettings& before, const char* name);
 	void RevertTextureSettings();
-	bool textureInspectorFocused = false, historyTargetsTexture = false;
-	void DrawTextureDialogs();
-	void ApplyTextureActions();
-	enum class TextureAction { None, Open, Close, HideInspector, ContinueDocument, ContinueSave };
-	void RequestTextureAction(TextureAction action, const std::string& file = {});
-	void ContinueTextureAction();
-	TextureAction textureAction = TextureAction::None;
+	void DrawAssetDialogs();
+	void ApplyAssetActions();
+	enum class AssetAction { None, OpenTexture, OpenMaterial, OpenUtilityTable, OpenUtilityCurve, OpenUtilityCurveInTable, CloseTexture,
+		CloseMaterial, CloseUtilityTable, CloseUtilityCurve, HideInspector, ContinueDocument, ContinueSave };
+	enum class AssetTab { None, Texture, Material, UtilityTable, UtilityCurve };
+	void OpenUtilityAsset(const std::string& file);
+	void DrawUtilityTable();
+	void DrawUtilityTableContents();
+	void ShowUtilityCurve(bool inTable);
+	void DrawUtilityParameters(UtilityTableData& data);
+	void DrawUtilityActions(UtilityTableData& data);
+	void DrawUtilityCurve();
+	void DrawUtilitySaveControls(AssetTab tab, bool dirty);
+	bool ApplyUtilityAsset(AssetTab tab);
+	void RevertUtilityAsset(AssetTab tab);
+	bool InspectorAssetSettingsDirty() const;
+	template<class Data> struct UtilityAssetDraft {
+		std::string file, error;
+		Data saved, draft;
+		bool ready = false;
+		std::vector<Data> history;
+		size_t historyPosition = 0;
+		ImGuiID editingItem = 0;
+		void Open(std::string path) {
+			*this = {};
+			file = std::move(path);
+			ready = saved.Read(file, error);
+			draft = saved;
+			if (ready) history.push_back(draft);
+		}
+		bool Dirty() const { return ready && draft != saved; }
+		bool Save() {
+			if (!ready || !draft.Save(file, error)) return false;
+			saved = draft;
+			return true;
+		}
+		void Revert() {
+			FinishEdit();
+			draft = saved;
+			RecordSnapshot(draft);
+			error.clear();
+		}
+		void RecordEdit(const Data& before, ImGuiID activeItem) {
+			// При смене виджета завершаем предыдущую команду состоянием до нового ввода.
+			if (editingItem && editingItem != activeItem) {
+				RecordSnapshot(before);
+				editingItem = 0;
+			}
+			if (draft == before) return;
+			if (activeItem) editingItem = activeItem;
+			else RecordSnapshot(draft);
+		}
+		void FinishEdit() {
+			if (!editingItem) return;
+			RecordSnapshot(draft);
+			editingItem = 0;
+		}
+		bool CanStep(int direction) const {
+			if (history.empty()) return false;
+			const bool pending = editingItem && draft != history[historyPosition];
+			return direction < 0 ? pending || historyPosition > 0 : !pending && historyPosition + 1 < history.size();
+		}
+		void Step(int direction) {
+			FinishEdit();
+			if (!CanStep(direction)) return;
+			if (direction < 0) --historyPosition;
+			else ++historyPosition;
+			draft = history[historyPosition];
+			error.clear();
+		}
+	private:
+		void RecordSnapshot(const Data& value) {
+			if (history.empty() || value == history[historyPosition]) return;
+			history.erase(history.begin() + historyPosition + 1, history.end());
+			history.push_back(value);
+			// Начальное состояние тоже занимает место в списке снимков.
+			if (history.size() > 129) history.erase(history.begin());
+			historyPosition = history.size() - 1;
+		}
+	};
+	UtilityAssetDraft<UtilityTableData> utilityTable;
+	UtilityAssetDraft<UtilityCurveData> utilityCurve;
+	struct UtilityCurveCheck {
+		UtilityCurveData data;
+		std::string error;
+	};
+	struct UtilityScriptCheck {
+		std::string resolved, error;
+	};
+	struct UtilityActionPreview {
+		std::vector<std::optional<double>> contributions;
+		std::optional<double> score;
+	};
+	bool utilityScorePreview = false;
+	std::vector<std::optional<double>> utilityPreviewInputs;
+	std::unordered_map<std::string, UtilityCurveCheck> utilityCurveChecks;
+	std::unordered_map<std::string, UtilityScriptCheck> utilityScriptChecks;
+	const UtilityCurveCheck& CheckUtilityCurve(const std::string& path);
+	const UtilityScriptCheck& CheckUtilityScript(const std::string& path);
+	void ClearUtilityAssetChecks();
+	std::vector<UtilityActionPreview> EvaluateUtilityPreview(const UtilityTableData& data);
+	struct CurvePointDrag {
+		size_t index = 0;
+		UtilityCurveData::Point start{};
+		double left = 0, right = 0;
+		bool active = false;
+	} curvePointDrag;
+	// Диапазон отображения относится к открытому редактору, а не к ресурсу кривой.
+	double utilityCurveXMin = 0, utilityCurveXMax = 1;
+	void DrawUtilityCurveGraph(UtilityCurveData& data);
+	ImGuiID viewportDockId = 0;
+	size_t utilityParameterPage = 0;
+	bool focusUtilityTable = false;
+	bool utilityTableDetached = false, utilityCurveInTable = false;
+	enum class UtilityTableDock { None, Detach, Attach };
+	UtilityTableDock utilityTableDock = UtilityTableDock::None;
+	void RequestAssetAction(AssetAction action, const std::string& file = {});
+	void ContinueAssetAction();
+	AssetTab PendingAssetConfirmation() const;
+	AssetAction assetAction = AssetAction::None;
+	AssetTab focusAssetTab = AssetTab::None;
+	AssetTab requestedAssetApply = AssetTab::None;
+	AssetTab assetPrompt = AssetTab::None;
+	AssetTab focusedAssetTab = AssetTab::None, historyAssetTab = AssetTab::None;
 	TextureSettings textureSettings, textureSettingsDraft;
-	std::string textureSettingsError;
-	bool textureSettingsReady = false, requestedTextureApply = false;
-	bool showUnsavedTextureDialog = false, texturePromptActive = false;
-	bool continueAfterTextureApply = false, proceedTextureAction = false, closeTextureDialog = false;
-	std::string pendingTextureFile, textureFile, textureError;
+	MaterialData materialSettings, materialDraft;
+	MaterialData materialEditBefore, materialEditAfter;
+	ImGuiID materialEditId = 0;
+	const char* materialEditName = nullptr;
+	bool showMaterialTab = false, materialReady = false;
+	bool textureSettingsReady = false;
+	bool showUnsavedAssetDialog = false, closeAssetDialog = false;
+	std::string pendingAssetFile;
+	std::string textureFile, textureSettingsError, textureError;
+	std::string materialFile, materialSettingsError;
 	// Собственная COM-ссылка переживает смену кеша сцены; освобождается явно редактором.
 	ID3D11ShaderResourceView* texturePreviewView = nullptr;
 	D3D11_TEXTURE2D_DESC textureDescription{};
 	DXGI_FORMAT textureFormat = DXGI_FORMAT_UNKNOWN;
-	bool showTextureTab = false, focusTextureTab = false, fitTexture = true;
+	bool showTextureTab = false, fitTexture = true;
 	bool resetTextureScroll = false;
 	float textureZoom = 100.0f;
 	int textureBackground = 0;
 	void DrawMeshInspector(MeshComponent& mesh);
+	void DrawUtilityComponentInspector(UtilityAIComponent& component);
 	enum class TransformField { Position, Rotation, Scale };
 	static constexpr float MinimumScale = 0.001f;
 	static bool IsValidEditorScale(const DXVector3& scale);
@@ -200,7 +335,7 @@ private:
 	// Выделение заимствует объекты через ID; порядок определяет последний активный объект.
 	std::vector<HistoryId> selectedObjects;
 	enum class TargetKind { Object, Node, Component };
-	enum class HistoryKind { Node, Component, Structure, Group, TextureSettings };
+	enum class HistoryKind { Node, Component, Structure, Group, TextureSettings, MaterialSettings };
 	struct TargetIdentity {
 		TargetKind kind = TargetKind::Node;
 		HistoryId id = 0;
@@ -219,6 +354,7 @@ private:
 		HistoryId target = 0;
 		std::string name, before, after;
 		TextureSettings textureBefore, textureAfter;
+		MaterialData materialBefore, materialAfter;
 		ObjectState objectBefore, objectAfter;
 		HistoryId selectionBefore = 0, selectionAfter = 0, cameraBefore = 0, cameraAfter = 0;
 		std::vector<HistoryId> selectedBefore, selectedAfter;
@@ -228,9 +364,10 @@ private:
 		std::vector<HistoryEntry> entries;
 		size_t position = 0;
 		std::vector<ObjectState> identities;
-	} documentHistory, parkedHistory, textureHistory;
-	bool UseTextureHistory() const;
+	} documentHistory, parkedHistory, textureHistory, materialHistory;
+	AssetTab ActiveHistoryAsset() const;
 	const DocumentHistory& ActiveHistory() const;
+	bool CanStepHistory(int direction) const;
 	std::unordered_map<GameObject*, HistoryId> objectIds;
 	std::unordered_map<TransformNode*, HistoryId> nodeIds;
 	std::unordered_map<Component*, HistoryId> componentIds;
@@ -260,7 +397,7 @@ private:
 	void FinishStructures();
 	std::vector<HistoryEntry> pendingStructures;
 	int requestedHistoryStep = 0;
-	bool requestedTextureHistoryStep = false;
+	AssetTab requestedHistoryAsset = AssetTab::None;
 	void ApplyHistoryStep();
 	bool RestoreObjectState(const ObjectState& state, HistoryId target);
 	bool RestoreObjectStates(std::vector<ObjectState> states);

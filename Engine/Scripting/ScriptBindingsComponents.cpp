@@ -181,6 +181,8 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 			if (auto* typed = dynamic_cast<LuaScriptComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "Timer") {
 			if (auto* typed = dynamic_cast<TimerComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "UtilityAI") {
+			if (auto* typed = dynamic_cast<UtilityAIComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "BoxCollider") {
 			if (auto* typed = dynamic_cast<BoxColliderComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "BoxTrigger") {
@@ -213,6 +215,7 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 void BindComponents(lua_State* L)
 {
 	sol::state_view lua(L);
+	BindUtilityAI(L);
 
 	// Поддерживать ComponentType, FindComponent и Lua-типы синхронно при добавлении/переименовании компонентов.
 	// Строковые константы доступны через ComponentType.PointLight; обычное присваивание запрещено.
@@ -223,7 +226,8 @@ void BindComponents(lua_State* L)
 		"DynamicRigidBody", "DynamicRigidBody", "StaticRigidBody", "StaticRigidBody",
 		"KinematicRigidBody", "KinematicRigidBody", "CharacterMovement", "CharacterMovement",
 		"NavMeshVolume", "NavMeshVolume", "NavAgent", "NavAgent",
-		"Timer", "Timer", "BoxTrigger", "BoxTrigger"
+		"Timer", "Timer", "BoxTrigger", "BoxTrigger",
+		"UtilityAI", "UtilityAI"
 #if defined(GG_EDITOR)
 		, "EditorCamera", "EditorCamera", "CameraMovement", "CameraMovement"
 #endif

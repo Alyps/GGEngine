@@ -432,6 +432,7 @@ private:
 	ComPtr<ID3D11ShaderResourceView> m_srv;
 	uint32_t                  m_width = 0;
 	uint32_t                  m_height = 0;
+	DXGI_FORMAT               m_format = DXGI_FORMAT_UNKNOWN;
 
 	Texture() = default;
 
@@ -448,6 +449,7 @@ public:
 	ID3D11ShaderResourceView* SRV()     const { return m_srv.Get(); }
 	uint32_t                  Width()   const { return m_width; }
 	uint32_t                  Height()  const { return m_height; }
+	DXGI_FORMAT               Format()  const { return m_format; }
 	bool                      IsValid() const { return m_srv != nullptr; }
 };
 
@@ -457,22 +459,27 @@ class Material {
 private:
 	ShaderPack* m_shader = nullptr;
 	const Texture* m_diffuse = nullptr;
+	const Texture* m_normal = nullptr;
+	const Texture* m_ao = nullptr;
 	ID3D11SamplerState* m_sampler = nullptr;
 	RenderState* m_state = nullptr;
 
 public:
 	// Параметры зеркального блика модели Фонга.
+	static constexpr float MinSpecularStrength = 0.0f;
+	static constexpr float MaxSpecularStrength = 1.0f;
+	static constexpr float MinShininess = 1.0f;
+	static constexpr float MaxShininess = 256.0f;
 	float specularStrength = 0.5f;
 	float shininess = 32.0f;
 	Material() = default;
 
-	Material(ShaderPack& shader, RenderState& state)
-		: m_shader(&shader), m_state(&state) {}
-
-	Material(ShaderPack& shader, const Texture& diffuse,
-		ID3D11SamplerState* sampler, RenderState& state)
+	Material(ShaderPack& shader, RenderState& state, ID3D11SamplerState* sampler = nullptr,
+		const Texture* diffuse = nullptr, const Texture* normal = nullptr, const Texture* ao = nullptr)
 		: m_shader(&shader)
-		, m_diffuse(&diffuse)
+		, m_diffuse(diffuse)
+		, m_normal(normal)
+		, m_ao(ao)
 		, m_sampler(sampler)
 		, m_state(&state)
 	{}
@@ -481,6 +488,8 @@ public:
 
 	ShaderPack* Shader()  const { return m_shader; }
 	const Texture* Diffuse() const { return m_diffuse; }
+	const Texture* Normal() const { return m_normal; }
+	const Texture* AmbientOcclusion() const { return m_ao; }
 	ID3D11SamplerState* Sampler() const { return m_sampler; }
 	RenderState* State()   const { return m_state; }
 };
@@ -576,7 +585,9 @@ private:
 	struct ObjectCBData {
 		DirectX::XMFLOAT4X4 world;
 		DirectX::XMFLOAT4X4 normalMatrix;
-		DirectX::XMFLOAT4 specular;
+		DirectX::XMFLOAT2 specular;
+		uint32_t textureMask;
+		uint32_t normalEncoding;
 	} objectCBData;
 
 

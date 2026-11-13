@@ -9,6 +9,24 @@
 #include <cmath>
 
 namespace {
+// Эти значения используются при распаковке нормали в Simple.hlsl.
+enum class NormalEncoding : uint32_t { None, UNormRGB, UNormXY, SNormXY, SNormRGB };
+
+NormalEncoding GetNormalEncoding(DXGI_FORMAT format)
+{
+    switch (format) {
+    case DXGI_FORMAT_BC5_UNORM:
+    case DXGI_FORMAT_R8G8_UNORM:
+    case DXGI_FORMAT_R16G16_UNORM: return NormalEncoding::UNormXY;
+    case DXGI_FORMAT_BC5_SNORM:
+    case DXGI_FORMAT_R8G8_SNORM:
+    case DXGI_FORMAT_R16G16_SNORM: return NormalEncoding::SNormXY;
+    case DXGI_FORMAT_R8G8B8A8_SNORM:
+    case DXGI_FORMAT_R16G16B16A16_SNORM: return NormalEncoding::SNormRGB;
+    default: return NormalEncoding::UNormRGB;
+    }
+}
+
 ComPtr<ID3DBlob> CompileShaderFromFile(const std::wstring& path,
     const char* entryPoint, const char* target)
 {
@@ -222,6 +240,9 @@ Texture Texture::Create(ID3D11Device* device, const DirectX::ScratchImage& image
 
 	tex.m_width = static_cast<uint32_t>(metadata.width);
 	tex.m_height = static_cast<uint32_t>(metadata.height);
+	D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+	tex.m_srv->GetDesc(&view);
+	tex.m_format = view.Format;
 	return tex;
 }
 
@@ -465,11 +486,22 @@ void RenderServer::DrawScene(ID3D11RenderTargetView* target,
 		if (!std::isfinite(determinant) || std::abs(determinant) < 1e-8f) continue;
 		// inverse-transpose для нормалей транспонируем ещё раз для column_major.
 		DirectX::XMStoreFloat4x4(&objectCBData.normalMatrix, DirectX::XMMatrixInverse(nullptr, world));
-		// Без текстуры шейдер использует белый цвет, а не читает пустой t0.
+		// Данные нормали и AO читаются из линейных представлений текстур.
+		ID3D11SamplerState* materialSampler = material.Sampler();
 		const Texture* diffuse = material.Diffuse();
-		objectCBData.specular = { (std::max)(0.0f, material.specularStrength),
-			(std::max)(1.0f, material.shininess),
-			diffuse && diffuse->IsValid() && material.Sampler() ? 1.0f : 0.0f, 0.0f };
+		const Texture* normal = material.Normal();
+		const Texture* ao = material.AmbientOcclusion();
+		ID3D11ShaderResourceView* views[] = {
+			materialSampler && diffuse ? diffuse->SRV() : nullptr,
+			materialSampler && normal ? normal->SRV() : nullptr,
+			materialSampler && ao ? ao->SRV() : nullptr
+		};
+		objectCBData.specular = {
+			std::clamp(material.specularStrength, Material::MinSpecularStrength, Material::MaxSpecularStrength),
+			std::clamp(material.shininess, Material::MinShininess, Material::MaxShininess)
+		};
+		objectCBData.textureMask = (views[0] ? 1u : 0u) | (views[2] ? 2u : 0u);
+		objectCBData.normalEncoding = static_cast<uint32_t>(views[1] ? GetNormalEncoding(normal->Format()) : NormalEncoding::None);
 		if (!UpdateConstantBuffer(objectCB.Get(), &objectCBData, sizeof(objectCBData)))
 			continue;
 
@@ -485,11 +517,8 @@ void RenderServer::DrawScene(ID3D11RenderTargetView* target,
 		context->VSSetShader(shader->VertexShader(), nullptr, 0);
 		context->PSSetShader(shader->PixelShader(), nullptr, 0);
 
-		//diffuse это основная текстура объекта. Устанавливаем её. И сэмплер для неё
-		ID3D11ShaderResourceView* srv = diffuse ? diffuse->SRV() : nullptr;
-		ID3D11SamplerState* materialSampler = material.Sampler();
-		// t0/s0 задаются для каждого объекта, включая отсутствие ресурса.
-		context->PSSetShaderResources(0, 1, &srv);
+		// Устанавливаем все слоты, включая пустые, для каждого объекта.
+		context->PSSetShaderResources(0, ARRAYSIZE(views), views);
 		context->PSSetSamplers(0, 1, &materialSampler);
 
 		//Передача вершин на отрисовку, вместе с топологией

@@ -24,11 +24,15 @@ cbuffer ObjectCB : register(b1)
 {
     column_major float4x4 world;
     column_major float4x4 normalMatrix;
-    float4 specular; // x: сила блика, y: показатель блеска, z: наличие diffuse.
+    float2 specular;
+    uint textureMask; // Бит 0: Base Color, бит 1: AO.
+    uint normalEncoding; // 0: пусто, 1: UNORM RGB, 2: UNORM XY, 3: SNORM XY, 4: SNORM RGB.
 };
 
 Texture2D diffuseTexture : register(t0);
-SamplerState diffuseSampler : register(s0);
+Texture2D normalTexture : register(t1);
+Texture2D aoTexture : register(t2);
+SamplerState materialSampler : register(s0);
 
 struct VertexInput
 {
@@ -83,15 +87,54 @@ float4 PSNavMeshMain(VertexOutput input) : SV_TARGET
     return float4(input.normal, input.uv.x);
 }
 
+float3 ApplyNormalMap(VertexOutput input, float3 normal)
+{
+    // Направления U и V вычисляем по производным мировой позиции и UV.
+    float3 positionX = ddx(input.worldPosition);
+    float3 positionY = ddy(input.worldPosition);
+    float2 uvX = ddx(input.uv);
+    float2 uvY = ddy(input.uv);
+    float determinant = uvX.x * uvY.y - uvX.y * uvY.x;
+    float uvScale = length(uvX) * length(uvY);
+    float3 mapped = normal;
+    if (abs(determinant) > 1e-5f * max(uvScale, 1e-12f))
+    {
+        float3 tangent = (positionX * uvY.y - positionY * uvX.y) / determinant;
+        float3 directionV = (positionY * uvX.x - positionX * uvY.x) / determinant;
+        // Базис ортогонализуем к интерполированной нормали и учитываем зеркальные UV.
+        tangent = SafeNormalize(tangent - normal * dot(normal, tangent));
+        float3 bitangent = cross(normal, tangent);
+        if (dot(bitangent, directionV) < 0.0f)
+            bitangent = -bitangent;
+
+        // Для двухканальных карт восстанавливаем Z. После ветвления нужны явные градиенты.
+        float3 sampled = normalTexture.SampleGrad(materialSampler, input.uv, uvX, uvY).xyz;
+        if (normalEncoding == 1u || normalEncoding == 2u)
+            sampled = sampled * 2.0f - 1.0f;
+        if (normalEncoding == 2u || normalEncoding == 3u)
+            sampled.z = sqrt(saturate(1.0f - dot(sampled.xy, sampled.xy)));
+        float3 direction = tangent * sampled.x + bitangent * sampled.y + normal * sampled.z;
+        if (dot(bitangent, bitangent) > 1e-6f && dot(direction, direction) > 1e-12f)
+            mapped = SafeNormalize(direction);
+    }
+    return mapped;
+}
+
 float4 PSMain(VertexOutput input) : SV_TARGET
 {
     float3 normal = SafeNormalize(input.normal);
+    if (normalEncoding != 0u)
+        normal = ApplyNormalMap(input, normal);
     float3 toCamera = SafeNormalize(cameraPosition - input.worldPosition);
     // Материал без текстуры остаётся белым и получает обычное освещение.
     float4 baseColor = float4(1.0f, 1.0f, 1.0f, 1.0f);
-    if (specular.z > 0.5f)
-        baseColor = diffuseTexture.Sample(diffuseSampler, input.uv);
-    float3 result = ambient * baseColor.rgb;
+    if ((textureMask & 1u) != 0u)
+        baseColor = diffuseTexture.Sample(materialSampler, input.uv);
+    // AO ослабляет фоновый свет. Прямой свет по-прежнему зависит от источника.
+    float ao = 1.0f;
+    if ((textureMask & 2u) != 0u)
+        ao = saturate(aoTexture.Sample(materialSampler, input.uv).r);
+    float3 result = ambient * baseColor.rgb * ao;
 
     // Фон учитывается один раз; каждый источник добавляет diffuse и specular.
     [loop]

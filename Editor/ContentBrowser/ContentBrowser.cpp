@@ -8,6 +8,7 @@
 #include <rapidjson/stringbuffer.h>
 #include <algorithm>
 #include <filesystem>
+#include <string_view>
 #include <windows.h>
 #include <shellapi.h>
 
@@ -22,11 +23,19 @@ namespace {
         return value;
     }
 
+    const char* UtilityAssetLabel(std::string_view lowerName)
+    {
+        if (lowerName.ends_with(".utilityai.json")) return "[Utility AI]";
+        if (lowerName.ends_with(".curve.json")) return "[Curve]";
+        return nullptr;
+    }
+
     // Метка описывает расширение; распознавание не означает импорт в движок.
     const char* FileType(const std::string& name)
     {
         const std::string lower = LowerAscii(name);
         if (lower.ends_with(".material.json")) return "[Material]";
+        if (const char* utility = UtilityAssetLabel(lower)) return utility;
         if (lower.ends_with(".object.json")) return "[Object]";
         if (lower.ends_with(".level.json")) return "[Scene]";
         const auto dot = lower.find_last_of('.');
@@ -147,10 +156,14 @@ void ContentBrowser::Activate(const Entry& entry, std::string& directory)
     const DWORD attributes = GetFileAttributesW(DiskPath(path).c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) { error = "Entry changed or is unavailable; refresh to retry."; return; }
     error.clear();
-    if (entry.directory) directory = path;
-    else if (Category(entry.name, entry.mesh) == 1) sceneToOpen = path;
-    else if (Category(entry.name, entry.mesh) == 2) objectToOpen = path;
-    else if (Category(entry.name, entry.mesh) == 5) textureToOpen = path;
+    if (entry.directory) { directory = path; return; }
+    if (UtilityAssetLabel(LowerAscii(entry.name))) { utilityAssetToOpen = path; return; }
+    switch (Category(entry.name, entry.mesh)) {
+    case 1: sceneToOpen = path; break;
+    case 2: objectToOpen = path; break;
+    case 4: materialToOpen = path; break;
+    case 5: textureToOpen = path; break;
+    }
 }
 
 bool ContentBrowser::CheckDirectory()
@@ -235,11 +248,20 @@ bool ContentBrowser::PrepareEntryName(std::string& name)
     }
     // Достраиваем расширение; stone.json также становится stone.material.json.
     const char* suffix = createType == CreateType::Material ? ".material.json"
+        : createType == CreateType::UtilityTable ? ".utilityai.json"
+        : createType == CreateType::UtilityCurve ? ".curve.json"
+        : createType == CreateType::UtilityAction ? ".action.lua"
         : createType == CreateType::Scene ? ".level.json"
         : createType == CreateType::Object || createType == CreateType::MeshObject ? ".object.json" : nullptr;
     if (suffix && !LowerAscii(name).ends_with(suffix)) {
-        if (LowerAscii(name).ends_with(".json")) name.resize(name.size() - 5);
+        const auto lower = LowerAscii(name);
+        if (lower.ends_with(".json")) name.resize(name.size() - 5);
+        else if (createType == CreateType::UtilityAction && lower.ends_with(".lua")) name.resize(name.size() - 4);
         name += suffix;
+    }
+    if (createType == CreateType::UtilityAction && !name.ends_with(suffix)) {
+        // Runtime проверяет регистр суффикса действия.
+        name.replace(name.size() - std::char_traits<char>::length(suffix), std::string::npos, suffix);
     }
     if (createType == CreateType::LuaScript && !LowerAscii(name).ends_with(".lua")) name += ".lua";
     return true;
@@ -247,6 +269,22 @@ bool ContentBrowser::PrepareEntryName(std::string& name)
 
 bool ContentBrowser::BuildEntryContents(std::string& contents)
 {
+    if (createType == CreateType::UtilityTable) {
+        // У новой таблицы ещё нет ссылок на действия и кривые.
+        contents = "{\n  \"parameters\": [],\n  \"interval\": 0.2,\n  \"switch_threshold\": 0.05,\n"
+            "  \"minimum_duration\": 0,\n  \"actions\": []\n}\n";
+        return true;
+    }
+    if (createType == CreateType::UtilityCurve) {
+        contents = "{\n  \"points\": [{ \"x\": 0, \"y\": 0 }, { \"x\": 1, \"y\": 1 }]\n}\n";
+        return true;
+    }
+    if (createType == CreateType::UtilityAction) {
+        contents = "return {\n    action_entered = function(self, context) end,\n"
+            "    action_executing = function(self, context, dt) return \"success\" end,\n"
+            "    action_exited = function(self, context, reason) end\n}\n";
+        return true;
+    }
     if (createType == CreateType::Material) {
         // Шаблон MaterialData не требует GPU для создания.
         contents = "{\n  \"version\": 1,\n  \"shader\": \"builtin/simple\",\n  \"render_state\": \"opaque\",\n"
@@ -320,6 +358,9 @@ void ContentBrowser::DrawCreateDialog()
         : createType == CreateType::Scene ? "Scene (.level.json)"
         : createType == CreateType::MeshObject ? "Mesh object (.object.json)"
         : createType == CreateType::Object ? "Object (.object.json)"
+        : createType == CreateType::UtilityTable ? "Utility AI table (.utilityai.json)"
+        : createType == CreateType::UtilityCurve ? "Utility AI curve (.curve.json)"
+        : createType == CreateType::UtilityAction ? "Utility AI action (.action.lua)"
         : createType == CreateType::Material ? "Material (.material.json)" : "Lua script (.lua)");
     if (createType == CreateType::MeshObject) ImGui::TextDisabled("Object with a cube mesh component.");
     if (createType == CreateType::Scene) ImGui::TextDisabled("Default demo with camera, lights and primitives. Double-click the file to open.");
@@ -370,6 +411,12 @@ void ContentBrowser::DrawCreateMenu(DrawRequests& requests)
     if (ImGui::MenuItem("Object")) { createType = CreateType::Object; requests.create = true; }
     if (ImGui::MenuItem("Material")) { createType = CreateType::Material; requests.create = true; }
     if (ImGui::MenuItem("Lua script")) { createType = CreateType::LuaScript; requests.create = true; }
+    if (ImGui::BeginMenu("Utility AI")) {
+        if (ImGui::MenuItem("Table")) { createType = CreateType::UtilityTable; requests.create = true; }
+        if (ImGui::MenuItem("Curve")) { createType = CreateType::UtilityCurve; requests.create = true; }
+        if (ImGui::MenuItem("Action script")) { createType = CreateType::UtilityAction; requests.create = true; }
+        ImGui::EndMenu();
+    }
 }
 
 void ContentBrowser::DrawToolbar(DrawRequests& requests)
@@ -500,9 +547,14 @@ size_t ContentBrowser::DrawFileList(float footerHeight, DrawRequests& requests)
                 }
                 if (ImGui::BeginPopupContextItem("Entry menu")) {
                     const int category = Category(entry.name, entry.mesh);
-                    const bool canOpen = !entry.link && (entry.directory || category == 1 || category == 2 || category == 5);
+                    const bool utilityAsset = UtilityAssetLabel(LowerAscii(entry.name)) != nullptr;
+                    const bool canOpen = !entry.link && (entry.directory || category == 1 || category == 2 || category == 4 || category == 5 || utilityAsset);
                     if (ImGui::MenuItem("Open", "Enter", false, canOpen)) Activate(entry, requests.directory);
-                    if (!entry.directory && !entry.link && category == 5 && ImGui::MenuItem("Edit texture")) Activate(entry, requests.directory);
+                    if (!entry.directory && !entry.link && (category == 4 || category == 5)) {
+                        if (ImGui::MenuItem(category == 4 ? "Edit material" : "Edit texture")) Activate(entry, requests.directory);
+                    }
+                    if (!entry.directory && !entry.link && utilityAsset && ImGui::MenuItem("Edit Utility AI asset"))
+                        Activate(entry, requests.directory);
                     if (ImGui::MenuItem("Open containing folder")) OpenFolder(current);
                     if (ImGui::MenuItem("Copy project-relative path")) ImGui::SetClipboardText(ResourcePath(path).c_str());
                     if (ImGui::MenuItem("Copy absolute path")) ImGui::SetClipboardText(path.c_str());

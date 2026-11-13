@@ -23,6 +23,8 @@ public:
 	Resource& operator=(const Resource&) = delete;
 };
 
+struct MaterialData;
+
 class ResourceManager {
 private:
 	std::unordered_map<std::string, Resource*> resources;
@@ -47,6 +49,7 @@ public:
 	// Корень для ссылок внутри материалов; обычные load(path) используют путь напрямую.
 	void SetResourceDirectory(std::string directory) { resourceDirectory = std::move(directory); }
 	const std::string& GetResourceDirectory() const { return resourceDirectory; }
+	bool ApplyMaterial(const std::string& path, const MaterialData& options, ID3D11Device* device);
 
 	// The returned pointer is borrowed and remains valid until this manager is destroyed.
 	// Constructor arguments are used only on a cache miss. Paths are UTF-8.
@@ -102,8 +105,7 @@ public:
 	static bool SupportsExtension(const std::string& extension);
 };
 
-// Описание не содержит DX11-объектов; пустой diffuse записывается как null.
-// Пути UTF-8; diffuse задаётся относительно корня ресурсов будущего проекта.
+// Пути карт UTF-8 относительно корня ресурсов; пустые слоты необязательны.
 struct MaterialData {
 	int version = 1;
 	std::string shader = "builtin/simple";
@@ -112,7 +114,10 @@ struct MaterialData {
 	std::string diffuse;
 	float specularStrength = 0.5f;
 	float shininess = 32.0f;
+	std::string normal;
+	std::string ao;
 
+	bool operator==(const MaterialData&) const = default;
 	bool Validate(std::string& error) const;
 	// При ошибке чтения исходное описание остаётся неизменным.
 	bool Load(const std::string& path, std::string& error);
@@ -137,6 +142,8 @@ private:
 	MaterialResource(ID3D11Device* device, std::string standardResourceDirectory,
 		ResourceManager* resources = nullptr);
 	bool load(const std::string& path) override;
+	bool Build(MaterialData options, std::string& error);
+	void Adopt(MaterialResource& candidate);
 
 public:
 	~MaterialResource() override;
@@ -165,15 +172,20 @@ friend class ResourceManager;
 private:
 	ComPtr<ID3D11Device> m_device;
 	Texture m_texture;
+	// Материалы заимствуют это представление, а вторая копия нужна только для sRGB.
+	Texture linearTexture;
 	TextureSettings settings;
 	std::string sourcePath;
 	bool BuildTexture(const std::string& path, const TextureSettings& options, Texture& result, std::string& error) const;
+	bool BuildLinearTexture(const Texture& primary, TextureSettings options, Texture& result, std::string& error) const;
 
 	explicit TextureResource(ID3D11Device* device) : m_device(device) {}
 	bool load(const std::string& path) override;
 
 public:
 	const Texture& GetTexture() const { return m_texture; }
+	bool RequireLinearTexture(std::string& error);
+	const Texture& GetLinearTexture() const { return linearTexture; }
 	const TextureSettings& GetSettings() const { return settings; }
 	// Сначала готовим GPU-ресурс и сохраняем JSON; только затем заменяем содержимое на прежнем адресе.
 	bool ApplySettings(const TextureSettings& options, std::string& error);

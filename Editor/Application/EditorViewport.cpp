@@ -206,7 +206,9 @@ bool Editor::DrawSelectionTransformPanel(const ImVec2& origin, const ImVec2& siz
 void Editor::DrawViewport()
 {
 	if (auto* movement = GetCameraMovement()) movement->enabled = false;
-	if (ImGui::Begin("Viewport")) {
+	const bool visible = ImGui::Begin("Viewport");
+	viewportDockId = ImGui::GetWindowDockID();
+	if (visible) {
 		scenePanelFocused |= ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 		DrawViewportToolbar();
 		const auto selectionHints = settings.ViewportHints(false), cameraHints = settings.ViewportHints(true);
