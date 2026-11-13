@@ -3,6 +3,7 @@
 #include "RenderPresets.h"
 #include "EditorFileUtils.h"
 #include <cmath>
+#include <cstdio>
 #include <limits>
 using EditorAction = EditorSettings::Action;
 namespace {
@@ -72,6 +73,8 @@ const char* Editor::ObjectLabel(GameObject& object) const
 		if (dynamic_cast<GameCamera*>(component)) return "GameCamera";
 		if (dynamic_cast<DirectionalLightComponent*>(component)) return "Directional light";
 		if (dynamic_cast<PointLightComponent*>(component)) return "Point light";
+		if (dynamic_cast<NavMeshVolumeComponent*>(component)) return "Nav mesh volume";
+		if (dynamic_cast<CharacterMovementComponent*>(component)) return "Character";
 		if (dynamic_cast<MeshComponent*>(component)) return "Mesh object";
 	}
 	return "Game object";
@@ -196,6 +199,10 @@ void Editor::DrawCreateMenu()
 		if (ImGui::MenuItem("Point light")) requestedCreate = ObjectType::PointLight;
 		ImGui::EndMenu();
 	}
+	if (ImGui::BeginMenu("Navigation")) {
+		if (ImGui::MenuItem("Nav mesh volume")) requestedCreate = ObjectType::NavMeshVolume;
+		ImGui::EndMenu();
+	}
 }
 
 bool Editor::CanDeleteObject(GameObject* object) const
@@ -293,6 +300,7 @@ void Editor::ApplySceneActions()
 		break;
 	case ObjectType::DirectionalLight: component = object->createComponent<DirectionalLightComponent>(); break;
 	case ObjectType::PointLight: component = object->createComponent<PointLightComponent>(); break;
+	case ObjectType::NavMeshVolume: component = object->createComponent<NavMeshVolumeComponent>(); break;
 	case ObjectType::Empty: break;
 	default: break;
 	}
@@ -395,7 +403,8 @@ void Editor::ApplyTreeAction()
 	}
 	case TreeOperation::MoveComponent: {
 		auto* component = dynamic_cast<TransformableComponent*>(action.component);
-		const bool rootOnly = dynamic_cast<BoxColliderComponent*>(component) || dynamic_cast<RigidBodyComponent*>(component);
+		const bool rootOnly = dynamic_cast<BoxColliderComponent*>(component) || dynamic_cast<RigidBodyComponent*>(component)
+			|| dynamic_cast<CharacterMovementComponent*>(component) || dynamic_cast<NavAgentComponent*>(component);
 		if (!component || !action.target || action.target->isPendingDestroy() || component->isPendingDestroy()
 			|| component == game.getRenderServer().getCamera() || component == GetCameraMovement()
 			|| (rootOnly && action.target->get_parent())) break;
@@ -410,12 +419,20 @@ void Editor::ApplyTreeAction()
 		break;
 	case TreeOperation::AddComponent: {
 		Component* component = nullptr;
-		const bool physics = action.kind == ComponentKind::Collider || action.kind == ComponentKind::StaticBody || action.kind == ComponentKind::DynamicBody;
-		if (physics && node->get_parent()) { sceneActionError = "Physics components must use the root branch."; break; }
-		if (action.kind == ComponentKind::StaticBody || action.kind == ComponentKind::DynamicBody) {
+		// Виды начиная с Collider работают только на корневой ветке.
+		if (action.kind >= ComponentKind::Collider && node->get_parent()) { sceneActionError = "This component must use the root branch."; break; }
+		// Тело и персонаж управляют одной позой корня, поэтому на объекте допустим только один из них.
+		if (action.kind == ComponentKind::StaticBody || action.kind == ComponentKind::DynamicBody
+			|| action.kind == ComponentKind::KinematicBody || action.kind == ComponentKind::CharacterMovement) {
 			bool hasBody = false;
-			for (auto* existing : node->get_components()) if (!existing->isPendingDestroy() && dynamic_cast<RigidBodyComponent*>(existing)) hasBody = true;
-			if (hasBody) { sceneActionError = "This object already has a rigid body."; break; }
+			for (auto* existing : node->get_components())
+				if (!existing->isPendingDestroy() && (dynamic_cast<RigidBodyComponent*>(existing) || dynamic_cast<CharacterMovementComponent*>(existing))) hasBody = true;
+			if (hasBody) { sceneActionError = "This object already has a rigid body or character."; break; }
+		}
+		if (action.kind == ComponentKind::NavAgent) {
+			bool hasAgent = false;
+			for (auto* existing : node->get_components()) if (!existing->isPendingDestroy() && dynamic_cast<NavAgentComponent*>(existing)) hasAgent = true;
+			if (hasAgent) { sceneActionError = "This object already has a nav agent."; break; }
 		}
 		switch (action.kind) {
 		case ComponentKind::Mesh: component = node->create_component<MeshComponent>(); break;
@@ -423,9 +440,13 @@ void Editor::ApplyTreeAction()
 		case ComponentKind::PointLight: component = node->create_component<PointLightComponent>(); break;
 		case ComponentKind::GameCamera: component = node->create_component<GameCamera>(); break;
 		case ComponentKind::LuaScript: component = node->create_component<LuaScriptComponent>(std::string{}); break;
+		case ComponentKind::NavMeshVolume: component = node->create_component<NavMeshVolumeComponent>(); break;
 		case ComponentKind::Collider: component = node->create_component<BoxColliderComponent>(); break;
 		case ComponentKind::StaticBody: component = node->create_component<StaticRigidBodyComponent>(); break;
 		case ComponentKind::DynamicBody: component = node->create_component<DynamicRigidBodyComponent>(); break;
+		case ComponentKind::KinematicBody: component = node->create_component<KinematicRigidBodyComponent>(); break;
+		case ComponentKind::CharacterMovement: component = node->create_component<CharacterMovementComponent>(); break;
+		case ComponentKind::NavAgent: component = node->create_component<NavAgentComponent>(); break;
 		}
 		changed = component != nullptr;
 		if (!changed) sceneActionError = "Cannot allocate component.";
@@ -860,7 +881,7 @@ void Editor::DrawObjectInspector()
 		if (selectedObjects.size() > 1) ImGui::TextDisabled("Component properties: active object");
 		if (ImGui::Button("Add component")) ImGui::OpenPopup("Add component");
 		if (ImGui::BeginPopup("Add component")) {
-			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Box collider", "Static body", "Dynamic body" };
+			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Nav mesh volume", "Box collider", "Static body", "Dynamic body", "Kinematic body", "Character movement", "Nav agent" };
 			for (int kind = 0; kind < IM_ARRAYSIZE(labels); ++kind)
 				if (ImGui::MenuItem(labels[kind], nullptr, false, kind < static_cast<int>(ComponentKind::Collider) || !selectedNode->get_parent())) {
 					treeAction = { TreeOperation::AddComponent, selectedNode }; treeAction.kind = static_cast<ComponentKind>(kind);
@@ -878,7 +899,8 @@ void Editor::DrawObjectInspector()
 			if (ImGui::SmallButton("Remove component")) { treeAction = { TreeOperation::RemoveComponent, selectedNode }; treeAction.component = component; }
 			if (transformable && ImGui::BeginCombo("Branch", NodePath(*selectedNode).c_str())) {
 				std::vector<TransformNode*> nodes; CollectNodes(selectedObject->getTransform(), nodes);
-				const bool rootOnly = dynamic_cast<BoxColliderComponent*>(component) || dynamic_cast<RigidBodyComponent*>(component);
+				const bool rootOnly = dynamic_cast<BoxColliderComponent*>(component) || dynamic_cast<RigidBodyComponent*>(component)
+					|| dynamic_cast<CharacterMovementComponent*>(component) || dynamic_cast<NavAgentComponent*>(component);
 				for (auto* target : nodes) {
 					ImGui::PushID(target); ImGui::BeginDisabled(rootOnly && target->get_parent());
 					if (ImGui::Selectable(NodePath(*target).c_str(), target == selectedNode)) {
@@ -913,6 +935,12 @@ void Editor::DrawObjectInspector()
 					0.001f, 10000.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 				if (changed) changed = collider->setSize(size);
 				TrackComponentProperty(*collider, before, "Box collider size", changed);
+				const auto beforeNavmesh = ComponentProperties(*collider);
+				bool affectsNavmesh = collider->getColliderItem().affectsNavmesh;
+				// Снятый флаг исключает из генерации коллайдер и меши этого объекта.
+				const bool navmeshChanged = ImGui::Checkbox("Affects navmesh", &affectsNavmesh);
+				if (navmeshChanged) collider->getColliderItem().affectsNavmesh = affectsNavmesh;
+				TrackComponentProperty(*collider, beforeNavmesh, "Collider affects navmesh", navmeshChanged);
 			} else if (dynamic_cast<EditorCamera*>(component)) ImGui::TextUnformatted("Editor camera");
 			else if (dynamic_cast<GameCamera*>(component)) ImGui::TextUnformatted("GameCamera");
 			else if (dynamic_cast<CameraMovementComponent*>(component)) ImGui::TextUnformatted("Camera navigation");
@@ -929,8 +957,206 @@ void Editor::DrawObjectInspector()
 			else if (auto* mesh = dynamic_cast<MeshComponent*>(component)) {
 				DrawMeshInspector(*mesh);
 			}
+			else if (auto* volume = dynamic_cast<NavMeshVolumeComponent*>(component)) {
+				DrawNavMeshVolumeInspector(*volume);
+			}
+			else if (auto* character = dynamic_cast<CharacterMovementComponent*>(component)) {
+				DrawCharacterMovementInspector(*character);
+			}
+			else if (auto* agent = dynamic_cast<NavAgentComponent*>(component)) {
+				DrawNavAgentInspector(*agent);
+			}
 			else ImGui::TextUnformatted("Component");
 			ImGui::PopID();
+		}
+	}
+}
+
+void Editor::DrawCharacterMovementInspector(CharacterMovementComponent& character)
+{
+	ImGui::TextUnformatted("Character movement (sphere)");
+	// Каждое поле — отдельная команда Undo; значения ограничены теми же диапазонами, что и Validate.
+	const auto floatSetting = [&](const char* label, float CharacterSettings::* field,
+		float speed, float minimum, float maximum, const char* format) {
+		const auto before = ComponentProperties(character);
+		CharacterSettings settings = character.getSettings();
+		bool changed = ImGui::DragFloat(label, &(settings.*field), speed, minimum, maximum, format, ImGuiSliderFlags_AlwaysClamp);
+		if (changed) changed = character.setSettings(settings);
+		TrackComponentProperty(character, before, label, changed);
+	};
+	const auto before = ComponentProperties(character);
+	bool enabled = character.getCharacterItem().enabled;
+	const bool enabledChanged = ImGui::Checkbox("Enabled", &enabled);
+	if (enabledChanged) character.getCharacterItem().enabled = enabled;
+	TrackComponentProperty(character, before, "Character enabled", enabledChanged);
+	floatSetting("Radius", &CharacterSettings::radius, 0.01f, 0.01f, 100.0f, "%.2f m");
+	floatSetting("Gravity scale", &CharacterSettings::gravityScale, 0.01f, 0.0f, 100.0f, "%.2f");
+	floatSetting("Max slope", &CharacterSettings::maxSlope, 0.5f, 0.0f, 89.0f, "%.1f deg");
+	floatSetting("Step height", &CharacterSettings::stepHeight, 0.01f, 0.0f, 10.0f, "%.2f m");
+	floatSetting("Mass", &CharacterSettings::mass, 0.5f, 0.001f, 1000000.0f, "%.1f kg");
+	floatSetting("Max strength", &CharacterSettings::maxStrength, 1.0f, 0.0f, 1000000000.0f, "%.0f N");
+}
+
+void Editor::DrawNavAgentInspector(NavAgentComponent& agent)
+{
+	ImGui::TextUnformatted("Nav agent");
+	if (!agent.hasCharacter()) ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.3f, 1.0f), "Add Character movement to this object.");
+	// Каждое поле — отдельная команда Undo; значения ограничены теми же диапазонами, что и Validate.
+	const auto floatSetting = [&](const char* label, float NavAgentSettings::* field,
+		float speed, float minimum, float maximum, const char* format) {
+		const auto before = ComponentProperties(agent);
+		NavAgentSettings settings = agent.getSettings();
+		bool changed = ImGui::DragFloat(label, &(settings.*field), speed, minimum, maximum, format, ImGuiSliderFlags_AlwaysClamp);
+		if (changed) changed = agent.setSettings(settings);
+		TrackComponentProperty(agent, before, label, changed);
+	};
+	floatSetting("Speed", &NavAgentSettings::speed, 0.05f, 0.01f, 1000.0f, "%.2f m/s");
+	floatSetting("Acceleration", &NavAgentSettings::acceleration, 0.1f, 0.01f, 10000.0f, "%.2f m/s2");
+	floatSetting("Angular speed", &NavAgentSettings::angularSpeed, 1.0f, 0.0f, 100000.0f, "%.0f deg/s");
+	floatSetting("Stopping distance", &NavAgentSettings::stoppingDistance, 0.01f, 0.0f, 100.0f, "%.2f m");
+	const auto before = ComponentProperties(agent);
+	NavAgentSettings settings = agent.getSettings();
+	bool changed = ImGui::Checkbox("Update rotation", &settings.updateRotation);
+	if (changed) changed = agent.setSettings(settings);
+	TrackComponentProperty(agent, before, "Agent update rotation", changed);
+}
+
+void Editor::DrawNavMeshVolumeInspector(NavMeshVolumeComponent& volume)
+{
+	ImGui::TextUnformatted("Nav mesh volume");
+	{
+		const auto before = ComponentProperties(volume);
+		DXVector3 size = volume.getSize();
+		// Полные длины сторон в пространстве ветки; масштаб и поворот ветки применяются сверху.
+		bool changed = ImGui::DragFloat3("Size (X, Y, Z)", &size.x, 0.05f,
+			0.01f, 100000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (changed) changed = volume.setSize(size);
+		TrackComponentProperty(volume, before, "Nav volume size", changed);
+	}
+	// Каждое поле — отдельная команда Undo; недопустимое сочетание параметров не применяется.
+	const auto applySettings = [&](const NavBuildSettings& settings) {
+		std::string error;
+		const bool applied = volume.setSettings(settings, &error);
+		navSettingsError = error;
+		return applied;
+	};
+	const auto floatSetting = [&](const char* label, float NavBuildSettings::* field,
+		float speed, float minimum, float maximum, const char* format) {
+		const auto before = ComponentProperties(volume);
+		NavBuildSettings settings = volume.getSettings();
+		bool changed = ImGui::DragFloat(label, &(settings.*field), speed, minimum, maximum, format, ImGuiSliderFlags_AlwaysClamp);
+		if (changed) changed = applySettings(settings);
+		TrackComponentProperty(volume, before, label, changed);
+	};
+	ImGui::SeparatorText("Agent");
+	floatSetting("Radius", &NavBuildSettings::agentRadius, 0.01f, 0.0f, 50.0f, "%.2f m");
+	floatSetting("Height", &NavBuildSettings::agentHeight, 0.01f, 0.05f, 100.0f, "%.2f m");
+	floatSetting("Max climb", &NavBuildSettings::agentMaxClimb, 0.01f, 0.0f, 100.0f, "%.2f m");
+	floatSetting("Max slope", &NavBuildSettings::agentMaxSlope, 0.5f, 0.0f, 89.0f, "%.1f deg");
+	if (ImGui::TreeNode("Advanced (Recast)")) {
+		floatSetting("Cell size", &NavBuildSettings::cellSize, 0.005f, 0.01f, 10.0f, "%.3f m");
+		floatSetting("Cell height", &NavBuildSettings::cellHeight, 0.005f, 0.01f, 10.0f, "%.3f m");
+		{
+			const auto before = ComponentProperties(volume);
+			NavBuildSettings settings = volume.getSettings();
+			bool changed = ImGui::DragInt("Tile size", &settings.tileSize, 1.0f, 16, 1024, "%d cells", ImGuiSliderFlags_AlwaysClamp);
+			if (changed) changed = applySettings(settings);
+			TrackComponentProperty(volume, before, "Tile size", changed);
+		}
+		floatSetting("Region min size", &NavBuildSettings::regionMinSize, 0.5f, 0.0f, 1000.0f, "%.0f cells");
+		floatSetting("Region merge size", &NavBuildSettings::regionMergeSize, 0.5f, 0.0f, 1000.0f, "%.0f cells");
+		floatSetting("Edge max length", &NavBuildSettings::edgeMaxLength, 0.1f, 0.0f, 1000.0f, "%.1f m");
+		floatSetting("Edge max error", &NavBuildSettings::edgeMaxError, 0.05f, 0.1f, 10.0f, "%.2f");
+		floatSetting("Detail sample distance", &NavBuildSettings::detailSampleDistance, 0.1f, 0.0f, 100.0f, "%.1f cells");
+		floatSetting("Detail sample max error", &NavBuildSettings::detailSampleMaxError, 0.1f, 0.0f, 100.0f, "%.1f cells");
+		ImGui::TreePop();
+	}
+	const ImVec4 warning(1.0f, 0.65f, 0.3f, 1.0f);
+	if (!navSettingsError.empty()) ImGui::TextColored(warning, "%s", navSettingsError.c_str());
+
+	ImGui::SeparatorText("Navmesh");
+	NavigationServer& navigation = game.getNavigationServer();
+	if (navBuilder.isRunning()) {
+		// Счётчики обновляет рабочий поток; число тайлов известно после подготовки сетки.
+		const int total = navBuilder.getTilesTotal(), done = navBuilder.getTilesDone();
+		char overlay[64];
+		if (total > 0) std::snprintf(overlay, sizeof(overlay), "%d / %d tiles", done, total);
+		else std::snprintf(overlay, sizeof(overlay), "Preparing...");
+		ImGui::ProgressBar(total > 0 ? static_cast<float>(done) / static_cast<float>(total) : 0.0f, ImVec2(-1, 0), overlay);
+		if (ImGui::Button("Cancel generation")) navBuilder.Cancel();
+	} else {
+		ImGui::BeginDisabled(editedObject != nullptr);
+		if (ImGui::Button("Generate nav mesh")) requestedNavBuild = true;
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("Build the navmesh of all volumes in this scene in the background");
+	}
+	bool showNavMesh = navigation.isDebugViewVisible();
+	if (ImGui::Checkbox("Show navmesh", &showNavMesh)) navigation.SetDebugView(&game, showNavMesh);
+	if (navigation.hasNavMesh()) {
+		ImGui::Text("Loaded: %d tiles, %d polygons", navigation.getTileCount(), navigation.getPolyCount());
+		// Проверка обходит всю сцену, поэтому выполняется не чаще раза в 30 кадров.
+		if (Level* level = game.getLevel(); level && --navStaleCountdown <= 0) {
+			navStaleCountdown = 30;
+			navStale = NavMeshBuilder::ComputeInputHash(*level) != navigation.getInputHash();
+		}
+		if (navStale && !navBuilder.isRunning())
+			ImGui::TextColored(warning, "The scene changed since generation. Regenerate the navmesh.");
+	} else if (!navBuilder.isRunning()) {
+		if (volume.getDataPath().empty()) ImGui::TextDisabled("The navmesh has not been generated yet.");
+		else if (!navigation.getLastError().empty()) ImGui::TextColored(warning, "%s", navigation.getLastError().c_str());
+	}
+	if (!navBuildMessage.empty()) ImGui::TextWrapped("%s", navBuildMessage.c_str());
+	if (!navBuilder.getLog().empty() && ImGui::TreeNode("Recast log")) {
+		ImGui::TextUnformatted(navBuilder.getLog().c_str());
+		ImGui::TreePop();
+	}
+	if (!volume.getDataPath().empty()) ImGui::TextDisabled("Data: %s", volume.getDataPath().c_str());
+}
+
+void Editor::ApplyNavigationActions()
+{
+	if (requestedNavBuild) {
+		requestedNavBuild = false;
+		Level* level = game.getLevel();
+		std::string error;
+		if (!level || editedObject) error = "Open a scene to generate its navmesh.";
+		else if (temporaryProject || project.filePath.empty() || sceneFile.empty())
+			error = "Save the scene before generating its navmesh.";
+		else {
+			// Навмеш хранится рядом со сценой: Scenes/Main.level.json -> Scenes/Main.navmesh.
+			std::string relative = sceneFile;
+			const std::string suffix = ".level.json";
+			if (relative.size() > suffix.size() && relative.ends_with(suffix)) relative.resize(relative.size() - suffix.size());
+			else if (const auto dot = relative.find_last_of('.'); dot != std::string::npos
+				&& relative.find_first_of("/\\", dot) == std::string::npos) relative.resize(dot);
+			relative += ".navmesh";
+			// Тот же путь разрешит ResourceManager игры, запущенной с корнем проекта.
+			const std::string resolved = game.getResourceManager().ResolvePath(relative);
+			if (resolved.empty()) error = "Invalid navmesh path: " + relative;
+			else if (navBuilder.Start(*level, resolved, error)) {
+				navBuildPath = relative;
+				navBuildMessage = navBuilder.getMessage();
+			}
+		}
+		if (!error.empty()) navBuildMessage = error;
+	}
+	if (!navBuilder.Poll()) return;
+	navBuildMessage = navBuilder.getMessage();
+	navStaleCountdown = 0;
+	if (navBuilder.getState() != NavMeshBuilder::State::Succeeded) return;
+	std::string error;
+	if (!navBuilder.Apply(game.getNavigationServer(), error)) { navBuildMessage += "\n" + error; return; }
+	// Все объёмы уровня ссылаются на новый файл; изменённый путь попадает в сохранение сцены.
+	if (Level* level = game.getLevel()) {
+		for (GameObject* object : level->getObjects()) {
+			if (!object || object->isPendingDestroy()) continue;
+			for (Component* component : object->getComponents()) {
+				auto* volume = dynamic_cast<NavMeshVolumeComponent*>(component);
+				if (!volume || volume->isPendingDestroy() || volume->getDataPath() == navBuildPath) continue;
+				volume->setDataPath(navBuildPath);
+				checkSceneDirty = true;
+			}
 		}
 	}
 }

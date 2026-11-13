@@ -2,6 +2,7 @@
 #include "core.h"
 #include <string>
 #include <tuple>
+#include <vector>
 #include <sol/sol.hpp>
 
 namespace {
@@ -65,6 +66,104 @@ bool ApplyPhysicsAction(sol::variadic_args args)
 	return body && (body->*Method)(args[1].as<DXVector3>());
 }
 
+// Та же проверка self и Vector3 для команд других компонентов.
+template<class Target, bool (Target::*Method)(const DXVector3&)>
+bool ApplyVectorCommand(sol::variadic_args args)
+{
+	if (args.size() != 2 || !args[0].is<Target*>() || !args[1].is<DXVector3>()) return false;
+	auto* target = args[0].as<Target*>();
+	return target && (target->*Method)(args[1].as<DXVector3>());
+}
+
+// Настройка меняется через проверяющий setSettings; недопустимое значение игнорируется.
+template<class Target, class Settings, float Settings::* Field>
+auto SettingProperty()
+{
+	return sol::property(
+		[](const Target& target) { return target.getSettings().*Field; },
+		[](Target& target, float value) { Settings settings = target.getSettings(); settings.*Field = value; target.setSettings(settings); });
+}
+
+void NavAgentStop(sol::variadic_args args)
+{
+	if (args.size() == 1 && args[0].is<NavAgentComponent*>())
+		if (auto* agent = args[0].as<NavAgentComponent*>()) agent->stop();
+}
+
+const char* NavAgentStateName(NavAgentState state)
+{
+	switch (state) {
+	case NavAgentState::Moving: return "moving";
+	case NavAgentState::Arrived: return "arrived";
+	case NavAgentState::Failed: return "failed";
+	default: return "idle";
+	}
+}
+
+// Копия углов текущего пути с индексами от 1.
+sol::table NavAgentPath(sol::this_state state, const NavAgentComponent& agent)
+{
+	sol::state_view lua(state);
+	const auto& path = agent.getPath();
+	sol::table result = lua.create_table(static_cast<int>(path.size()), 0);
+	for (size_t i = 0; i < path.size(); ++i) result[i + 1] = path[i];
+	return result;
+}
+
+// Навигация: аргументы тоже проверяются до преобразования. Неудачный запрос даёт nil.
+sol::object NavigationFindPath(sol::this_state state, sol::variadic_args args)
+{
+	sol::state_view lua(state);
+	if (args.size() != 3 || !args[0].is<NavigationServer*>() || !args[1].is<DXVector3>() || !args[2].is<DXVector3>())
+		return sol::make_object(lua, sol::lua_nil);
+	auto* navigation = args[0].as<NavigationServer*>();
+	std::vector<DXVector3> path;
+	if (!navigation || !navigation->FindPath(args[1].as<DXVector3>(), args[2].as<DXVector3>(), path))
+		return sol::make_object(lua, sol::lua_nil);
+	// Массив углов пути с индексами от 1; первый угол — проекция начала на навмеш.
+	sol::table result = lua.create_table(static_cast<int>(path.size()), 0);
+	for (size_t i = 0; i < path.size(); ++i) result[i + 1] = path[i];
+	return result;
+}
+
+sol::object NavigationProjectPoint(sol::this_state state, sol::variadic_args args)
+{
+	sol::state_view lua(state);
+	if (args.size() != 2 || !args[0].is<NavigationServer*>() || !args[1].is<DXVector3>())
+		return sol::make_object(lua, sol::lua_nil);
+	auto* navigation = args[0].as<NavigationServer*>();
+	DXVector3 result;
+	if (!navigation || !navigation->ProjectPoint(args[1].as<DXVector3>(), result)) return sol::make_object(lua, sol::lua_nil);
+	return sol::make_object(lua, result);
+}
+
+// Возвращает (упёрся ли луч в край навмеша, точка остановки или nil при ошибке запроса).
+std::tuple<bool, sol::object> NavigationRaycast(sol::this_state state, sol::variadic_args args)
+{
+	sol::state_view lua(state);
+	if (args.size() != 3 || !args[0].is<NavigationServer*>() || !args[1].is<DXVector3>() || !args[2].is<DXVector3>())
+		return { false, sol::make_object(lua, sol::lua_nil) };
+	auto* navigation = args[0].as<NavigationServer*>();
+	DXVector3 hit;
+	if (!navigation) return { false, sol::make_object(lua, sol::lua_nil) };
+	const bool blocked = navigation->Raycast(args[1].as<DXVector3>(), args[2].as<DXVector3>(), hit);
+	// Свободный луч оставляет lastError пустым; иначе запрос не выполнен.
+	if (!blocked && !navigation->getLastError().empty()) return { false, sol::make_object(lua, sol::lua_nil) };
+	return { blocked, sol::make_object(lua, hit) };
+}
+
+sol::object NavigationRandomPoint(sol::this_state state, sol::variadic_args args)
+{
+	sol::state_view lua(state);
+	if (args.size() != 3 || !args[0].is<NavigationServer*>() || !args[1].is<DXVector3>() || !args[2].is<float>())
+		return sol::make_object(lua, sol::lua_nil);
+	auto* navigation = args[0].as<NavigationServer*>();
+	DXVector3 result;
+	if (!navigation || !navigation->RandomPointInRadius(args[1].as<DXVector3>(), args[2].as<float>(), result))
+		return sol::make_object(lua, sol::lua_nil);
+	return sol::make_object(lua, result);
+}
+
 // Ищет компонент по имени среди компонентов объекта; неизвестное имя даёт nil.
 sol::object FindComponent(sol::this_state state, GameObject& object, const std::string& name)
 {
@@ -86,6 +185,14 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 			if (auto* typed = dynamic_cast<DynamicRigidBodyComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "StaticRigidBody") {
 			if (auto* typed = dynamic_cast<StaticRigidBodyComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "KinematicRigidBody") {
+			if (auto* typed = dynamic_cast<KinematicRigidBodyComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "CharacterMovement") {
+			if (auto* typed = dynamic_cast<CharacterMovementComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "NavMeshVolume") {
+			if (auto* typed = dynamic_cast<NavMeshVolumeComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "NavAgent") {
+			if (auto* typed = dynamic_cast<NavAgentComponent*>(component)) return sol::make_object(lua, typed);
 #if defined(GG_EDITOR)
 		} else if (name == "EditorCamera") {
 			if (auto* typed = dynamic_cast<EditorCamera*>(component)) return sol::make_object(lua, typed);
@@ -109,7 +216,9 @@ void BindComponents(lua_State* L)
 		"Mesh", "Mesh", "GameCamera", "GameCamera",
 		"DirectionalLight", "DirectionalLight", "PointLight", "PointLight",
 		"LuaScript", "LuaScript", "BoxCollider", "BoxCollider",
-		"DynamicRigidBody", "DynamicRigidBody", "StaticRigidBody", "StaticRigidBody"
+		"DynamicRigidBody", "DynamicRigidBody", "StaticRigidBody", "StaticRigidBody",
+		"KinematicRigidBody", "KinematicRigidBody", "CharacterMovement", "CharacterMovement",
+		"NavMeshVolume", "NavMeshVolume", "NavAgent", "NavAgent"
 #if defined(GG_EDITOR)
 		, "EditorCamera", "EditorCamera", "CameraMovement", "CameraMovement"
 #endif
@@ -171,11 +280,36 @@ void BindComponents(lua_State* L)
 		"enabled", sol::property([](const StaticRigidBodyComponent& c) { return c.getPhysicsItem().enabled; },
 			[](StaticRigidBodyComponent& c, bool enabled) { c.getPhysicsItem().enabled = enabled; }));
 
+	// Скорости действуют до следующей записи; перенос узла тоже двигает тело.
+	lua.new_usertype<KinematicRigidBodyComponent>("KinematicRigidBody", sol::no_constructor,
+		"linear_velocity", sol::property([](const KinematicRigidBodyComponent& c) { return DXVector3(c.getPhysicsItem().linearVelocity); },
+			[](KinematicRigidBodyComponent& c, const DXVector3& velocity) { c.setLinearVelocity(velocity); }),
+		"angular_velocity", sol::property([](const KinematicRigidBodyComponent& c) { return DXVector3(c.getPhysicsItem().angularVelocity); },
+			[](KinematicRigidBodyComponent& c, const DXVector3& velocity) { c.setAngularVelocity(velocity); }),
+		"has_actor", sol::property([](const KinematicRigidBodyComponent& c) { return c.getPhysicsItem().hasActor(); }),
+		"is_sleeping", sol::property([](const KinematicRigidBodyComponent& c) { return c.getPhysicsItem().isSleeping(); }),
+		"enabled", sol::property([](const KinematicRigidBodyComponent& c) { return c.getPhysicsItem().enabled; },
+			[](KinematicRigidBodyComponent& c, bool enabled) { c.getPhysicsItem().enabled = enabled; }));
+
+	// move задаёт скорость по XZ до следующего вызова; состояние читается после физического шага.
+	lua.new_usertype<CharacterMovementComponent>("CharacterMovement", sol::no_constructor,
+		"move", &ApplyVectorCommand<CharacterMovementComponent, &CharacterMovementComponent::move>,
+		"velocity", sol::property([](const CharacterMovementComponent& c) { return DXVector3(c.getCharacterItem().velocity); }),
+		"is_grounded", sol::property([](const CharacterMovementComponent& c) { return c.getCharacterItem().grounded; }),
+		"radius", sol::property([](const CharacterMovementComponent& c) { return c.getSettings().radius; }),
+		"gravity_scale", SettingProperty<CharacterMovementComponent, CharacterSettings, &CharacterSettings::gravityScale>(),
+		"step_height", SettingProperty<CharacterMovementComponent, CharacterSettings, &CharacterSettings::stepHeight>(),
+		"enabled", sol::property([](const CharacterMovementComponent& c) { return c.getCharacterItem().enabled; },
+			[](CharacterMovementComponent& c, bool enabled) { c.getCharacterItem().enabled = enabled; }));
+
 	// Размер читается копией; включение коллайдера учитывается системой на fixed-step.
 	lua.new_usertype<BoxColliderComponent>("BoxCollider", sol::no_constructor,
 		"size", sol::property([](const BoxColliderComponent& c) { return DXVector3(c.getColliderItem().size); }),
 		"enabled", sol::property([](const BoxColliderComponent& c) { return c.getColliderItem().enabled; },
-			[](BoxColliderComponent& c, bool enabled) { c.getColliderItem().enabled = enabled; }));
+			[](BoxColliderComponent& c, bool enabled) { c.getColliderItem().enabled = enabled; }),
+		// Флаг читается только генератором навмеша в редакторе.
+		"affects_navmesh", sol::property([](const BoxColliderComponent& c) { return c.getColliderItem().affectsNavmesh; },
+			[](BoxColliderComponent& c, bool affects) { c.getColliderItem().affectsNavmesh = affects; }));
 #if defined(GG_GAME)
 	// Скрипты получают заимствованный GameInput через self.input; создавать его нельзя.
 	lua.new_usertype<GameInput>("GameInput", sol::no_constructor,
@@ -200,6 +334,37 @@ void BindComponents(lua_State* L)
 	keys["Up"] = Keys::Up; keys["Down"] = Keys::Down;
 	keys["Left"] = Keys::Left; keys["Right"] = Keys::Right;
 #endif
+
+	// Скрипты получают заимствованную систему навигации через self.navigation; создавать её нельзя.
+	// Навмеш статический: запросы работают после загрузки данных объёмами уровня.
+	lua.new_usertype<NavigationServer>("Navigation", sol::no_constructor,
+		"has_navmesh", sol::property([](const NavigationServer& n) { return n.hasNavMesh(); }),
+		"last_error", sol::property([](const NavigationServer& n) { return n.getLastError(); }),
+		"find_path", &NavigationFindPath,
+		"project_point", &NavigationProjectPoint,
+		"raycast", &NavigationRaycast,
+		"random_point", &NavigationRandomPoint);
+
+	lua.new_usertype<NavMeshVolumeComponent>("NavMeshVolume", sol::no_constructor);
+
+	// Агент независим от других агентов; движение выполняет CharacterMovement того же объекта.
+	lua.new_usertype<NavAgentComponent>("NavAgent", sol::no_constructor,
+		"set_destination", &ApplyVectorCommand<NavAgentComponent, &NavAgentComponent::setDestination>,
+		"warp", &ApplyVectorCommand<NavAgentComponent, &NavAgentComponent::warp>,
+		"stop", &NavAgentStop,
+		"speed", SettingProperty<NavAgentComponent, NavAgentSettings, &NavAgentSettings::speed>(),
+		"acceleration", SettingProperty<NavAgentComponent, NavAgentSettings, &NavAgentSettings::acceleration>(),
+		"angular_speed", SettingProperty<NavAgentComponent, NavAgentSettings, &NavAgentSettings::angularSpeed>(),
+		"stopping_distance", SettingProperty<NavAgentComponent, NavAgentSettings, &NavAgentSettings::stoppingDistance>(),
+		"update_rotation", sol::property([](const NavAgentComponent& a) { return a.getSettings().updateRotation; },
+			[](NavAgentComponent& a, bool value) { NavAgentSettings settings = a.getSettings(); settings.updateRotation = value; a.setSettings(settings); }),
+		"state", sol::property([](const NavAgentComponent& a) { return NavAgentStateName(a.getState()); }),
+		"destination", sol::property([](const NavAgentComponent& a) { return DXVector3(a.getDestination()); }),
+		"is_partial", sol::property([](const NavAgentComponent& a) { return a.isPartial(); }),
+		"remaining_distance", sol::property([](const NavAgentComponent& a) { return a.getRemainingDistance(); }),
+		"velocity", sol::property([](const NavAgentComponent& a) { return a.getVelocity(); }),
+		"path", sol::property(&NavAgentPath),
+		"last_error", sol::property([](const NavAgentComponent& a) { return a.getLastError(); }));
 
 	// Общие поля света; цвет передаётся как Color, альфа игнорируется.
 	lua.new_usertype<LightComponent>("Light",

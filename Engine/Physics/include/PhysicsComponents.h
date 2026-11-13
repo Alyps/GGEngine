@@ -66,3 +66,51 @@ public:
     static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
     StaticRigidBodyComponent() : RigidBodyComponent(PhysicsBodyType::Static, 0.0f) {}
 };
+
+// Движется заданными скоростями или переносом узла: без гравитации и реакции на удары.
+// Толкает динамические тела; статические его не останавливают (поведение Jolt Kinematic).
+class KinematicRigidBodyComponent : public RigidBodyComponent {
+public:
+    const char* GetSerializationType() const override { return "KinematicRigidBodyComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    // При успехе вызывающий код принимает владение компонентом до его привязки.
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
+    KinematicRigidBodyComponent() : RigidBodyComponent(PhysicsBodyType::Kinematic, 1.0f) {}
+    // Мировые скорости действуют до следующей команды; false — значения не конечны.
+    bool setLinearVelocity(const DXVector3& velocity);
+    bool setAngularVelocity(const DXVector3& velocity);
+};
+
+// Персонаж на Jolt CharacterVirtual: сфера скользит по стенам, ходит по склонам и ступеням.
+// Работает только на корневом узле и не сочетается с RigidBody на том же объекте.
+class CharacterMovementComponent : public TransformableComponent {
+public:
+    const char* GetSerializationType() const override { return "CharacterMovementComponent"; }
+    rapidjson::Value Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const override;
+    // При успехе вызывающий код принимает владение компонентом до его привязки.
+    static Component* CreateFromJson(const rapidjson::Value& json, std::string& error);
+private:
+    CharacterItem characterItem;
+#if defined(GG_EDITOR)
+    // Компонент владеет оболочкой и всеми её графическими ресурсами.
+    RenderItem* editorShell = nullptr;
+    // Диаметр сферы с поправкой на масштаб узла: радиус физики от масштаба не зависит.
+    DXVector3 shellSize = DXVector3::One;
+    void releaseEditorShell();
+    void refreshShellSize();
+#endif
+public:
+    CharacterMovementComponent() = default;
+    ~CharacterMovementComponent() override;
+    CharacterItem& getCharacterItem() { return characterItem; }
+    const CharacterItem& getCharacterItem() const { return characterItem; }
+    const CharacterSettings& getSettings() const { return characterItem.settings; }
+    bool setSettings(const CharacterSettings& settings, std::string* error = nullptr);
+    // Желаемая мировая скорость по XZ; действует до следующего вызова.
+    bool move(const DXVector3& velocity) { return characterItem.move(velocity); }
+    // Применяет проверенное описание к существующему компоненту (Undo редактора).
+    bool ApplyDescription(const rapidjson::Value& json, std::string& error);
+    void Init(Game& game) override;
+    void Shutdown(Game& game) override;
+    void Update(Game& game, double deltaTime) override;
+};

@@ -5,6 +5,12 @@ function(add_engine_variant engine_target build_definition)
     target_compile_definitions(${engine_target} PUBLIC ${build_definition}=1 UNICODE _UNICODE)
     target_link_libraries(${engine_target} PUBLIC DirectXTK DirectXTex)
     target_link_libraries(${engine_target} PRIVATE Jolt)
+    # Detour (загрузка навмеша и поиск пути) нужен обоим вариантам; Recast и отладочная
+    # отрисовка используются только генератором навмеша в редакторе.
+    target_link_libraries(${engine_target} PRIVATE Detour)
+    if(build_definition STREQUAL "GG_EDITOR")
+        target_link_libraries(${engine_target} PRIVATE Recast DebugUtils)
+    endif()
 
     target_include_directories(${engine_target} SYSTEM PUBLIC "${rapidjson_SOURCE_DIR}/include")
     # Lua и sol2 используются только в .cpp движка и не попадают в публичные заголовки.
@@ -16,7 +22,7 @@ function(add_engine_variant engine_target build_definition)
     target_compile_features(${engine_target} PUBLIC cxx_std_20)
 
     # У вариантов отдельные каталоги объектных файлов, но общие цели зависимостей.
-    foreach(subsystem Core Level Transform Platform Rendering Physics Scripting Resources)
+    foreach(subsystem Core Level Transform Platform Rendering Physics Navigation Scripting Resources)
         add_subdirectory("${subsystem}" "${engine_target}/${subsystem}")
     endforeach()
 endfunction()

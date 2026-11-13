@@ -9,3 +9,5 @@
 #include "LightComponent.h"
 #include "LuaScriptComponent.h"
 #include "PhysicsComponents.h"
+#include "NavMeshVolumeComponent.h"
+#include "NavAgentComponent.h"

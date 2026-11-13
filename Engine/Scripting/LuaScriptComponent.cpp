@@ -101,6 +101,8 @@ void LuaScriptComponent::Init(Game& game)
     // Game владеет вводом и живёт дольше скриптовых компонентов уровня.
     impl->instance["input"] = &game.getGameInput();
 #endif
+    // Game владеет системой навигации и живёт дольше скриптовых компонентов уровня.
+    impl->instance["navigation"] = &game.getNavigationServer();
 
     // Функции берём один раз: покадровый вызов не ищет их по имени.
     sol::object init = module["on_init"];
