@@ -4,6 +4,95 @@
 #include <cmath>
 #include <rapidjson/error/en.h>
 #include "Components.h"
+#include "core.h"
+
+TimerComponent::~TimerComponent()
+{
+    releaseLuaEvent();
+}
+
+void TimerComponent::releaseLuaEvent()
+{
+    if (!scriptServer) return;
+    timeout.Remove(luaTimeoutHandle);
+    scriptServer->RemoveNativeEvents(this);
+    scriptServer = nullptr;
+}
+
+bool TimerComponent::setWaitTime(float seconds)
+{
+    if (!std::isfinite(seconds) || seconds <= 0.0f) return false;
+    waitTime = seconds;
+    return true;
+}
+
+void TimerComponent::start()
+{
+    timeLeft = waitTime;
+    running = true;
+    runtimeConfigured = true;
+}
+
+void TimerComponent::stop()
+{
+    running = false;
+    timeLeft = 0.0;
+    runtimeConfigured = true;
+}
+
+void TimerComponent::Init(Game& game)
+{
+    if (game.isEditorMode()) return;
+    // start/stop из более раннего on_init имеют приоритет над автостартом.
+    if (!runtimeConfigured) {
+        if (autostart) start();
+        else stop();
+    }
+}
+
+void TimerComponent::Shutdown(Game& game)
+{
+    stop();
+    runtimeConfigured = false;
+    releaseLuaEvent();
+}
+
+void TimerComponent::Update(Game& game, double deltaTime)
+{
+    if (game.isEditorMode() || !running || !std::isfinite(deltaTime) || deltaTime <= 0.0) return;
+    timeLeft -= deltaTime;
+    if (timeLeft > 0.0) return;
+    // Пропущенные интервалы объединяем в одно событие, сохраняя фазу отсчёта.
+    if (repeating) timeLeft = waitTime - std::fmod(-timeLeft, static_cast<double>(waitTime));
+    else stop();
+    // Состояние подготовлено заранее: start/stop из обработчика не перезаписываются.
+    timeout.Broadcast();
+}
+
+rapidjson::Value TimerComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
+{
+    auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
+    json.AddMember("wait_time", waitTime, allocator);
+    json.AddMember("repeat", repeating, allocator);
+    json.AddMember("autostart", autostart, allocator);
+    return Serialization::Finish(std::move(json), error);
+}
+
+Component* TimerComponent::CreateFromJson(const rapidjson::Value& json, std::string& error)
+{
+    float seconds; bool repeat, automatic;
+    using namespace Deserialization;
+    if (!Float(json, "wait_time", seconds, error) || !Bool(json, "repeat", repeat, error)
+        || !Bool(json, "autostart", automatic, error)) return nullptr;
+    if (seconds <= 0.0f) { error = "Timer wait_time must be positive"; return nullptr; }
+    // Фабрика передаёт владение вызывающему коду до добавления в Object.
+    auto* timer = new (std::nothrow) TimerComponent();
+    if (!timer) { error = "Cannot allocate TimerComponent"; return nullptr; }
+    timer->setWaitTime(seconds);
+    timer->setRepeating(repeat);
+    timer->setAutostart(automatic);
+    return timer;
+}
 
 namespace Serialization {
 
@@ -121,7 +210,9 @@ ComponentFactoryMap::ComponentFactoryMap()
     Register("DirectionalLightComponent", &DirectionalLightComponent::CreateFromJson);
     Register("PointLightComponent", &PointLightComponent::CreateFromJson);
     Register("LuaScriptComponent", &LuaScriptComponent::CreateFromJson);
+    Register("TimerComponent", &TimerComponent::CreateFromJson);
     Register("BoxColliderComponent", &BoxColliderComponent::CreateFromJson);
+    Register("BoxTriggerComponent", &BoxTriggerComponent::CreateFromJson);
     Register("DynamicRigidBodyComponent", &DynamicRigidBodyComponent::CreateFromJson);
     Register("StaticRigidBodyComponent", &StaticRigidBodyComponent::CreateFromJson);
     Register("KinematicRigidBodyComponent", &KinematicRigidBodyComponent::CreateFromJson);

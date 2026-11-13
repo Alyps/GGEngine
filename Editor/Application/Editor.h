@@ -82,7 +82,7 @@ private:
 	void ApplyTreeAction();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
 	// Порядок совпадает с подписями меню; виды начиная с Collider доступны только на корне.
-	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, NavMeshVolume, Collider, StaticBody, DynamicBody, KinematicBody, CharacterMovement, NavAgent };
+	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, NavMeshVolume, Timer, Collider, StaticBody, DynamicBody, KinematicBody, CharacterMovement, NavAgent, BoxTrigger };
 	struct TreeAction {
 		TreeOperation operation = TreeOperation::None;
 		TransformNode* node = nullptr;

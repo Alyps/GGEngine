@@ -27,6 +27,112 @@ namespace {
     }
 }
 
+bool BoxTriggerComponent::setSize(const DXVector3& size)
+{
+    if (!std::isfinite(size.x) || !std::isfinite(size.y) || !std::isfinite(size.z)
+        || size.x <= 0.0f || size.y <= 0.0f || size.z <= 0.0f) return false;
+    triggerItem.size = size;
+    return true;
+}
+
+BoxTriggerComponent::~BoxTriggerComponent()
+{
+    releaseLuaEvents();
+#if defined(GG_EDITOR)
+    releaseEditorShell();
+#endif
+}
+
+void BoxTriggerComponent::releaseLuaEvents()
+{
+    if (!scriptServer) return;
+    triggerItem.bodyEntered.Remove(enteredHandle);
+    triggerItem.bodyExited.Remove(exitedHandle);
+    scriptServer->RemoveNativeEvents(this);
+    scriptServer = nullptr;
+}
+
+#if defined(GG_EDITOR)
+void BoxTriggerComponent::releaseEditorShell()
+{
+    if (!editorShell) return;
+    delete editorShell->material->Shader();
+    delete editorShell->material->State();
+    delete editorShell->material;
+    delete editorShell->mesh;
+    delete editorShell;
+    editorShell = nullptr;
+}
+#endif
+
+void BoxTriggerComponent::Init(Game& game)
+{
+    auto* root = getOwner() ? &getOwner()->getTransform() : nullptr;
+    if (!transformNode) bind_to_node(root);
+    if (!root || transformNode != root) {
+        game.getPhysicsServer().reportError("box trigger must use its owner's root transform");
+        return;
+    }
+    triggerItem.transformNode = transformNode;
+    triggerItem.component = this;
+    // В редакторе создаём только оболочку; события существуют во время игры.
+    if (!game.isEditorMode()) game.getPhysicsServer().addTrigger(triggerItem);
+#if defined(GG_EDITOR)
+    editorShell = RenderItemPresets::CreateSimple(game.getRenderServer().Device(),
+        MeshPresets::CreateRectangle(), false,
+        game.getResourceManager().GetStandardResourceDirectory(), true, "PSColliderMain");
+    if (editorShell) {
+        editorShell->transformNode = transformNode;
+        editorShell->editorShellSize = &triggerItem.size;
+        editorShell->editorGame = &game;
+        game.getRenderServer().addItem(*editorShell);
+    }
+#endif
+}
+
+void BoxTriggerComponent::Shutdown(Game& game)
+{
+    game.getPhysicsServer().removeTrigger(triggerItem);
+    releaseLuaEvents();
+#if defined(GG_EDITOR)
+    if (editorShell) game.getRenderServer().removeItem(*editorShell);
+    releaseEditorShell();
+#endif
+    triggerItem.transformNode = nullptr;
+    triggerItem.component = nullptr;
+}
+
+void BoxTriggerComponent::Update(Game& game, double deltaTime)
+{
+    if (triggerItem.transformNode == transformNode) return;
+    Shutdown(game);
+    Init(game);
+}
+
+rapidjson::Value BoxTriggerComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
+{
+    auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
+    const auto& size = triggerItem.size;
+    json.AddMember("size", Serialization::Array({size.x, size.y, size.z}, allocator), allocator);
+    json.AddMember("enabled", triggerItem.enabled, allocator);
+    return Serialization::Finish(std::move(json), error);
+}
+
+Component* BoxTriggerComponent::CreateFromJson(const rapidjson::Value& json, std::string& error)
+{
+    error.clear();
+    float size[3]; bool enabled;
+    if (!Deserialization::Floats(json, "size", size, 3, error)
+        || !Deserialization::Bool(json, "enabled", enabled, error)) return nullptr;
+    if (size[0] <= 0 || size[1] <= 0 || size[2] <= 0) { error = "Invalid trigger size"; return nullptr; }
+    // До привязки к TransformTree компонентом владеет вызывающий код.
+    auto* trigger = new (std::nothrow) BoxTriggerComponent();
+    if (!trigger) { error = "Cannot allocate BoxTriggerComponent"; return nullptr; }
+    trigger->setSize(DXVector3(size));
+    trigger->getTriggerItem().enabled = enabled;
+    return trigger;
+}
+
 bool BoxColliderComponent::setSize(const DXVector3& size)
 {
     // Не принимаем вырожденный бокс и нечисловые значения из вызывающего кода.

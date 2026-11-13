@@ -42,6 +42,11 @@ bool ScriptServer::Init()
 	BindMath(impl->lua.lua_state());
 	BindTransform(impl->lua.lua_state());
 	BindComponents(impl->lua.lua_state());
+	if (!BindDelegates(impl->lua.lua_state())) {
+		delete impl;
+		impl = nullptr;
+		return false;
+	}
 
 	// print выводит в консоль движка с префиксом, а не в stdout процесса напрямую.
 	impl->lua.set_function("print", [](sol::this_state state, sol::variadic_args args) {

@@ -404,7 +404,7 @@ void Editor::ApplyTreeAction()
 	case TreeOperation::MoveComponent: {
 		auto* component = dynamic_cast<TransformableComponent*>(action.component);
 		const bool rootOnly = dynamic_cast<BoxColliderComponent*>(component) || dynamic_cast<RigidBodyComponent*>(component)
-			|| dynamic_cast<CharacterMovementComponent*>(component) || dynamic_cast<NavAgentComponent*>(component);
+			|| dynamic_cast<CharacterMovementComponent*>(component) || dynamic_cast<NavAgentComponent*>(component) || dynamic_cast<BoxTriggerComponent*>(component);
 		if (!component || !action.target || action.target->isPendingDestroy() || component->isPendingDestroy()
 			|| component == game.getRenderServer().getCamera() || component == GetCameraMovement()
 			|| (rootOnly && action.target->get_parent())) break;
@@ -441,7 +441,9 @@ void Editor::ApplyTreeAction()
 		case ComponentKind::GameCamera: component = node->create_component<GameCamera>(); break;
 		case ComponentKind::LuaScript: component = node->create_component<LuaScriptComponent>(std::string{}); break;
 		case ComponentKind::NavMeshVolume: component = node->create_component<NavMeshVolumeComponent>(); break;
+		case ComponentKind::Timer: component = node->getOwner()->createComponent<TimerComponent>(); break;
 		case ComponentKind::Collider: component = node->create_component<BoxColliderComponent>(); break;
+		case ComponentKind::BoxTrigger: component = node->create_component<BoxTriggerComponent>(); break;
 		case ComponentKind::StaticBody: component = node->create_component<StaticRigidBodyComponent>(); break;
 		case ComponentKind::DynamicBody: component = node->create_component<DynamicRigidBodyComponent>(); break;
 		case ComponentKind::KinematicBody: component = node->create_component<KinematicRigidBodyComponent>(); break;
@@ -881,7 +883,7 @@ void Editor::DrawObjectInspector()
 		if (selectedObjects.size() > 1) ImGui::TextDisabled("Component properties: active object");
 		if (ImGui::Button("Add component")) ImGui::OpenPopup("Add component");
 		if (ImGui::BeginPopup("Add component")) {
-			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Nav mesh volume", "Box collider", "Static body", "Dynamic body", "Kinematic body", "Character movement", "Nav agent" };
+			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Nav mesh volume", "Timer", "Box collider", "Static body", "Dynamic body", "Kinematic body", "Character movement", "Nav agent", "Box trigger" };
 			for (int kind = 0; kind < IM_ARRAYSIZE(labels); ++kind)
 				if (ImGui::MenuItem(labels[kind], nullptr, false, kind < static_cast<int>(ComponentKind::Collider) || !selectedNode->get_parent())) {
 					treeAction = { TreeOperation::AddComponent, selectedNode }; treeAction.kind = static_cast<ComponentKind>(kind);
@@ -900,7 +902,7 @@ void Editor::DrawObjectInspector()
 			if (transformable && ImGui::BeginCombo("Branch", NodePath(*selectedNode).c_str())) {
 				std::vector<TransformNode*> nodes; CollectNodes(selectedObject->getTransform(), nodes);
 				const bool rootOnly = dynamic_cast<BoxColliderComponent*>(component) || dynamic_cast<RigidBodyComponent*>(component)
-					|| dynamic_cast<CharacterMovementComponent*>(component) || dynamic_cast<NavAgentComponent*>(component);
+					|| dynamic_cast<CharacterMovementComponent*>(component) || dynamic_cast<NavAgentComponent*>(component) || dynamic_cast<BoxTriggerComponent*>(component);
 				for (auto* target : nodes) {
 					ImGui::PushID(target); ImGui::BeginDisabled(rootOnly && target->get_parent());
 					if (ImGui::Selectable(NodePath(*target).c_str(), target == selectedNode)) {
@@ -927,6 +929,34 @@ void Editor::DrawObjectInspector()
 					changed = ImGui::DragFloat("Range", &point->range, 0.1f, 0.01f, 1000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 					TrackComponentProperty(*light, before, "Light range", changed);
 				}
+			} else if (auto* timer = dynamic_cast<TimerComponent*>(component)) {
+				auto before = ComponentProperties(*timer);
+				float seconds = timer->getWaitTime();
+				bool changed = ImGui::DragFloat("Wait time (seconds)", &seconds, 0.05f,
+					0.001f, (std::numeric_limits<float>::max)(), "%.3f", ImGuiSliderFlags_AlwaysClamp);
+				if (changed) changed = timer->setWaitTime(seconds);
+				TrackComponentProperty(*timer, before, "Timer wait time", changed);
+				// Отдельный снимок каждого поля сохраняет привычные шаги Undo/Redo.
+				before = ComponentProperties(*timer);
+				bool repeat = timer->isRepeating();
+				changed = ImGui::Checkbox("Repeat", &repeat);
+				if (changed) timer->setRepeating(repeat);
+				TrackComponentProperty(*timer, before, "Timer repeat", changed);
+				before = ComponentProperties(*timer);
+				bool automatic = timer->isAutostart();
+				changed = ImGui::Checkbox("Autostart", &automatic);
+				if (changed) timer->setAutostart(automatic);
+				TrackComponentProperty(*timer, before, "Timer autostart", changed);
+			} else if (auto* trigger = dynamic_cast<BoxTriggerComponent*>(component)) {
+				auto before = ComponentProperties(*trigger);
+				DXVector3 size = trigger->getTriggerItem().size;
+				bool changed = ImGui::DragFloat3("Size (X, Y, Z)", &size.x, 0.05f,
+					0.001f, 10000.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+				if (changed) changed = trigger->setSize(size);
+				TrackComponentProperty(*trigger, before, "Box trigger size", changed);
+				before = ComponentProperties(*trigger);
+				changed = ImGui::Checkbox("Enabled", &trigger->getTriggerItem().enabled);
+				TrackComponentProperty(*trigger, before, "Box trigger enabled", changed);
 			} else if (auto* collider = dynamic_cast<BoxColliderComponent*>(component)) {
 				const auto before = ComponentProperties(*collider);
 				DXVector3 size = collider->getColliderItem().size;

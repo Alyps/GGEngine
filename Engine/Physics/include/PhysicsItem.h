@@ -2,6 +2,7 @@
 #include "GGMath.h"
 #include <cstdint>
 #include <string>
+#include "Delegates.h"
 
 struct TransformNode;
 class PhysicsServer;
@@ -127,4 +128,26 @@ private:
     DXVector3 desiredVelocity = DXVector3::Zero;
     // Отличаем перенос узла скриптом или редактором от результата шага.
     DXVector3 lastPosition = DXVector3::Zero;
+};
+
+class Component;
+class GameObject;
+
+// Компонент владеет областью и событиями; сервер заимствует запись до Shutdown.
+struct TriggerItem {
+    TransformNode* transformNode = nullptr;
+    Component* component = nullptr;
+    DXVector3 size = DXVector3::One;
+    bool enabled = true;
+    MulticastDelegate<GameObject*> bodyEntered;
+    MulticastDelegate<GameObject*> bodyExited;
+    TriggerItem() = default;
+    ~TriggerItem();
+    TriggerItem(const TriggerItem&) = delete;
+    TriggerItem& operator=(const TriggerItem&) = delete;
+private:
+    friend class PhysicsServer;
+    PhysicsServer* server = nullptr;
+    // Ссылки удаляются removeItem до освобождения записей физических тел.
+    std::vector<PhysicsItem*> overlaps;
 };

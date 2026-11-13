@@ -11,6 +11,7 @@ class PhysicsServer {
     void invalidateNode(const TransformNode* node);
     bool rebuildActor(PhysicsItem& item);
     bool stepCharacters(float dt);
+    bool updateTriggers();
 
 public:
     PhysicsServer() = default;
@@ -31,6 +32,8 @@ public:
     void removeCollider(ColliderItem& item);
     bool addCharacter(CharacterItem& item);
     void removeCharacter(CharacterItem& item);
+    bool addTrigger(TriggerItem& item);
+    void removeTrigger(TriggerItem& item);
     // Один вызов — один fixed-step; работа Jolt завершается до записи узлов.
     bool Update(double fixedInterval);
 };
