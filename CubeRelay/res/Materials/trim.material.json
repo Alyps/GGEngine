@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "shader": "builtin/simple",
+  "render_state": "opaque",
+  "sampler": "clamp_linear",
+  "diffuse": "res://Textures/trim.png",
+  "specular_strength": 0,
+  "shininess": 1
+}

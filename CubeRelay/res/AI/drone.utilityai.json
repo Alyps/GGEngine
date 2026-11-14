@@ -1,0 +1,26 @@
+{
+  "parameters": [
+    { "name": "Energy", "type": "float", "default": 100 },
+    { "name": "Distance", "type": "float", "default": 100 }
+  ],
+  "interval": 0.1,
+  "switch_threshold": 0.05,
+  "minimum_duration": 0.3,
+  "actions": [
+    {
+      "name": "Patrol",
+      "script": "res://AI/Patrol.action.lua",
+      "curves": ["res://AI/patrol.curve.json", null]
+    },
+    {
+      "name": "Chase",
+      "script": "res://AI/Chase.action.lua",
+      "curves": [null, "res://AI/near.curve.json"]
+    },
+    {
+      "name": "Recharge",
+      "script": "res://AI/Recharge.action.lua",
+      "curves": ["res://AI/low-energy.curve.json", null]
+    }
+  ]
+}
