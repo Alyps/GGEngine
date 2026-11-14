@@ -16,4 +16,4 @@ if not exist "%GAME%" (
 )
 "%GAME%" --project "%~dp0." --scene res://Scenes/Main.level.json --resources res --standard-resources "%~dp0..\Engine\StandartResources"
 exit /b %errorlevel%
- 
+    

@@ -10,17 +10,20 @@ return {
             and context.ai.current_action ~= "Recharge"
     end,
     action_entered = function(self, context)
+        self.agent = assert(context.object:get_component(ComponentType.NavAgent), "Drone needs NavAgent")
+        World.stop_navigation(self, self.agent)
         print("DRONE Chase")
     end,
     action_executing = function(self, context, dt)
         local arena = World.playing()
         if not arena then return "success" end
         local position = arena.transform.position
-        World.move_towards(context.object.transform, position.x, position.y, 2.35, dt)
+        World.navigate(self, self.agent, position, 2.35, dt)
         local energy = context.ai:get_float("Energy")
         context.ai:set_float("Energy", math.max(0, energy - dt * 16))
         return "running"
     end,
     action_exited = function(self, context, reason)
+        World.stop_navigation(self, self.agent)
     end
 }

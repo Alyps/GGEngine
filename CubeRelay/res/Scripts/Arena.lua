@@ -2,17 +2,16 @@ local World = require("res.Scripts.World")
 local Arena = {}
 
 local PLAYER_SPEED = 4.5
-local ARENA_X = 7.85
-local ARENA_Y = 3.95
-local PICKUP_RADIUS = 0.67
-local EXIT_RADIUS = 0.77
-local DRONE_RADIUS = 0.73
+local PICKUP_RADIUS = 0.335
+local EXIT_RADIUS = 0.385
+-- Contact must reach the two character spheres (0.30 + 0.32), including skin.
+local DRONE_RADIUS = 0.68
 local MAX_HEALTH = 3
 
 local function closeTo(first, second, radius)
     local dx = first.x - second.x
-    local dy = first.y - second.y
-    return dx * dx + dy * dy <= radius * radius
+    local dz = first.z - second.z
+    return dx * dx + dz * dz <= radius * radius
 end
 
 local function away(position)
@@ -32,11 +31,13 @@ local function manualDirection(self)
     if pressed(input, Keys.S, Keys.Down) then y = y - 1 end
     if pressed(input, Keys.D, Keys.Right) then x = x + 1 end
     if pressed(input, Keys.A, Keys.Left) then x = x - 1 end
-    return Vector3.new(x, y, 0)
+    return Vector3.new(x, 0, -y)
 end
 
 function Arena.on_init(self)
     self.timer = assert(self.object:get_component(ComponentType.Timer), "Player needs a round Timer")
+    self.character = assert(self.object:get_component(ComponentType.CharacterMovement), "Player needs CharacterMovement")
+    self.agent = assert(self.object:get_component(ComponentType.NavAgent), "Player needs NavAgent for autoplay")
     self.start = self.transform.position
     self.collectibles = {}
     for index = 0, 2 do
@@ -62,6 +63,8 @@ function Arena.on_ready(self)
 end
 
 function Arena.restart(self)
+    World.stop_navigation(self, self.agent)
+    self.character:move(Vector3.zero())
     self.transform.position = self.start
     self.cells, self.health = 0, MAX_HEALTH
     self.cooldown, self.routeIndex = 0, 1
@@ -86,10 +89,15 @@ function Arena.finish(self, state, reason)
 
     self.state, self.lossReason = state, reason
     self.timer:stop()
+    World.stop_navigation(self, self.agent)
+    self.character:move(Vector3.zero())
     local pulse = World.get("pulse")
     if pulse then pulse.timer:stop() end
     local drone = World.get("drone")
-    if drone then drone.ai.enabled = false end
+    if drone then
+        drone.ai.enabled = false
+        drone.agent:stop()
+    end
 
     if reason then print("LOSS " .. reason) end
     print(state == "won" and "GAME WIN" or "GAME LOST")
@@ -105,29 +113,21 @@ end
 
 function Arena.updatePlayer(self, dt)
     local position = self.transform.position
-    local step = PLAYER_SPEED * math.min(dt, 0.1)
-
     if self.auto then
+        -- Collect the next untaken cell; both collectibles and exit use world XZ.
+        while self.collectibles[self.routeIndex] and self.collectibles[self.routeIndex].taken do
+            self.routeIndex = self.routeIndex + 1
+            World.stop_navigation(self, self.agent)
+        end
         local cell = self.collectibles[self.routeIndex]
         local target = cell and cell.position or self.exitPosition
-        local offset = Vector3.new(target.x - position.x, target.y - position.y, 0)
-        local distance = offset:length()
-        if distance <= step then
-            position = Vector3.new(target.x, target.y, position.z)
-            if cell then self.routeIndex = self.routeIndex + 1 end
-        else
-            position = position + offset * (step / distance)
-        end
+        World.navigate(self, self.agent, target, PLAYER_SPEED, dt)
     else
+        -- CharacterMovement resolves floor and wall contacts; never teleport for walking.
         local direction = manualDirection(self)
-        if direction:length_squared() > 0 then
-            position = position + direction:normalized() * step
-        end
+        if direction:length_squared() > 0 then direction = direction:normalized() end
+        self.character:move(direction * PLAYER_SPEED)
     end
-
-    position.x = math.max(-ARENA_X, math.min(ARENA_X, position.x))
-    position.y = math.max(-ARENA_Y, math.min(ARENA_Y, position.y))
-    self.transform.position = position
     return position
 end
 
@@ -150,7 +150,7 @@ function Arena.on_update(self, dt)
     local pulse = World.get("pulse")
     if pulse and pulse.active then
         local center = pulse.transform.position
-        if math.abs(position.x - center.x) <= 2.5 and math.abs(position.y - center.y) <= 0.45 then
+        if math.abs(position.x - center.x) <= 1.25 and math.abs(position.z - center.z) <= 0.225 then
             self:damage("pulse")
         end
     end

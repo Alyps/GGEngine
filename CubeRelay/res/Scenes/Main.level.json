@@ -9,15 +9,15 @@
             "transform_tree": {
                 "name": "EditorCamera",
                 "position": [
-                    -8.884653091430664,
-                    -1.2602218389511109,
-                    10.507674217224121
+                    -2.4776499271392824,
+                    16.163864135742189,
+                    11.328401565551758
                 ],
                 "rotation": [
-                    0.014741212129592896,
-                    -0.18345321714878083,
-                    0.002751331776380539,
-                    0.9829140901565552
+                    -0.45936134457588198,
+                    -0.014575368724763394,
+                    -0.007538989651948214,
+                    0.8880979418754578
                 ],
                 "scale": [
                     1.0,
@@ -51,14 +51,14 @@
                 "name": "Camera",
                 "position": [
                     0.0,
-                    0.0,
-                    25.5
+                    25.5,
+                    -0.0
                 ],
                 "rotation": [
+                    -0.7071067690849304,
                     0.0,
                     0.0,
-                    0.0,
-                    1.0
+                    0.7071067690849304
                 ],
                 "scale": [
                     1.0,
@@ -87,14 +87,14 @@
                 "name": "FrontLight",
                 "position": [
                     0.0,
-                    0.0,
-                    9.0
+                    9.0,
+                    -0.0
                 ],
                 "rotation": [
+                    -0.7071067690849304,
                     0.0,
                     0.0,
-                    0.0,
-                    1.0
+                    0.7071067690849304
                 ],
                 "scale": [
                     1.0,
@@ -127,14 +127,14 @@
                 "name": "RimLight",
                 "position": [
                     0.0,
-                    0.0,
-                    8.0
+                    8.0,
+                    -0.0
                 ],
                 "rotation": [
-                    0.30309921503067019,
-                    -0.29809921979904177,
-                    0.10044386982917786,
-                    0.8995436429977417
+                    -0.42174988985061648,
+                    -0.13976344466209413,
+                    0.28181251883506777,
+                    0.8503969311714172
                 ],
                 "scale": [
                     1.0,
@@ -167,14 +167,14 @@
                 "name": "ArenaDeck",
                 "position": [
                     0.0,
-                    0.0,
-                    -0.699999988079071
+                    -0.17000000178813935,
+                    -0.0
                 ],
                 "rotation": [
+                    -0.7071067690849304,
                     0.0,
                     0.0,
-                    0.0,
-                    1.0
+                    0.7071067690849304
                 ],
                 "scale": [
                     17.25,
@@ -617,6 +617,25 @@
                         },
                         "material_path": "res://Materials/deck.material.json",
                         "use_preset_material": false
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            1.0,
+                            1.0,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": true,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
+                    },
+                    {
+                        "type": "StaticRigidBodyComponent",
+                        "enabled": true
                     }
                 ],
                 "children": []
@@ -630,8 +649,8 @@
                 "name": "NorthRail",
                 "position": [
                     0.0,
-                    4.480000019073486,
-                    -0.4699999988079071
+                    0.6000000238418579,
+                    -4.480000019073486
                 ],
                 "rotation": [
                     0.0,
@@ -641,8 +660,8 @@
                 ],
                 "scale": [
                     17.450000762939454,
-                    0.14000000059604646,
-                    0.14000000059604646
+                    1.2000000476837159,
+                    0.23999999463558198
                 ],
                 "inherit_position": true,
                 "inherit_rotation": true,
@@ -1080,6 +1099,25 @@
                         },
                         "material_path": "res://Materials/trim.material.json",
                         "use_preset_material": false
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            1.0,
+                            1.0,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": true,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
+                    },
+                    {
+                        "type": "StaticRigidBodyComponent",
+                        "enabled": true
                     }
                 ],
                 "children": []
@@ -1093,8 +1131,8 @@
                 "name": "SouthRail",
                 "position": [
                     0.0,
-                    -4.480000019073486,
-                    -0.4699999988079071
+                    0.6000000238418579,
+                    4.480000019073486
                 ],
                 "rotation": [
                     0.0,
@@ -1104,8 +1142,8 @@
                 ],
                 "scale": [
                     17.450000762939454,
-                    0.14000000059604646,
-                    0.14000000059604646
+                    1.2000000476837159,
+                    0.23999999463558198
                 ],
                 "inherit_position": true,
                 "inherit_rotation": true,
@@ -1543,6 +1581,25 @@
                         },
                         "material_path": "res://Materials/trim.material.json",
                         "use_preset_material": false
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            1.0,
+                            1.0,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": true,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
+                    },
+                    {
+                        "type": "StaticRigidBodyComponent",
+                        "enabled": true
                     }
                 ],
                 "children": []
@@ -1556,8 +1613,8 @@
                 "name": "WestRail",
                 "position": [
                     -8.670000076293946,
-                    0.0,
-                    -0.4699999988079071
+                    0.6000000238418579,
+                    -0.0
                 ],
                 "rotation": [
                     0.0,
@@ -1566,9 +1623,9 @@
                     1.0
                 ],
                 "scale": [
-                    0.14000000059604646,
-                    8.880000114440918,
-                    0.14000000059604646
+                    0.23999999463558198,
+                    1.2000000476837159,
+                    8.880000114440918
                 ],
                 "inherit_position": true,
                 "inherit_rotation": true,
@@ -2006,6 +2063,25 @@
                         },
                         "material_path": "res://Materials/trim.material.json",
                         "use_preset_material": false
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            1.0,
+                            1.0,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": true,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
+                    },
+                    {
+                        "type": "StaticRigidBodyComponent",
+                        "enabled": true
                     }
                 ],
                 "children": []
@@ -2019,8 +2095,8 @@
                 "name": "EastRail",
                 "position": [
                     8.670000076293946,
-                    0.0,
-                    -0.4699999988079071
+                    0.6000000238418579,
+                    -0.0
                 ],
                 "rotation": [
                     0.0,
@@ -2029,9 +2105,9 @@
                     1.0
                 ],
                 "scale": [
-                    0.14000000059604646,
-                    8.880000114440918,
-                    0.14000000059604646
+                    0.23999999463558198,
+                    1.2000000476837159,
+                    8.880000114440918
                 ],
                 "inherit_position": true,
                 "inherit_rotation": true,
@@ -2469,6 +2545,25 @@
                         },
                         "material_path": "res://Materials/trim.material.json",
                         "use_preset_material": false
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            1.0,
+                            1.0,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": true,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
+                    },
+                    {
+                        "type": "StaticRigidBodyComponent",
+                        "enabled": true
                     }
                 ],
                 "children": []
@@ -2489,14 +2584,14 @@
                 "name": "Player",
                 "position": [
                     -7.0,
-                    -3.1500000953674318,
-                    0.0
+                    0.3499999940395355,
+                    3.1500000953674318
                 ],
                 "rotation": [
+                    -0.7071067690849304,
                     0.0,
                     0.0,
-                    0.0,
-                    1.0
+                    0.7071067690849304
                 ],
                 "scale": [
                     1.0,
@@ -2510,6 +2605,24 @@
                     {
                         "type": "LuaScriptComponent",
                         "script_path": "res://Scripts/Arena.lua"
+                    },
+                    {
+                        "type": "CharacterMovementComponent",
+                        "radius": 0.30000001192092898,
+                        "gravity_scale": 1.0,
+                        "max_slope": 45.0,
+                        "step_height": 0.07999999821186066,
+                        "mass": 70.0,
+                        "max_strength": 100.0,
+                        "enabled": true
+                    },
+                    {
+                        "type": "NavAgentComponent",
+                        "speed": 4.5,
+                        "acceleration": 16.0,
+                        "angular_speed": 360.0,
+                        "stopping_distance": 0.10000000149011612,
+                        "update_rotation": false
                     }
                 ],
                 "children": [
@@ -2517,19 +2630,19 @@
                         "name": "Cell1",
                         "position": [
                             -6.0,
-                            2.799999952316284,
-                            0.0
+                            0.2199999988079071,
+                            -2.799999952316284
                         ],
                         "rotation": [
+                            -0.7071067690849304,
                             0.0,
                             0.0,
-                            0.0,
-                            1.0
+                            0.7071067690849304
                         ],
                         "scale": [
-                            1.0,
-                            1.0,
-                            1.0
+                            0.5,
+                            0.5,
+                            0.5
                         ],
                         "inherit_position": false,
                         "inherit_rotation": false,
@@ -3458,19 +3571,19 @@
                         "name": "Cell2",
                         "position": [
                             0.0,
-                            3.0,
-                            0.0
+                            0.2199999988079071,
+                            -3.0
                         ],
                         "rotation": [
+                            -0.7071067690849304,
                             0.0,
                             0.0,
-                            0.0,
-                            1.0
+                            0.7071067690849304
                         ],
                         "scale": [
-                            1.0,
-                            1.0,
-                            1.0
+                            0.5,
+                            0.5,
+                            0.5
                         ],
                         "inherit_position": false,
                         "inherit_rotation": false,
@@ -4399,19 +4512,19 @@
                         "name": "Cell3",
                         "position": [
                             6.0,
-                            2.799999952316284,
-                            0.0
+                            0.2199999988079071,
+                            -2.799999952316284
                         ],
                         "rotation": [
+                            -0.7071067690849304,
                             0.0,
                             0.0,
-                            0.0,
-                            1.0
+                            0.7071067690849304
                         ],
                         "scale": [
-                            1.0,
-                            1.0,
-                            1.0
+                            0.5,
+                            0.5,
+                            0.5
                         ],
                         "inherit_position": false,
                         "inherit_rotation": false,
@@ -5340,19 +5453,19 @@
                         "name": "Exit",
                         "position": [
                             7.0,
-                            -3.1500000953674318,
-                            0.0
+                            0.2199999988079071,
+                            3.1500000953674318
                         ],
                         "rotation": [
+                            -0.7071067690849304,
                             0.0,
                             0.0,
-                            0.0,
-                            1.0
+                            0.7071067690849304
                         ],
                         "scale": [
-                            1.0,
-                            1.0,
-                            1.0
+                            0.5,
+                            0.5,
+                            0.5
                         ],
                         "inherit_position": false,
                         "inherit_rotation": false,
@@ -6282,7 +6395,7 @@
                         "position": [
                             0.0,
                             0.0,
-                            0.05000000074505806
+                            0.02500000037252903
                         ],
                         "rotation": [
                             9.313224635931761e-10,
@@ -6291,9 +6404,9 @@
                             1.0
                         ],
                         "scale": [
-                            0.7400000095367432,
-                            0.7400000095367432,
-                            0.7400000095367432
+                            0.3700000047683716,
+                            0.3700000047683716,
+                            0.3700000047683716
                         ],
                         "inherit_position": true,
                         "inherit_rotation": true,
@@ -6746,19 +6859,19 @@
                 "name": "RechargeDock",
                 "position": [
                     0.0,
-                    -2.5999999046325685,
-                    -0.4000000059604645
+                    0.03999999910593033,
+                    2.5999999046325685
                 ],
                 "rotation": [
+                    -0.7071067690849304,
                     0.0,
                     0.0,
-                    0.0,
-                    1.0
+                    0.7071067690849304
                 ],
                 "scale": [
-                    1.2000000476837159,
-                    0.8500000238418579,
-                    0.11999999731779099
+                    0.6000000238418579,
+                    0.42500001192092898,
+                    0.05999999865889549
                 ],
                 "inherit_position": true,
                 "inherit_rotation": true,
@@ -7196,6 +7309,21 @@
                         },
                         "material_path": "res://Materials/dock.material.json",
                         "use_preset_material": false
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            1.0,
+                            1.0,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": false,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
                     }
                 ],
                 "children": []
@@ -7216,14 +7344,14 @@
                 "name": "Pulse",
                 "position": [
                     0.0,
-                    0.0,
-                    0.0
+                    0.25999999046325686,
+                    -0.0
                 ],
                 "rotation": [
+                    -0.7071067690849304,
                     0.0,
                     0.0,
-                    0.0,
-                    1.0
+                    0.7071067690849304
                 ],
                 "scale": [
                     3.0,
@@ -7237,6 +7365,21 @@
                     {
                         "type": "LuaScriptComponent",
                         "script_path": "res://Scripts/Pulse.lua"
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            2.450000047683716,
+                            0.5,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": false,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
                     }
                 ],
                 "children": [
@@ -7245,7 +7388,7 @@
                         "position": [
                             0.0,
                             0.0,
-                            -0.4300000071525574
+                            -0.2150000035762787
                         ],
                         "rotation": [
                             0.0,
@@ -7254,9 +7397,9 @@
                             1.0
                         ],
                         "scale": [
-                            5.0,
-                            0.8999999761581421,
-                            0.11999999731779099
+                            2.5,
+                            0.44999998807907107,
+                            0.05999999865889549
                         ],
                         "inherit_position": true,
                         "inherit_rotation": true,
@@ -7703,7 +7846,7 @@
                         "position": [
                             0.0,
                             0.0,
-                            -0.4300000071525574
+                            -0.2150000035762787
                         ],
                         "rotation": [
                             0.0,
@@ -7712,9 +7855,9 @@
                             1.0
                         ],
                         "scale": [
-                            5.0,
-                            0.4399999976158142,
-                            0.09000000357627869
+                            2.5,
+                            0.2199999988079071,
+                            0.04500000178813934
                         ],
                         "inherit_position": true,
                         "inherit_rotation": true,
@@ -8173,14 +8316,14 @@
                 "name": "Drone",
                 "position": [
                     0.0,
-                    -0.8999999761581421,
-                    0.0
+                    0.3700000047683716,
+                    0.8999999761581421
                 ],
                 "rotation": [
+                    -0.7071067690849304,
                     0.0,
                     0.0,
-                    0.0,
-                    1.0
+                    0.7071067690849304
                 ],
                 "scale": [
                     1.0,
@@ -8194,6 +8337,24 @@
                     {
                         "type": "LuaScriptComponent",
                         "script_path": "res://Scripts/Drone.lua"
+                    },
+                    {
+                        "type": "CharacterMovementComponent",
+                        "radius": 0.3199999928474426,
+                        "gravity_scale": 1.0,
+                        "max_slope": 45.0,
+                        "step_height": 0.07999999821186066,
+                        "mass": 70.0,
+                        "max_strength": 100.0,
+                        "enabled": true
+                    },
+                    {
+                        "type": "NavAgentComponent",
+                        "speed": 1.7999999523162842,
+                        "acceleration": 16.0,
+                        "angular_speed": 360.0,
+                        "stopping_distance": 0.10000000149011612,
+                        "update_rotation": false
                     }
                 ],
                 "children": [
@@ -8202,7 +8363,7 @@
                         "position": [
                             0.0,
                             0.0,
-                            0.07999999821186066
+                            0.03999999910593033
                         ],
                         "rotation": [
                             0.1505010724067688,
@@ -8211,9 +8372,9 @@
                             0.9692509174346924
                         ],
                         "scale": [
-                            0.800000011920929,
-                            0.800000011920929,
-                            0.800000011920929
+                            0.4000000059604645,
+                            0.4000000059604645,
+                            0.4000000059604645
                         ],
                         "inherit_position": true,
                         "inherit_rotation": true,
@@ -8666,19 +8827,19 @@
                 "name": "HUD",
                 "position": [
                     0.0,
-                    0.0,
+                    0.13302767276763917,
                     0.0
                 ],
                 "rotation": [
+                    0.7071068286895752,
                     0.0,
                     0.0,
-                    0.0,
-                    1.0
+                    -0.7071068286895752
                 ],
                 "scale": [
                     1.0,
-                    1.0,
-                    1.0
+                    1.000026822090149,
+                    1.000026822090149
                 ],
                 "inherit_position": true,
                 "inherit_rotation": true,
@@ -8687,6 +8848,21 @@
                     {
                         "type": "LuaScriptComponent",
                         "script_path": "res://Scripts/Hud.lua"
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            1.0,
+                            1.0,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": false,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
                     }
                 ],
                 "children": [
@@ -11067,6 +11243,1024 @@
                         "children": []
                     }
                 ]
+            }
+        },
+        {
+            "asset_type": "GameObject",
+            "version": 1,
+            "components": [],
+            "transform_tree": {
+                "name": "WestPartition",
+                "position": [
+                    -3.0,
+                    0.6000000238418579,
+                    -1.649999976158142
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "scale": [
+                    0.30000001192092898,
+                    1.2000000476837159,
+                    5.199999809265137
+                ],
+                "inherit_position": true,
+                "inherit_rotation": true,
+                "inherit_scale": true,
+                "components": [
+                    {
+                        "type": "MeshComponent",
+                        "geometry": {
+                            "source": "inline",
+                            "topology": "triangle_list",
+                            "vertices": [
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        1.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        1.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        1.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        1.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        -1.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        -1.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        -1.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        -1.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        -1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        -1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        -1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        -1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        -1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        -1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        -1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        -1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                }
+                            ],
+                            "indices": [
+                                0,
+                                2,
+                                1,
+                                0,
+                                3,
+                                2,
+                                4,
+                                6,
+                                5,
+                                4,
+                                7,
+                                6,
+                                8,
+                                10,
+                                9,
+                                8,
+                                11,
+                                10,
+                                12,
+                                14,
+                                13,
+                                12,
+                                15,
+                                14,
+                                16,
+                                18,
+                                17,
+                                16,
+                                19,
+                                18,
+                                20,
+                                22,
+                                21,
+                                20,
+                                23,
+                                22
+                            ]
+                        },
+                        "material_path": "res://Materials/trim.material.json",
+                        "use_preset_material": false
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            1.0,
+                            1.0,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": true,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
+                    },
+                    {
+                        "type": "StaticRigidBodyComponent",
+                        "enabled": true
+                    }
+                ],
+                "children": []
+            }
+        },
+        {
+            "asset_type": "GameObject",
+            "version": 1,
+            "components": [],
+            "transform_tree": {
+                "name": "EastPartition",
+                "position": [
+                    3.0,
+                    0.6000000238418579,
+                    1.649999976158142
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "scale": [
+                    0.30000001192092898,
+                    1.2000000476837159,
+                    5.199999809265137
+                ],
+                "inherit_position": true,
+                "inherit_rotation": true,
+                "inherit_scale": true,
+                "components": [
+                    {
+                        "type": "MeshComponent",
+                        "geometry": {
+                            "source": "inline",
+                            "topology": "triangle_list",
+                            "vertices": [
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        1.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        1.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        1.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        1.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        -1.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        -1.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        -1.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        0.0,
+                                        -1.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        -1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        -1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        -1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        -1.0,
+                                        0.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        -1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        1.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        -0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        -1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        0.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        -1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        0.0
+                                    ]
+                                },
+                                {
+                                    "position": [
+                                        0.5,
+                                        -0.5,
+                                        -0.5
+                                    ],
+                                    "normal": [
+                                        0.0,
+                                        -1.0,
+                                        0.0
+                                    ],
+                                    "uv": [
+                                        1.0,
+                                        1.0
+                                    ]
+                                }
+                            ],
+                            "indices": [
+                                0,
+                                2,
+                                1,
+                                0,
+                                3,
+                                2,
+                                4,
+                                6,
+                                5,
+                                4,
+                                7,
+                                6,
+                                8,
+                                10,
+                                9,
+                                8,
+                                11,
+                                10,
+                                12,
+                                14,
+                                13,
+                                12,
+                                15,
+                                14,
+                                16,
+                                18,
+                                17,
+                                16,
+                                19,
+                                18,
+                                20,
+                                22,
+                                21,
+                                20,
+                                23,
+                                22
+                            ]
+                        },
+                        "material_path": "res://Materials/trim.material.json",
+                        "use_preset_material": false
+                    },
+                    {
+                        "type": "BoxColliderComponent",
+                        "size": [
+                            1.0,
+                            1.0,
+                            1.0
+                        ],
+                        "enabled": true,
+                        "affects_navmesh": true,
+                        "material": {
+                            "static_friction": 0.6000000238418579,
+                            "dynamic_friction": 0.5,
+                            "restitution": 0.0
+                        }
+                    },
+                    {
+                        "type": "StaticRigidBodyComponent",
+                        "enabled": true
+                    }
+                ],
+                "children": []
+            }
+        },
+        {
+            "asset_type": "GameObject",
+            "version": 1,
+            "components": [],
+            "transform_tree": {
+                "name": "Navigation",
+                "position": [
+                    0.0,
+                    1.0,
+                    0.0
+                ],
+                "rotation": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+                "scale": [
+                    1.0,
+                    1.0,
+                    1.0
+                ],
+                "inherit_position": true,
+                "inherit_rotation": true,
+                "inherit_scale": true,
+                "components": [
+                    {
+                        "type": "NavMeshVolumeComponent",
+                        "size": [
+                            18.0,
+                            3.0,
+                            10.0
+                        ],
+                        "data": "res://Scenes/Main.navmesh",
+                        "settings": {
+                            "agent_radius": 0.36000001430511477,
+                            "agent_height": 0.699999988079071,
+                            "agent_max_climb": 0.07999999821186066,
+                            "agent_max_slope": 45.0,
+                            "cell_size": 0.05999999865889549,
+                            "cell_height": 0.019999999552965165,
+                            "region_min_size": 3.0,
+                            "region_merge_size": 10.0,
+                            "edge_max_length": 8.0,
+                            "edge_max_error": 1.2999999523162842,
+                            "detail_sample_distance": 6.0,
+                            "detail_sample_max_error": 1.0,
+                            "tile_size": 128
+                        }
+                    }
+                ],
+                "children": []
             }
         }
     ]
