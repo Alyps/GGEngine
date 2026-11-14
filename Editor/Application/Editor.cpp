@@ -47,9 +47,10 @@ bool Editor::LaunchGame(const std::string& executablePath, const std::string& pr
 		}
 		return true;
 	};
-	std::wstring executable, project, scene, standard;
+	std::wstring executable, project, scene, standard, resources;
 	if (!toWide(executablePath, executable) || !toWide(projectDirectory, project) ||
 		!toWide(startLevelPath, scene) ||
+		!toWide(game.getResourceManager().GetResourceDirectory(), resources) ||
 		!toWide(game.getResourceManager().GetStandardResourceDirectory(), standard)) return false;
 
 	// Разрешаем пути до смены cwd дочернего процесса; cwd редактора не меняется.
@@ -73,7 +74,8 @@ bool Editor::LaunchGame(const std::string& executablePath, const std::string& pr
 		return result + L'"';
 	};
 	std::wstring command = quote(executable) + L" --project " + quote(project) +
-		L" --scene " + quote(scene) + L" --standard-resources " + quote(standard);
+		L" --scene " + quote(scene) + L" --standard-resources " + quote(standard) +
+		L" --resources " + quote(resources);
 	if (command.size() >= 32767) { error = "Game command line is too long"; return false; }
 
 	STARTUPINFOW startup{};

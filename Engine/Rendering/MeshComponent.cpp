@@ -96,6 +96,8 @@ void MeshComponent::initRenderItem(Game& game)
     meshError.clear();
     materialError.clear();
     auto& resources = game.getResourceManager();
+    if (auto path = resources.ResourcePath(meshPath); !path.empty()) meshPath = std::move(path);
+    if (auto path = resources.ResourcePath(materialPath); !path.empty()) materialPath = std::move(path);
     ID3D11Device* device = game.getRenderServer().Device();
     if (fileMesh) {
         // Не сохраняем старую геометрию при ошибке нового пути.
@@ -139,11 +141,16 @@ void MeshComponent::initRenderItem(Game& game)
 
 rapidjson::Value MeshComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
 {
+    const auto meshReference = ResourcePath(meshPath);
+    if (!meshPath.empty() && meshReference.empty()) { error = "Resource path must be inside res://: " + meshPath; return {}; }
+    const auto materialReference = ResourcePath(materialPath);
+    if (!materialPath.empty() && materialReference.empty()) { error = "Resource path must be inside res://: " + materialPath; return {}; }
+
     auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
     rapidjson::Value geometry(rapidjson::kObjectType);
     if (fileMesh) {
         geometry.AddMember("source", "file", allocator);
-        geometry.AddMember("path", Serialization::String(meshPath, allocator), allocator);
+        geometry.AddMember("path", Serialization::String(meshReference, allocator), allocator);
     } else if (geometryPreset != GeometryPreset::None) {
         geometry.AddMember("source", "preset", allocator);
         geometry.AddMember("preset", Serialization::String(geometryPreset == GeometryPreset::Cube ? "Cube" : "Sphere", allocator), allocator);
@@ -179,7 +186,7 @@ rapidjson::Value MeshComponent::Serialize(rapidjson::Document::AllocatorType& al
     }
     json.AddMember("geometry", geometry, allocator);
     // Пустой путь материала сохраняет выбор между стандартным и встроенным материалом.
-    json.AddMember("material_path", Serialization::String(materialPath, allocator), allocator);
+    json.AddMember("material_path", Serialization::String(materialReference, allocator), allocator);
     json.AddMember("use_preset_material", usePresetMaterial, allocator);
     return Serialization::Finish(std::move(json), error);
 }

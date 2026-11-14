@@ -6,6 +6,16 @@
 #include "Components.h"
 #include "core.h"
 
+std::string Component::ResourcePath(const std::string& path) const
+{
+    const auto* level = getOwner() ? getOwner()->getOwner() : nullptr;
+    const auto* game = level ? level->getOwner() : nullptr;
+    if (game) return game->getResourceManager().ResourcePath(path);
+    // До привязки к игре нельзя угадывать корень старой ссылки (например, при предпросмотре объекта).
+    // После Init и при сохранении прикреплённого объекта менеджер переведёт её в res://.
+    return path.starts_with("res://") ? ResourceManager().ResourcePath(path) : path;
+}
+
 TimerComponent::~TimerComponent()
 {
     releaseLuaEvent();

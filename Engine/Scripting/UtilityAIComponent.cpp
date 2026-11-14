@@ -63,6 +63,7 @@ void UtilityAIComponent::Init(Game& game)
     // Пустой путь оставляет добавленный из инспектора компонент без назначенной таблицы.
     if (tablePath.empty()) return;
     auto& resources = game.getResourceManager();
+    if (auto path = resources.ResourcePath(tablePath); !path.empty()) tablePath = std::move(path);
     table = resources.load<UtilityAITable>(tablePath, &resources);
     if (!table) { lastError = resources.GetLastError(); std::cout << "[UtilityAI] " << lastError << std::endl; return; }
     for (const auto& parameter : table->GetParameters()) values.push_back(parameter.initialValue);
@@ -212,8 +213,11 @@ void UtilityAIComponent::Update(Game& game, double dt)
 
 rapidjson::Value UtilityAIComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
 {
+    const auto tableReference = ResourcePath(tablePath);
+    if (!tablePath.empty() && tableReference.empty()) { error = "Resource path must be inside res://: " + tablePath; return {}; }
+
     auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
-    json.AddMember("table_path", Serialization::String(tablePath, allocator), allocator);
+    json.AddMember("table_path", Serialization::String(tableReference, allocator), allocator);
     json.AddMember("enabled", enabled, allocator);
     return Serialization::Finish(std::move(json), error);
 }

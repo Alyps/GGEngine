@@ -86,7 +86,7 @@ double UtilityCurveData::Evaluate(double value) const
     return points.back().y;
 }
 
-bool UtilityTableData::Read(const std::string& path, std::string& error)
+bool UtilityTableData::Read(const std::string& path, std::string& error, const ResourceManager* resources)
 {
     rapidjson::Document json;
     if (!Deserialization::LoadFile(path, json, error)) return false;
@@ -123,6 +123,13 @@ bool UtilityTableData::Read(const std::string& path, std::string& error)
         }
         loaded.actions.push_back(std::move(action));
     }
+    const ResourceManager fallback;
+    const auto& manager = resources ? *resources : fallback;
+    for (auto& action : loaded.actions) {
+        if (auto reference = manager.ResourcePath(action.scriptPath); !reference.empty()) action.scriptPath = std::move(reference);
+        for (auto& curve : action.curvePaths)
+            if (auto reference = manager.ResourcePath(curve); !reference.empty()) curve = std::move(reference);
+    }
     *this = std::move(loaded);
     return true;
 }
@@ -149,6 +156,15 @@ bool UtilityTableData::Validate(std::string& error) const
     }
     names.clear();
     for (const auto& action : actions) {
+        const ResourceManager paths;
+        // Только переносимые ссылки попадают в новые JSON; старые нормализованы при Read.
+        if (!action.scriptPath.starts_with("res://") || paths.ResourcePath(action.scriptPath).empty()) {
+            error = "Action script must use a valid res:// path"; return false;
+        }
+        for (const auto& curve : action.curvePaths) if (!curve.empty()
+            && (!curve.starts_with("res://") || paths.ResourcePath(curve).empty())) {
+            error = "Curve must use a valid res:// path"; return false;
+        }
         if (action.name.empty() || !names.insert(action.name).second || !action.scriptPath.ends_with(".action.lua")) {
             error = "Actions require unique nonempty names and .action.lua paths"; return false;
         }
@@ -196,7 +212,7 @@ bool UtilityTableData::Save(const std::string& path, std::string& error) const
 bool UtilityAITable::load(const std::string& path)
 {
     UtilityTableData description;
-    if (!resources || !description.Read(path, loadError) || !description.Validate(loadError)) return false;
+    if (!resources || !description.Read(path, loadError, resources) || !description.Validate(loadError)) return false;
     // В runtime ячейки содержат заимствованные ссылки на кешированные кривые.
     std::vector<UtilityAction> loaded;
     for (auto& row : description.actions) {

@@ -81,6 +81,7 @@ bool NavMeshVolumeComponent::setSettings(const NavBuildSettings& settings, std::
 
 void NavMeshVolumeComponent::Init(Game& game)
 {
+    if (auto path = game.getResourceManager().ResourcePath(volumeItem.dataPath); !path.empty()) volumeItem.dataPath = std::move(path);
     // Объём может стоять на любой ветке; без выбора используется корень владельца.
     TransformNode* root = getOwner() ? &getOwner()->getTransform() : nullptr;
     if (!transformNode) bind_to_node(root);
@@ -127,10 +128,13 @@ void NavMeshVolumeComponent::Update(Game& game, double deltaTime)
 
 rapidjson::Value NavMeshVolumeComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
 {
+    const auto dataReference = ResourcePath(volumeItem.dataPath);
+    if (!volumeItem.dataPath.empty() && dataReference.empty()) { error = "Resource path must be inside res://: " + volumeItem.dataPath; return {}; }
+
     auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
     const auto& item = volumeItem;
     json.AddMember("size", Serialization::Array({ item.size.x, item.size.y, item.size.z }, allocator), allocator);
-    json.AddMember("data", Serialization::String(item.dataPath, allocator), allocator);
+    json.AddMember("data", Serialization::String(dataReference, allocator), allocator);
     // Параметры генерации сохраняются вместе с объёмом; сам навмеш лежит в файле data.
     rapidjson::Value settings(rapidjson::kObjectType);
     for (const auto& field : SettingFields)

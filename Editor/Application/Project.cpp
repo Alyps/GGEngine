@@ -50,12 +50,20 @@ bool Project::Open(const std::string& file, Project& result, std::string& error)
     if (!json["startup_scene"].IsNull()) {
         if (!json["startup_scene"].IsString()) return Fail(error, "Invalid startup scene path.");
         candidate.startupScene.assign(json["startup_scene"].GetString(), json["startup_scene"].GetStringLength());
-        if (!RelativeDirectory(candidate.startupScene)) return Fail(error, "Startup scene must be a relative project path without parent traversal.");
+        if (!candidate.startupScene.starts_with("res://") && !RelativeDirectory(candidate.startupScene)) return Fail(error, "Startup scene must be a relative project path without parent traversal.");
     }
     candidate.name.assign(json["name"].GetString(), json["name"].GetStringLength());
     candidate.resourceDirectory.assign(json["resource_directory"].GetString(), json["resource_directory"].GetStringLength());
     if (!ValidText(candidate.name) || !RelativeDirectory(candidate.resourceDirectory)) return Fail(error, "Invalid project name or relative resource directory.");
     candidate.filePath = Utf8Path(path);
+    // В манифесте — URI, внутри старого файлового кода редактора — путь от проекта.
+    ResourceManager resources(candidate.Root());
+    resources.SetResourceDirectory(candidate.resourceDirectory);
+    if (!candidate.startupScene.empty()) {
+        const auto reference = resources.ResourcePath(candidate.startupScene);
+        if (reference.empty()) return Fail(error, "Startup scene must be inside res://.");
+        candidate.startupScene = Utf8Path(DiskPath(resources.ResolvePath(reference)).lexically_relative(DiskPath(candidate.Root())));
+    }
     if (!fs::is_directory(DiskPath(candidate.ResourceRoot()), ec) || ec) return Fail(error, "Project resource directory is missing or inaccessible.");
     result = std::move(candidate);
     return true;
@@ -66,6 +74,10 @@ bool Project::Save(std::string& error) const
     error.clear();
     if (!ValidText(filePath) || !ValidText(name) || !RelativeDirectory(resourceDirectory)
         || (!startupScene.empty() && !RelativeDirectory(startupScene))) return Fail(error, "Invalid project description.");
+    ResourceManager resources(Root());
+    resources.SetResourceDirectory(resourceDirectory);
+    const auto sceneReference = resources.ResourcePath(startupScene);
+    if (!startupScene.empty() && sceneReference.empty()) return Fail(error, "Startup scene must be inside res://.");
     rapidjson::StringBuffer bytes;
     rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(bytes);
     writer.StartObject();
@@ -74,7 +86,7 @@ bool Project::Save(std::string& error) const
     writer.Key("resource_directory"); writer.String(resourceDirectory.data(), static_cast<rapidjson::SizeType>(resourceDirectory.size()));
     writer.Key("startup_scene");
     if (startupScene.empty()) writer.Null();
-    else writer.String(startupScene.data(), static_cast<rapidjson::SizeType>(startupScene.size()));
+    else writer.String(sceneReference.data(), static_cast<rapidjson::SizeType>(sceneReference.size()));
     writer.EndObject();
     return WriteJson(DiskPath(filePath), bytes, true, error);
 }

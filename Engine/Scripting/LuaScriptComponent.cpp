@@ -274,8 +274,10 @@ void TimerComponent::PushTimeout(lua_State* state)
 struct LuaScriptComponent::Impl {
     sol::table instance;
     sol::protected_function onInit;
+    sol::protected_function onReady;
     sol::protected_function onUpdate;
     bool ready = false;
+    bool readyPending = false;
 
     ~Impl()
     {
@@ -312,6 +314,7 @@ void LuaScriptComponent::PushInstance(lua_State* state) const
 
 void LuaScriptComponent::Init(Game& game)
 {
+    if (auto path = game.getResourceManager().ResourcePath(scriptPath); !path.empty()) scriptPath = std::move(path);
     // Повторная инициализация начинает с чистого экземпляра.
     delete impl;
     impl = nullptr;
@@ -377,6 +380,9 @@ void LuaScriptComponent::Init(Game& game)
     sol::object init = module["on_init"];
     if (init.get_type() == sol::type::function)
         impl->onInit = init.as<sol::protected_function>();
+    sol::object ready = module["on_ready"];
+    if (ready.get_type() == sol::type::function)
+        impl->onReady = ready.as<sol::protected_function>();
     sol::object update = module["on_update"];
     if (update.get_type() == sol::type::function)
         impl->onUpdate = update.as<sol::protected_function>();
@@ -391,7 +397,29 @@ void LuaScriptComponent::Init(Game& game)
     }
     // Другие компоненты получают экземпляр только после успешного on_init.
     impl->ready = !failed;
+    impl->readyPending = !failed && impl->onReady.valid();
     if (failed) SetDelegateOwner(impl->instance, false);
+}
+
+bool LuaScriptComponent::IsReadyPending() const
+{
+    return impl && !failed && impl->readyPending;
+}
+
+void LuaScriptComponent::OnReady(Game& game)
+{
+    if (game.isEditorMode() || !IsReadyPending()) return;
+    if (isPendingDestroy() || !getOwner() || getOwner()->isPendingDestroy()) return;
+    // Снимаем ожидание до вызова: on_ready выполняется один раз на экземпляр.
+    impl->readyPending = false;
+    sol::protected_function_result result = impl->onReady(impl->instance);
+    if (!result.valid()) {
+        // Ошибка отключает этот скрипт и его подписки, как ошибка on_update.
+        sol::error error = result;
+        std::cout << "[Lua] " << scriptPath << ": " << error.what() << std::endl;
+        failed = true;
+        SetDelegateOwner(impl->instance, false);
+    }
 }
 
 void LuaScriptComponent::Update(Game& game, double deltaTime)
@@ -411,9 +439,12 @@ void LuaScriptComponent::Update(Game& game, double deltaTime)
 
 rapidjson::Value LuaScriptComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
 {
+    const auto scriptReference = ResourcePath(scriptPath);
+    if (!scriptPath.empty() && scriptReference.empty()) { error = "Resource path must be inside res://: " + scriptPath; return {}; }
+
     auto json = Serialization::ComponentObject(GetSerializationType(), allocator);
     // Таблица self и состояние выполнения остаются только в runtime.
-    json.AddMember("script_path", Serialization::String(scriptPath, allocator), allocator);
+    json.AddMember("script_path", Serialization::String(scriptReference, allocator), allocator);
     return Serialization::Finish(std::move(json), error);
 }
 

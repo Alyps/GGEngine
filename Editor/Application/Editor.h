@@ -160,10 +160,11 @@ private:
 		std::vector<Data> history;
 		size_t historyPosition = 0;
 		ImGuiID editingItem = 0;
-		void Open(std::string path) {
+		void Open(std::string path, const ResourceManager* resources = nullptr) {
 			*this = {};
 			file = std::move(path);
-			ready = saved.Read(file, error);
+			if constexpr (std::is_same_v<Data, UtilityTableData>) ready = saved.Read(file, error, resources);
+			else ready = saved.Read(file, error);
 			draft = saved;
 			if (ready) history.push_back(draft);
 		}

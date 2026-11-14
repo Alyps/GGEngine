@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include "EditorFileUtils.h"
 
 // Editor владеет панелью; записи описывают файлы и не загружают ресурсы.
 class ContentBrowser {
@@ -18,7 +19,7 @@ public:
 private:
     // Запросы текущего кадра применяются после обхода списка, чтобы не инвалидировать entries.
     struct DrawRequests {
-        bool refresh = false, create = false, remove = false;
+        bool refresh = false, create = false, remove = false, importModel = false;
         std::string directory;
     };
     void DrawToolbar(DrawRequests& requests);
@@ -46,6 +47,12 @@ private:
     bool WriteEntry(const std::string& name);
     void DrawCreateDialog();
     void DrawDeleteDialog();
+    void DrawImportDialog();
+    // Задание владеет процессом Blender и очищает временный результат при смене проекта.
+    EditorFiles::ModelImport modelImport;
+    char importSource[4096]{};
+    std::string importFolder;
+    std::string importStatus;
 
     std::string root;
     std::string projectRoot;

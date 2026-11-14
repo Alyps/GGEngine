@@ -252,6 +252,7 @@ void Editor::ApplyProjectAction()
 			if (!complete) return;
 			// Сохранение текущей работы сохраняет объекты, выбор и историю Undo.
 			game.getResourceManager().SetProjectDirectory(projectCreationTarget.Root());
+			game.getResourceManager().SetResourceDirectory(projectCreationTarget.resourceDirectory);
 			project = std::move(projectCreationTarget);
 			temporaryProject = false;
 			CloseAssetEditor();
@@ -291,7 +292,7 @@ void Editor::ApplyProjectAction()
 	auto previousHistory = std::move(documentHistory);
 	ResetSceneReferences();
 	sceneActionError.clear();
-	if (!game.replaceLevel(level, pendingProject.Root())) {
+	if (!game.replaceLevel(level, pendingProject.Root(), pendingProject.resourceDirectory)) {
 		delete level;
 		documentHistory = std::move(previousHistory); RestoreDocumentIdentities(documentHistory);
 		projectError = "Cannot initialize project systems. The previous project remains open.";
@@ -339,7 +340,7 @@ bool Editor::ReplaceEditorLevel(Level* level, EditorCamera* camera, std::string&
 	CaptureDocumentIdentities(documentHistory);
 	auto previousHistory = std::move(documentHistory);
 	ResetSceneReferences();
-	if (!game.replaceLevel(level, project.Root())) {
+	if (!game.replaceLevel(level, project.Root(), project.resourceDirectory)) {
 		documentHistory = std::move(previousHistory); RestoreDocumentIdentities(documentHistory);
 		error = "Cannot initialize document preview."; return false;
 	}

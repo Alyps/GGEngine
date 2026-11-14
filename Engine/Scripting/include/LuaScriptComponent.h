@@ -5,7 +5,7 @@
 class GameObject;
 struct lua_State;
 
-// Запускает Lua-скрипт: файл возвращает таблицу с on_init(self) и on_update(self, dt).
+// Запускает Lua-скрипт с on_init(self), on_ready(self) и on_update(self, dt).
 // У каждого компонента своя таблица self; общая таблица модуля доступна через __index.
 // В self доступны object (GameObject) и transform (TransformNode объекта).
 class LuaScriptComponent : public TransformableComponent {
@@ -34,5 +34,8 @@ public:
     LuaScriptComponent(const LuaScriptComponent&) = delete;
     LuaScriptComponent& operator=(const LuaScriptComponent&) = delete;
     void Init(Game& game) override;
+    // Level собирает готовые скрипты после Init всего текущего пакета компонентов.
+    bool IsReadyPending() const;
+    void OnReady(Game& game);
     void Update(Game& game, double deltaTime) override;
 };

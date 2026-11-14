@@ -7,6 +7,7 @@
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <string_view>
 #include <windows.h>
@@ -43,6 +44,7 @@ namespace {
         if (extension == ".lua") return "[Lua]";
         if (extension == ".png" || extension == ".jpg" || extension == ".jpeg"
             || extension == ".bmp" || extension == ".tga" || extension == ".dds" || extension == ".hdr") return "[Image]";
+        if (extension == ".blend") return "[Blender source]";
         if (extension == ".fbx" || extension == ".obj" || extension == ".gltf" || extension == ".glb") return "[Model]";
         if (extension == ".json") return "[JSON]";
         return "[File]";
@@ -56,7 +58,7 @@ namespace {
         if (type == "[Material]") return 4;
         if (type == "[Image]") return 5;
         if (type == "[Lua]") return 6;
-        return mesh ? 3 : 7;
+        return mesh || type == "[Blender source]" ? 3 : 7;
     }
 
     std::wstring WideText(const std::string& text)
@@ -120,7 +122,7 @@ ContentBrowser::ContentBrowser(const std::string& rootPath, const std::string& p
 
 std::string ContentBrowser::ResourcePath(const std::string& path) const
 {
-    return projectRoot.empty() ? path : Utf8Path(DiskPath(path).lexically_relative(DiskPath(projectRoot)));
+    return "res://" + Utf8Path(DiskPath(path).lexically_relative(DiskPath(root)));
 }
 
 bool ContentBrowser::Navigate(const std::string& path, bool remember)
@@ -404,6 +406,8 @@ void ContentBrowser::DrawDeleteDialog()
 
 void ContentBrowser::DrawCreateMenu(DrawRequests& requests)
 {
+    if (ImGui::MenuItem("Import model...", nullptr, false, !modelImport.Busy())) requests.importModel = true;
+    ImGui::Separator();
     if (ImGui::MenuItem("Folder")) { createType = CreateType::Folder; requests.create = true; }
     ImGui::Separator();
     if (ImGui::MenuItem("Scene")) { createType = CreateType::Scene; requests.create = true; }
@@ -550,13 +554,17 @@ size_t ContentBrowser::DrawFileList(float footerHeight, DrawRequests& requests)
                     const bool utilityAsset = UtilityAssetLabel(LowerAscii(entry.name)) != nullptr;
                     const bool canOpen = !entry.link && (entry.directory || category == 1 || category == 2 || category == 4 || category == 5 || utilityAsset);
                     if (ImGui::MenuItem("Open", "Enter", false, canOpen)) Activate(entry, requests.directory);
+                    if (!entry.directory && !entry.link && LowerAscii(Utf8Path(DiskPath(entry.name).extension())) == ".blend"
+                        && ImGui::MenuItem("Import as GLB...", nullptr, false, !modelImport.Busy())) {
+                        selected = path; requests.importModel = true;
+                    }
                     if (!entry.directory && !entry.link && (category == 4 || category == 5)) {
                         if (ImGui::MenuItem(category == 4 ? "Edit material" : "Edit texture")) Activate(entry, requests.directory);
                     }
                     if (!entry.directory && !entry.link && utilityAsset && ImGui::MenuItem("Edit Utility AI asset"))
                         Activate(entry, requests.directory);
                     if (ImGui::MenuItem("Open containing folder")) OpenFolder(current);
-                    if (ImGui::MenuItem("Copy project-relative path")) ImGui::SetClipboardText(ResourcePath(path).c_str());
+                    if (ImGui::MenuItem("Copy resource path")) ImGui::SetClipboardText(ResourcePath(path).c_str());
                     if (ImGui::MenuItem("Copy absolute path")) ImGui::SetClipboardText(path.c_str());
                     if (ImGui::BeginMenu("New", available)) { DrawCreateMenu(requests); ImGui::EndMenu(); }
                     if (ImGui::MenuItem("Delete...", "Del", false, !entry.link)) { selected = path; requests.remove = true; }
@@ -603,13 +611,26 @@ void ContentBrowser::ApplyFileActions(DrawRequests& requests)
     }
     if (requests.create) { entryName[0] = '\0'; actionError.clear(); ImGui::OpenPopup("Create resource"); }
     if (requests.remove) { pendingDelete = selected; actionError.clear(); ImGui::OpenPopup("Delete entry"); }
-    DrawCreateDialog(); DrawDeleteDialog();
+    if (requests.importModel) {
+        importSource[0] = '\0'; importFolder = current; importStatus.clear();
+        // Для выбранного Blender-исходника сразу подставляем путь в диалог.
+        if (LowerAscii(Utf8Path(DiskPath(selected).extension())) == ".blend")
+            snprintf(importSource, sizeof(importSource), "%s", selected.c_str());
+        ImGui::OpenPopup("Import model");
+    }
+    DrawCreateDialog(); DrawDeleteDialog(); DrawImportDialog();
     if (!requests.directory.empty()) Navigate(requests.directory);
     else if (requests.refresh) Refresh();
 }
 
 void ContentBrowser::Draw(bool& open)
 {
+    // Опрос продолжается при скрытой панели; запуск Blender не блокирует кадры редактора.
+    std::string imported, importError;
+    if (modelImport.Poll(imported, importError)) {
+        importStatus = imported.empty() ? importError : "Imported: " + imported;
+        if (!imported.empty()) { Refresh(); selected = imported; }
+    }
     focused = false;
     if (!open) { wasOpen = false; return; }
     if (root.empty()) {
@@ -638,4 +659,49 @@ void ContentBrowser::Draw(bool& open)
         }
     }
     ImGui::End();
+}
+
+void ContentBrowser::DrawImportDialog()
+{
+    ImGui::SetNextWindowSize(ImVec2(620, 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Import model", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    // Путь Blender сохраняется между импортами и переключениями проекта в этой сессии.
+    static char blender[4096] = "blender.exe";
+    ImGui::TextWrapped("Import static geometry (.blend / .glb) into: %s", importFolder.c_str());
+    ImGui::TextWrapped("Meshes are merged. Materials, textures, animation and object hierarchy are not imported.");
+    ImGui::BeginDisabled(modelImport.Busy());
+    ImGui::SetNextItemWidth(480);
+    ImGui::InputText("Source", importSource, sizeof(importSource));
+    if (ImGui::Button("Choose model...")) {
+        std::string path;
+        if (EditorFiles::PickModelImportPath(GetActiveWindow(), false, path, importStatus)) {
+            if (path.size() >= sizeof(importSource)) importStatus = "The selected path is too long.";
+            else snprintf(importSource, sizeof(importSource), "%s", path.c_str());
+        }
+    }
+    const bool blend = LowerAscii(Utf8Path(DiskPath(importSource).extension())) == ".blend";
+    if (blend) {
+        ImGui::SetNextItemWidth(480);
+        ImGui::InputText("Blender", blender, sizeof(blender));
+        if (ImGui::Button("Choose blender.exe...")) {
+            std::string path;
+            if (EditorFiles::PickModelImportPath(GetActiveWindow(), true, path, importStatus)) {
+                if (path.size() >= sizeof(blender)) importStatus = "The selected path is too long.";
+                else snprintf(blender, sizeof(blender), "%s", path.c_str());
+            }
+        }
+        ImGui::TextWrapped("Blender is required only for import. The game loads the resulting GLB.");
+    }
+    if (ImGui::Button("Import")) {
+        // Папка фиксируется при открытии диалога и проверяется ещё раз перед запуском.
+        if (current != importFolder || !CheckDirectory()) importStatus = "Destination folder is unavailable. Reopen the import dialog.";
+        else if (modelImport.Start(importSource, importFolder, blender, importStatus)) importStatus = "Importing model...";
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (modelImport.Busy()) {
+        if (ImGui::Button("Cancel import")) modelImport.Cancel();
+    } else if (ImGui::Button("Close")) ImGui::CloseCurrentPopup();
+    if (!importStatus.empty()) ImGui::TextWrapped("%s", importStatus.c_str());
+    ImGui::EndPopup();
 }

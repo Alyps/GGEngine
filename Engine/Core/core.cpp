@@ -1,4 +1,5 @@
 #include "core.h"
+#include "LuaScriptComponent.h"
 
 Game::Game(std::wstring windowTitle, long clientWidth, long clientHeight)
 {
@@ -52,12 +53,13 @@ void Game::Init()
 	if (currentLevel) currentLevel->applyPendingChanges();
 }
 
-bool Game::replaceLevel(Level* level, const std::string& projectDirectory)
+bool Game::replaceLevel(Level* level, const std::string& projectDirectory, const std::string& resourceDirectory)
 {
 	if (!level || level->owner) return false;
 	// Готовим новые системы до удаления сцены: отказ оставляет прежний уровень живым.
 	auto* nextResources = new (std::nothrow) ResourceManager(projectDirectory);
 	if (!nextResources) return false;
+	nextResources->SetResourceDirectory(resourceDirectory);
 	nextResources->SetStandardResourceDirectory(resourceManager->GetStandardResourceDirectory());
 	auto* nextScripts = new (std::nothrow) ScriptServer(nextResources);
 	if (!nextScripts || !nextScripts->Init()) {
@@ -220,6 +222,18 @@ void Level::applyPendingChanges()
             object->applyPendingChanges();
         }
     }
+    // Весь пакет прошёл Init; список заимствует скрипты у живых компонентов уровня.
+    std::vector<LuaScriptComponent*> readyScripts;
+    for (GameObject* object : objects) {
+        if (object->isPendingDestroy()) continue;
+        for (Component* component : object->getComponents()) {
+            if (component->isPendingDestroy()) continue;
+            auto* script = dynamic_cast<LuaScriptComponent*>(component);
+            if (script && script->IsReadyPending()) readyScripts.push_back(script);
+        }
+    }
+    // Удаление отложено; OnReady повторно проверяет отметки, поставленные обработчиками.
+    for (LuaScriptComponent* script : readyScripts) script->OnReady(*owner);
 }
 
 void Level::Update(double deltaTime)
@@ -289,7 +303,7 @@ bool Game::LoadLevelFromFile(const std::string& path, std::string& error)
     error.clear();
     if (initialized) { error = "Start level can only be loaded before Game::Init"; return false; }
     rapidjson::Document json;
-    if (!Deserialization::LoadFile(path, json, error)) return false;
+    if (!Deserialization::LoadFile(resourceManager->ResolvePath(path), json, error)) return false;
     Level* level = Level::Deserialize(json, componentFactories, error);
     if (!level) { error = path + ": " + error; return false; }
     // Старый стартовый уровень заменяется только после полного восстановления нового.
@@ -306,7 +320,7 @@ GameObject* Level::LoadObjectFromFile(const std::string& path, std::string& erro
     error.clear();
     if (!owner || shuttingDown) { error = "Level must belong to a Game and not be shutting down"; return nullptr; }
     rapidjson::Document json;
-    if (!Deserialization::LoadFile(path, json, error)) return nullptr;
+    if (!Deserialization::LoadFile(owner->getResourceManager().ResolvePath(path), json, error)) return nullptr;
     GameObject* object = GameObject::Deserialize(json, owner->getComponentFactoryMap(), error);
     if (!object) { error = path + ": " + error; return nullptr; }
     // Импорт создаёт независимую копию; дальнейшее сохранение уровня раскрывает её целиком.

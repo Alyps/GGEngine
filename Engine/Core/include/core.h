@@ -103,7 +103,7 @@ public:
 	// При успехе принимает владение уровнем; при отказе владелец не меняется.
 	bool setStartLevel(Level* level);
 	// Вызывать между кадрами. При успехе Game принимает уровень и сбрасывает системы сцены.
-	bool replaceLevel(Level* level, const std::string& projectDirectory);
+	bool replaceLevel(Level* level, const std::string& projectDirectory, const std::string& resourceDirectory = "res");
 	// Загрузка стартового уровня разрешена только до Init.
 	bool LoadLevelFromFile(const std::string& path, std::string& error);
 	ComponentFactoryMap& getComponentFactoryMap() { return componentFactories; }

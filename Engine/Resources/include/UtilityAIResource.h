@@ -34,7 +34,7 @@ struct UtilityParameter {
     bool operator==(const UtilityParameter&) const = default;
 };
 
-// Черновик хранит пути от проекта, даже если файлы ещё недоступны.
+// Черновик хранит ссылки res://, даже если файлы ещё недоступны.
 struct UtilityTableData {
     struct Action {
         std::string name, scriptPath;
@@ -45,7 +45,7 @@ struct UtilityTableData {
     std::vector<Action> actions;
     double interval = 0.2, switchThreshold = 0.05, minimumDuration = 0;
     bool operator==(const UtilityTableData&) const = default;
-    bool Read(const std::string& path, std::string& error);
+    bool Read(const std::string& path, std::string& error, const ResourceManager* resources = nullptr);
     bool Validate(std::string& error) const;
     bool Save(const std::string& path, std::string& error) const;
 };

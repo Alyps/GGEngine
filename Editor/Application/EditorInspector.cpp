@@ -30,16 +30,29 @@ namespace {
 		return name;
 	}
 
-	void UtilityInputText(const char* label, const char* hint, std::string& value, ImGuiInputTextFlags flags = 0)
+	bool UtilityInputText(const char* label, const char* hint, std::string& value, ImGuiInputTextFlags flags = 0)
 	{
 		std::vector<char> buffer(value.size() + 256, '\0');
 		std::copy(value.begin(), value.end(), buffer.begin());
-		if (ImGui::InputTextWithHint(label, hint, buffer.data(), buffer.size(), flags)) value = buffer.data();
+		const bool changed = ImGui::InputTextWithHint(label, hint, buffer.data(), buffer.size(), flags);
+		if (changed) value = buffer.data();
+		return changed;
 	}
 
-	void UtilityPathField(const char* label, const char* suffix, std::string& path, ImGuiInputTextFlags flags = 0)
+	std::string ResourceInputPath(const ResourceManager& resources, const std::string& path)
 	{
-		UtilityInputText(label, suffix, path, flags);
+		if (path.empty()) return {};
+		if (auto reference = resources.ResourcePath(path); !reference.empty()) return reference;
+		// Короткий ручной ввод считается от корня браузера, без обязательного префикса.
+		return resources.ResourcePath("res://" + path);
+	}
+
+	void UtilityPathField(const ResourceManager& resources, const char* label, const char* suffix, std::string& path, ImGuiInputTextFlags flags = 0)
+	{
+		const bool changed = UtilityInputText(label, suffix, path, flags);
+		if (ImGui::IsItemDeactivatedAfterEdit() || ((flags & ImGuiInputTextFlags_EnterReturnsTrue) && changed)) {
+			if (auto reference = ResourceInputPath(resources, path); !reference.empty()) path = std::move(reference);
+		}
 		if (!ImGui::BeginDragDropTarget()) return;
 		const std::string dropped(DroppedResourcePath());
 		// Скрипты должны иметь точный суффикс runtime, кривые распознаются по имени в браузере.
@@ -276,7 +289,7 @@ void Editor::ApplySceneActions()
 	sceneActionError.clear();
 	if (!inserted.path.empty()) {
 		rapidjson::Document json;
-		const auto file = EditorFiles::Utf8Path(EditorFiles::DiskPath(project.Root()) / EditorFiles::DiskPath(inserted.path));
+		const auto file = game.getResourceManager().ResolvePath(inserted.path);
 		if (!Deserialization::LoadFile(file, json, sceneActionError)) return;
 		GameObject* object = GameObject::Deserialize(json, game.getComponentFactoryMap(), sceneActionError);
 		if (!object) return;
@@ -903,7 +916,7 @@ void Editor::ContinueAssetAction()
 	else if (action == AssetAction::CloseTexture) CloseTexturePreview();
 	else if (action == AssetAction::CloseMaterial) CloseMaterialEditor();
 	else if (action == AssetAction::OpenUtilityTable) {
-		utilityTable.Open(file);
+		utilityTable.Open(file, &game.getResourceManager());
 		utilityPreviewInputs.clear();
 		ClearUtilityAssetChecks();
 		utilityParameterPage = 0;
@@ -1106,14 +1119,12 @@ void Editor::DrawMaterialInspector()
 
 	ImGui::SeparatorText("Texture maps");
 	const auto& resources = game.getResourceManager();
-	const auto resourceRoot = EditorFiles::DiskPath(resources.ResolvePath(resources.GetResourceDirectory()));
-	const auto projectRoot = EditorFiles::DiskPath(project.Root());
-	ImGui::TextDisabled("Paths are relative to %s.", resources.GetResourceDirectory().c_str());
+	ImGui::TextDisabled("res:// is the root folder of Content Browser.");
 	const auto drawMap = [&](const char* label, std::string& path) {
 		ImGui::PushID(label);
 		ImGui::TextUnformatted(label);
-		const auto clearWidth = ImGui::CalcTextSize("Clear").x + ImGui::GetStyle().FramePadding.x * 2;
-		ImGui::SetNextItemWidth((std::max)(1.0f, ImGui::GetContentRegionAvail().x - clearWidth - ImGui::GetStyle().ItemSpacing.x));
+		const auto buttonWidth = ImGui::CalcTextSize("EditClear").x + ImGui::GetStyle().FramePadding.x * 4;
+		ImGui::SetNextItemWidth((std::max)(1.0f, ImGui::GetContentRegionAvail().x - buttonWidth - ImGui::GetStyle().ItemSpacing.x * 2));
 		std::vector<char> buffer((std::max)(size_t(32768), path.size() + 1), '\0');
 		std::copy(path.begin(), path.end(), buffer.begin());
 		const auto before = materialDraft;
@@ -1122,28 +1133,39 @@ void Editor::DrawMaterialInspector()
 			path = buffer.data();
 			std::replace(path.begin(), path.end(), '\\', '/');
 		}
-		TrackMaterialEdit(before, label, changed);
+		bool normalized = false;
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			if (auto reference = ResourceInputPath(resources, path); !reference.empty() && reference != path) {
+				path = std::move(reference); normalized = true;
+			}
+		}
+		TrackMaterialEdit(before, label, changed || normalized);
 
 		if (ImGui::BeginDragDropTarget()) {
-			// Браузер передаёт путь от проекта. В файле материала он хранится от res.
+			// Payload уже содержит res://; путь на диске нужен только для проверки расширения.
 			if (const auto source = DroppedResourcePath(); !source.empty()) {
-				const auto relative = (projectRoot / EditorFiles::DiskPath(std::string(source)))
-					.lexically_normal().lexically_relative(resourceRoot);
+				const auto relative = EditorFiles::DiskPath(resources.ResolvePath(std::string(source)));
 				auto extension = EditorFiles::Utf8Path(relative.extension());
 				for (char& c : extension) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
 				const bool image = extension == ".png" || extension == ".jpg" || extension == ".jpeg"
 					|| extension == ".bmp" || extension == ".dds" || extension == ".tga" || extension == ".hdr";
-				if (image && !relative.empty() && !relative.has_root_path() && *relative.begin() != L".."
+				if (image && !relative.empty()
 					&& ImGui::AcceptDragDropPayload(ResourcePathPayload)) {
 					if (ImGui::GetActiveID() == ImGui::GetID("##path")) ImGui::ClearActiveID();
 					FinishMaterialEdit();
 					const auto previous = materialDraft;
-					path = EditorFiles::Utf8Path(relative);
+					path = std::string(source);
 					RecordMaterialSettings(previous, materialDraft, label);
 				}
 			}
 			ImGui::EndDragDropTarget();
 		}
+		ImGui::SameLine(); ImGui::BeginDisabled(path.empty());
+		if (ImGui::Button("Edit")) {
+			const auto reference = ResourceInputPath(resources, path);
+			if (!reference.empty()) RequestAssetAction(AssetAction::OpenTexture, resources.ResolvePath(reference));
+		}
+		ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button("Clear")) {
 			FinishMaterialEdit();
@@ -1489,7 +1511,7 @@ void Editor::DrawUtilityActions(UtilityTableData& data)
 	if (ImGui::Button("Add action")) data.actions.push_back({ "", "", std::vector<std::string>(data.parameters.size()) });
 	ImGui::SameLine();
 	if (ImGui::SmallButton("Reload assets")) ClearUtilityAssetChecks();
-	ImGui::TextDisabled("Drop a script or curve from Content Browser. Paths are relative to the project.");
+	ImGui::TextDisabled("Drop a script or curve from Content Browser. Paths use res://, the root of Content Browser.");
 	std::unordered_map<std::string, size_t> scriptUses;
 	for (const auto& action : data.actions) {
 		const auto& script = CheckUtilityScript(action.scriptPath);
@@ -1570,7 +1592,7 @@ void Editor::DrawUtilityActions(UtilityTableData& data)
 		}
 		if (ImGui::TableNextColumn()) {
 			ImGui::SetNextItemWidth(-1);
-			UtilityPathField("##script", ".action.lua", action.scriptPath);
+			UtilityPathField(game.getResourceManager(), "##script", ".action.lua", action.scriptPath);
 			const auto& script = CheckUtilityScript(action.scriptPath);
 			const auto uses = scriptUses.find(script.resolved);
 			if (!script.error.empty()) {
@@ -1585,8 +1607,8 @@ void Editor::DrawUtilityActions(UtilityTableData& data)
 			if (!ImGui::TableNextColumn()) continue;
 			auto& path = action.curvePaths[i];
 			ImGui::PushID(static_cast<int>(i));
-			ImGui::SetNextItemWidth((std::max)(1.0f, ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() * 1.5f));
-			UtilityPathField("##curve", ".curve.json", path);
+			ImGui::SetNextItemWidth((std::max)(1.0f, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Edit").x - ImGui::GetStyle().FramePadding.x * 2 - ImGui::GetStyle().ItemSpacing.x));
+			UtilityPathField(game.getResourceManager(), "##curve", ".curve.json", path);
 			ImGui::SameLine(); ImGui::BeginDisabled(path.empty());
 			if (ImGui::SmallButton("Edit")) {
 				const auto resolved = game.getResourceManager().ResolvePath(path);
@@ -1964,11 +1986,11 @@ void Editor::DrawObjectInspector()
 			else if (dynamic_cast<CameraMovementComponent*>(component)) ImGui::TextUnformatted("Camera navigation");
 			else if (auto* script = dynamic_cast<LuaScriptComponent*>(component)) {
 				const auto before = ComponentProperties(*script);
-				const auto& path = script->getScriptPath();
-				std::vector<char> buffer((std::max)(size_t(32768), path.size() + 1), '\0');
-				std::copy(path.begin(), path.end(), buffer.begin());
-				const bool changed = ImGui::InputTextWithHint("Script path", "res/Scripts/Player.lua", buffer.data(), buffer.size());
-				if (changed) script->setScriptPath(buffer.data());
+				std::string path = script->getScriptPath();
+				UtilityPathField(game.getResourceManager(), "Script path", ".lua", path, ImGuiInputTextFlags_EnterReturnsTrue);
+				const bool changed = path != script->getScriptPath() && (path.empty() || !game.getResourceManager().ResourcePath(path).empty());
+				if (changed) { script->setScriptPath(path); sceneActionError.clear(); }
+				else if (path != script->getScriptPath()) sceneActionError = "Choose a script inside res://.";
 				// Весь ввод до выхода из поля образует одну команду Undo.
 				TrackComponentProperty(*script, before, "Script path", changed);
 			}
@@ -2130,7 +2152,14 @@ void Editor::DrawNavMeshVolumeInspector(NavMeshVolumeComponent& volume)
 		ImGui::TextUnformatted(navBuilder.getLog().c_str());
 		ImGui::TreePop();
 	}
-	if (!volume.getDataPath().empty()) ImGui::TextDisabled("Data: %s", volume.getDataPath().c_str());
+	const auto beforePath = ComponentProperties(volume);
+	std::string dataPath = volume.getDataPath();
+	UtilityPathField(game.getResourceManager(), "Data path", ".navmesh", dataPath, ImGuiInputTextFlags_EnterReturnsTrue);
+	const bool pathChanged = dataPath != volume.getDataPath() && (dataPath.empty() || !game.getResourceManager().ResourcePath(dataPath).empty());
+	if (pathChanged) { volume.setDataPath(dataPath); sceneActionError.clear(); }
+	else if (dataPath != volume.getDataPath()) sceneActionError = "Choose navmesh data inside res://.";
+	TrackComponentProperty(volume, beforePath, "Navmesh data path", pathChanged);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Applied when the scene starts. Drop a .navmesh file here.");
 }
 
 void Editor::ApplyNavigationActions()
@@ -2154,7 +2183,7 @@ void Editor::ApplyNavigationActions()
 			const std::string resolved = game.getResourceManager().ResolvePath(relative);
 			if (resolved.empty()) error = "Invalid navmesh path: " + relative;
 			else if (navBuilder.Start(*level, resolved, error)) {
-				navBuildPath = relative;
+				navBuildPath = game.getResourceManager().ResourcePath(relative);
 				navBuildMessage = navBuilder.getMessage();
 			}
 		}
@@ -2191,13 +2220,14 @@ void Editor::DrawUtilityComponentInspector(UtilityAIComponent& component)
 	}
 
 	ImGui::TextUnformatted("Utility AI table");
-	ImGui::SetNextItemWidth(-1);
+	ImGui::SetNextItemWidth((std::max)(1.0f, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Edit Clear").x - ImGui::GetStyle().FramePadding.x * 4 - ImGui::GetStyle().ItemSpacing.x * 2));
 	std::string path = component.GetTablePath();
-	// Ввод фиксируется по Enter. Перетаскивание сразу даёт готовый путь от проекта.
-	UtilityPathField("##table", ".utilityai.json", path, ImGuiInputTextFlags_EnterReturnsTrue);
-	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a table or enter a project-relative path and press Enter.");
+	// Ввод фиксируется по Enter. Перетаскивание сразу даёт готовую ссылку res://.
+	UtilityPathField(game.getResourceManager(), "##table", ".utilityai.json", path, ImGuiInputTextFlags_EnterReturnsTrue);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a table or enter res://AI/Table.utilityai.json and press Enter.");
+	ImGui::SameLine();
 	ImGui::BeginDisabled(path.empty());
-	if (ImGui::Button("Edit table")) {
+	if (ImGui::Button("Edit")) {
 		const auto resolved = game.getResourceManager().ResolvePath(path);
 		if (!resolved.empty()) OpenUtilityAsset(resolved);
 	}
@@ -2206,8 +2236,8 @@ void Editor::DrawUtilityComponentInspector(UtilityAIComponent& component)
 	ImGui::EndDisabled();
 
 	if (path != component.GetTablePath()) {
-		if (!path.empty() && !LowerAssetName(path).ends_with(".utilityai.json")) {
-			sceneActionError = "Expected a .utilityai.json file.";
+		if (!path.empty() && (!LowerAssetName(path).ends_with(".utilityai.json") || game.getResourceManager().ResourcePath(path).empty())) {
+			sceneActionError = "Expected a .utilityai.json file inside res://.";
 		} else {
 			sceneActionError.clear();
 			BeginProperty(HistoryKind::Component, Id(&component), ComponentProperties(component), "Utility AI table");
@@ -2246,8 +2276,13 @@ void Editor::DrawMeshInspector(MeshComponent& mesh)
 		};
 		auto apply = [&](std::string value) {
 			// Завершаем ввод, чтобы ImGui не восстановил прежний текст после drop или отказа.
-			if (ImGui::GetActiveID() == ImGui::GetID(isMesh ? "Mesh" : "Material"))
+			if (ImGui::GetActiveID() == ImGui::GetID(isMesh ? "##Mesh" : "##Material"))
 				ImGui::ClearActiveID();
+			const auto reference = ResourceInputPath(game.getResourceManager(), value);
+			if (!value.empty() && reference.empty()) {
+				text = current; inputError = "Choose a resource inside res://."; return;
+			}
+			value = reference;
 			if (!supported(value)) {
 				// Неподходящий формат не заменяет путь компонента или видимое значение.
 				text = current;
@@ -2270,7 +2305,12 @@ void Editor::DrawMeshInspector(MeshComponent& mesh)
 			: "Default material";
 		if (isMesh && mesh.getGeometryPreset() == MeshComponent::GeometryPreset::Cube) hint = "cube";
 		if (isMesh && mesh.getGeometryPreset() == MeshComponent::GeometryPreset::Sphere) hint = "sphere";
-		const bool enter = ImGui::InputTextWithHint(isMesh ? "Mesh" : "Material", hint,
+		// Оставляем место для Edit/Clear даже в узком инспекторе.
+		const float buttons = ImGui::CalcTextSize(isMesh ? "Clear" : "EditClear").x
+			+ (isMesh ? 1 : 2) * (ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetStyle().ItemSpacing.x);
+		ImGui::TextUnformatted(isMesh ? "Mesh" : "Material");
+		ImGui::SetNextItemWidth((std::max)(1.0f, ImGui::GetContentRegionAvail().x - buttons));
+		const bool enter = ImGui::InputTextWithHint(isMesh ? "##Mesh" : "##Material", hint,
 			buffer.data(), buffer.size(), ImGuiInputTextFlags_EnterReturnsTrue);
 		text = buffer.data();
 		if (enter || ImGui::IsItemDeactivatedAfterEdit() || (requestedSave && text != current)) apply(text);
@@ -2280,6 +2320,14 @@ void Editor::DrawMeshInspector(MeshComponent& mesh)
 			const std::string value(DroppedResourcePath());
 			if (!value.empty() && supported(value) && ImGui::AcceptDragDropPayload(ResourcePathPayload)) apply(value);
 			ImGui::EndDragDropTarget();
+		}
+		if (!isMesh) {
+			ImGui::SameLine(); ImGui::BeginDisabled(current.empty());
+			if (ImGui::SmallButton("Edit")) {
+				const auto file = game.getResourceManager().ResolvePath(mesh.getMaterialPath());
+				if (!file.empty()) RequestAssetAction(AssetAction::OpenMaterial, file);
+			}
+			ImGui::EndDisabled();
 		}
 		ImGui::SameLine();
 		if (ImGui::SmallButton("Clear")) apply("");

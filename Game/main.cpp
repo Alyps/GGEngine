@@ -19,13 +19,14 @@ namespace {
 
 int wmain(int argc, wchar_t* argv[])
 {
-    std::wstring projectDirectory, scenePath, standardDirectory;
+    std::wstring projectDirectory, scenePath, standardDirectory, resourceDirectory;
     // Каждый параметр принимает ровно одно значение; опечатки не игнорируются.
     for (int i = 1; i < argc; i += 2) {
         const std::wstring option = argv[i];
         std::wstring* destination = nullptr;
         if (option == L"--project") destination = &projectDirectory;
         else if (option == L"--scene") destination = &scenePath;
+        else if (option == L"--resources") destination = &resourceDirectory;
         else if (option == L"--standard-resources") destination = &standardDirectory;
         if (!destination || i + 1 >= argc || !destination->empty() || !*argv[i + 1]) {
             std::cerr << "Invalid, duplicate or incomplete launch argument\n";
@@ -35,7 +36,7 @@ int wmain(int argc, wchar_t* argv[])
     }
     if (projectDirectory.empty() || scenePath.empty()) {
         std::cerr << "Usage: Game.exe --project <directory> --scene <level.json> "
-            "[--standard-resources <directory>]\n";
+            "[--standard-resources <directory>] [--resources <directory>]\n";
         return 1;
     }
 
@@ -44,8 +45,8 @@ int wmain(int argc, wchar_t* argv[])
         std::cerr << "Cannot open project directory (Win32 " << GetLastError() << ")\n";
         return 1;
     }
-    std::string scene, standard;
-    if (!ToUtf8(scenePath, scene) || (!standardDirectory.empty() && !ToUtf8(standardDirectory, standard))) {
+    std::string scene, standard, resources;
+    if ((!resourceDirectory.empty() && !ToUtf8(resourceDirectory, resources)) || !ToUtf8(scenePath, scene) || (!standardDirectory.empty() && !ToUtf8(standardDirectory, standard))) {
         std::cerr << "Invalid Unicode launch path\n";
         return 1;
     }
@@ -56,6 +57,7 @@ int wmain(int argc, wchar_t* argv[])
         std::cerr << "Cannot initialize game window or renderer\n";
         return 1;
     }
+    if (!resources.empty()) game.getResourceManager().SetResourceDirectory(resources);
     if (!standard.empty()) game.getResourceManager().SetStandardResourceDirectory(standard);
     std::string error;
     if (!game.LoadLevelFromFile(scene, error)) {

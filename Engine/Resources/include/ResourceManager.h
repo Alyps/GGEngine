@@ -35,8 +35,10 @@ private:
 
 public:
 	explicit ResourceManager(std::string directory = {}) : projectDirectory(std::move(directory)) {}
-	// Пустой корень сохраняет поведение standalone: пути от рабочей папки процесса.
+	// res:// считается от корня ContentBrowser; старые пути — от каталога проекта.
 	std::string ResolvePath(const std::string& path) const;
+	// Возвращает переносимую ссылку; пустой результат для пути вне корня ресурсов.
+	std::string ResourcePath(const std::string& path) const;
 	// После копирования проекта меняем корень будущих загрузок; живые ресурсы остаются в кеше.
 	void SetProjectDirectory(std::string directory) { projectDirectory = std::move(directory); }
 	ResourceManager(const ResourceManager&) = delete;
@@ -46,7 +48,7 @@ public:
 		standardResourceDirectory = std::move(directory);
 	}
 	const std::string& GetStandardResourceDirectory() const { return standardResourceDirectory; }
-	// Корень для ссылок внутри материалов; обычные load(path) используют путь напрямую.
+	// Корень res:// совпадает с верхней папкой ContentBrowser.
 	void SetResourceDirectory(std::string directory) { resourceDirectory = std::move(directory); }
 	const std::string& GetResourceDirectory() const { return resourceDirectory; }
 	bool ApplyMaterial(const std::string& path, const MaterialData& options, ID3D11Device* device);
@@ -103,9 +105,11 @@ private:
 public:
 	const MeshData<TexturedVertexType>& GetMeshData() const { return meshData; }
 	static bool SupportsExtension(const std::string& extension);
+	// Проверка импорта использует тот же загрузчик, не добавляя ресурс в кеш.
+	static bool ValidateFile(const std::string& path, std::string& error);
 };
 
-// Пути карт UTF-8 относительно корня ресурсов; пустые слоты необязательны.
+// Карты используют res:// от корня ресурсов; пустые слоты необязательны.
 struct MaterialData {
 	int version = 1;
 	std::string shader = "builtin/simple";

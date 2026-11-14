@@ -247,7 +247,15 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 			return true;
 		}
 		// Объём меняет размер и параметры, сохраняя регистрацию и путь данных.
-		if (auto* volume = dynamic_cast<NavMeshVolumeComponent*>(component)) return volume->ApplyDescription(json, documentError);
+		if (auto* volume = dynamic_cast<NavMeshVolumeComponent*>(component)) {
+			// Обычный Undo параметров по-прежнему сохраняет результат генерации.
+			if (entry.name == "Navmesh data path") {
+				std::string path;
+				if (!Deserialization::String(json, "data", path, documentError)) return false;
+				volume->setDataPath(path);
+			}
+			return volume->ApplyDescription(json, documentError);
+		}
 		if (auto* character = dynamic_cast<CharacterMovementComponent*>(component)) return character->ApplyDescription(json, documentError);
 		if (auto* agent = dynamic_cast<NavAgentComponent*>(component)) return agent->ApplyDescription(json, documentError);
 		if (auto* trigger = dynamic_cast<BoxTriggerComponent*>(component)) {

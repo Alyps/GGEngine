@@ -1,5 +1,7 @@
 #include "EditorFileUtils.h"
+#include "ResourceManager.h"
 #include <fstream>
+#include <utility>
 #include <shobjidl.h>
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "uuid.lib")
@@ -118,5 +120,161 @@ namespace EditorFiles {
         if (SUCCEEDED(apartment)) CoUninitialize();
         if (FAILED(status) && status != HRESULT_FROM_WIN32(ERROR_CANCELLED)) error = "Cannot open file dialog (HRESULT " + std::to_string(status) + ").";
         return SUCCEEDED(status);
+    }
+
+    bool PickModelImportPath(HWND owner, bool executable, std::string& path, std::string& error)
+    {
+        error.clear();
+        const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        if (FAILED(apartment) && apartment != RPC_E_CHANGED_MODE) return Fail(error, "Cannot initialize file dialog.");
+        IFileOpenDialog* dialog = nullptr;
+        HRESULT status = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+        if (SUCCEEDED(status)) {
+            const COMDLG_FILTERSPEC filter = executable ? COMDLG_FILTERSPEC{ L"Blender executable", L"blender.exe" }
+                : COMDLG_FILTERSPEC{ L"Static models", L"*.blend;*.glb" };
+            status = dialog->SetOptions(FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR);
+            if (SUCCEEDED(status)) status = dialog->SetFileTypes(1, &filter);
+            if (SUCCEEDED(status)) status = dialog->Show(owner);
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(status)) status = dialog->GetResult(&item);
+            if (item) {
+                // COM владеет строкой до CoTaskMemFree; наружу возвращается UTF-8 копия.
+                PWSTR text = nullptr;
+                status = item->GetDisplayName(SIGDN_FILESYSPATH, &text);
+                if (SUCCEEDED(status)) path = Utf8Path(fs::path(text));
+                CoTaskMemFree(text); item->Release();
+            }
+            dialog->Release();
+        }
+        if (SUCCEEDED(apartment)) CoUninitialize();
+        if (FAILED(status) && status != HRESULT_FROM_WIN32(ERROR_CANCELLED)) return Fail(error, "Cannot open model import dialog.");
+        return SUCCEEDED(status);
+    }
+
+    namespace {
+        // Правила argv Windows: обратные слеши перед кавычкой и в конце удваиваются.
+        std::wstring QuoteArgument(const std::wstring& value)
+        {
+            std::wstring result = L"\"";
+            size_t slashes = 0;
+            for (wchar_t c : value) {
+                if (c == L'\\') { ++slashes; continue; }
+                result.append(c == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+                result += c; slashes = 0;
+            }
+            result.append(slashes * 2, L'\\');
+            return result + L"\"";
+        }
+    }
+
+    ModelImport::~ModelImport() { Clean(); }
+    ModelImport::ModelImport(ModelImport&& other) noexcept { *this = std::move(other); }
+    ModelImport& ModelImport::operator=(ModelImport&& other) noexcept
+    {
+        if (this == &other) return *this;
+        Clean();
+        process = std::exchange(other.process, nullptr);
+        temporary.swap(other.temporary); destination.swap(other.destination);
+        cancelled = std::exchange(other.cancelled, false);
+        return *this;
+    }
+
+    void ModelImport::Cancel()
+    {
+        cancelled = true;
+        if (process) TerminateProcess(process, ERROR_CANCELLED);
+    }
+
+    void ModelImport::Clean()
+    {
+        bool stopped = true;
+        if (process) {
+            // При закрытии проекта не оставляем работающий Blender с путями старого проекта.
+            if (WaitForSingleObject(process, 0) == WAIT_TIMEOUT) TerminateProcess(process, ERROR_CANCELLED);
+            stopped = WaitForSingleObject(process, 5000) == WAIT_OBJECT_0;
+            CloseHandle(process); process = nullptr;
+        }
+        if (stopped && !temporary.empty()) {
+            // Удаляем только известный результат собственного задания, без рекурсивного удаления.
+            DeleteFileW((temporary / L"model.glb").c_str());
+            RemoveDirectoryW(temporary.c_str());
+        }
+        temporary.clear(); destination.clear(); cancelled = false;
+    }
+
+    bool ModelImport::Start(const std::string& source, const std::string& folder,
+        const std::string& blender, std::string& error)
+    {
+        error.clear();
+        if (Busy()) return Fail(error, "A model import is already running.");
+        std::error_code ec;
+        const fs::path input = fs::absolute(DiskPath(source), ec);
+        if (ec || !fs::is_regular_file(input, ec)) return Fail(error, "Choose an existing .blend or .glb file.");
+        std::wstring extension = input.extension().wstring();
+        for (wchar_t& c : extension) if (c >= L'A' && c <= L'Z') c += L'a' - L'A';
+        if (extension != L".blend" && extension != L".glb") return Fail(error, "Only .blend and .glb imports are supported.");
+        const fs::path directory = fs::absolute(DiskPath(folder), ec);
+        if (ec || !fs::is_directory(directory, ec)) return Fail(error, "The destination folder is unavailable.");
+        destination = directory / input.stem(); destination += L".glb";
+        if (fs::exists(destination, ec) || ec) return Fail(error, "A file with this name already exists or cannot be accessed. Choose another folder or rename the source.");
+
+        static unsigned counter = 0;
+        const fs::path staging = directory / (L".ggimport-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(++counter));
+        if (!CreateDirectoryW(staging.c_str(), nullptr)) return Fail(error, "Cannot create a temporary import folder.");
+        temporary = staging; cancelled = false;
+        const fs::path output = temporary / L"model.glb";
+        if (extension == L".glb") {
+            // Копия проверяется в новой папке: внешние буферы не должны зависеть от исходника.
+            if (CopyFileW(input.c_str(), output.c_str(), TRUE)) return true;
+            const DWORD code = GetLastError(); Clean();
+            return Fail(error, "Cannot copy GLB file (Win32 " + std::to_string(code) + ").");
+        }
+
+        // Пути передаются отдельными argv после --, никогда не подставляются в Python-код.
+        const std::wstring script = L"import bpy,sys; bpy.ops.export_scene.gltf(filepath=sys.argv[-1], export_format='GLB', "
+            L"export_animations=False, export_skins=False, export_morph=False, export_materials='NONE', "
+            L"export_apply=True, use_active_scene=True)";
+        std::wstring executable = DiskPath(blender).wstring();
+        if (executable.empty()) { Clean(); return Fail(error, "Choose blender.exe to import .blend files."); }
+        // Разрешаем имя из PATH; выбранный абсолютный путь передаём CreateProcessW напрямую.
+        if (!DiskPath(blender).has_parent_path()) {
+            wchar_t found[32768]{};
+            const DWORD count = SearchPathW(nullptr, executable.c_str(), L".exe", 32768, found, nullptr);
+            if (!count || count >= 32768) { Clean(); return Fail(error, "Blender was not found. Select the installed blender.exe."); }
+            executable = found;
+        }
+        std::wstring command = QuoteArgument(executable) + L" --background --factory-startup --disable-autoexec "
+            + QuoteArgument(input.wstring()) + L" --python-exit-code 1 --python-expr " + QuoteArgument(script)
+            + L" -- " + QuoteArgument(output.wstring());
+        STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+        PROCESS_INFORMATION child{};
+        if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+            nullptr, input.parent_path().c_str(), &startup, &child)) {
+            const DWORD code = GetLastError(); Clean();
+            return Fail(error, "Cannot start Blender (Win32 " + std::to_string(code) + "). Check the executable path.");
+        }
+        CloseHandle(child.hThread); process = child.hProcess;
+        return true;
+    }
+
+    bool ModelImport::Poll(std::string& result, std::string& error)
+    {
+        if (!Busy()) return false;
+        if (process && WaitForSingleObject(process, 0) == WAIT_TIMEOUT) return false;
+        result.clear(); error.clear();
+        DWORD code = 0;
+        if (process && !GetExitCodeProcess(process, &code)) code = ERROR_GEN_FAILURE;
+        if (cancelled) error = "Model import cancelled.";
+        else if (code) error = "Blender failed (exit code " + std::to_string(code) + "). Check that this Blender version can open the file and export glTF.";
+        else {
+            const fs::path output = temporary / L"model.glb";
+            if (!MeshResource::ValidateFile(Utf8Path(output), error)) error = "Cannot import model geometry: " + error;
+            // Без REPLACE_EXISTING: даже появившийся во время конвертации файл не перезаписывается.
+            else if (!MoveFileExW(output.c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH))
+                error = "Cannot publish imported GLB. The destination may already exist or be unavailable.";
+            else result = Utf8Path(destination);
+        }
+        Clean();
+        return true;
     }
 }

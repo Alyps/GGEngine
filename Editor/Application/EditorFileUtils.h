@@ -14,4 +14,26 @@ namespace EditorFiles {
     bool WriteJson(const std::filesystem::path& path, const rapidjson::StringBuffer& bytes, bool replace, std::string& error);
     bool PickObjectSavePath(HWND owner, std::string& result, std::string& error);
     bool PickProjectPath(HWND owner, bool folder, std::string& path, std::string& error);
+    bool PickModelImportPath(HWND owner, bool executable, std::string& path, std::string& error);
+
+    // Панель владеет заданием; перемещение передаёт процесс, уничтожение отменяет его.
+    class ModelImport {
+    public:
+        ModelImport() = default;
+        ~ModelImport();
+        ModelImport(const ModelImport&) = delete;
+        ModelImport& operator=(const ModelImport&) = delete;
+        ModelImport(ModelImport&& other) noexcept;
+        ModelImport& operator=(ModelImport&& other) noexcept;
+        bool Start(const std::string& source, const std::string& folder,
+            const std::string& blender, std::string& error);
+        bool Poll(std::string& result, std::string& error);
+        bool Busy() const { return !temporary.empty(); }
+        void Cancel();
+    private:
+        void Clean();
+        HANDLE process = nullptr;
+        std::filesystem::path temporary, destination;
+        bool cancelled = false;
+    };
 }

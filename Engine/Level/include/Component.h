@@ -28,6 +28,9 @@ class Component {
     GameObject* owner = nullptr;
     bool pendingDestroy = false;
     bool initialized = false;
+protected:
+    // Использует корень игры владельца; старые ссылки без контекста сохраняет до привязки.
+    std::string ResourcePath(const std::string& path) const;
 public:
     Component() = default;
     Component(const Component&) = delete;

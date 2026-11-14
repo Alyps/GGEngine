@@ -22,14 +22,42 @@ std::string ResourceManager::ResolvePath(const std::string& path) const
 	if (path.empty() || path.find('\0') != std::string::npos
 		|| path.size() > static_cast<size_t>((std::numeric_limits<int>::max)())
 		|| !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), static_cast<int>(path.size()), nullptr, 0)) return {};
-	std::filesystem::path resolved(std::u8string(path.begin(), path.end()));
-	// Абсолютные встроенные ресурсы не зависят от каталога открытого проекта.
+	std::string text = path;
+	std::replace(text.begin(), text.end(), '\\', '/');
+	const bool resource = text.starts_with("res://");
+	if (resource) text.erase(0, 6);
+	std::filesystem::path resolved(std::u8string(text.begin(), text.end()));
+	if (resource) {
+		// URI не допускает абсолютный хвост, другой протокол и выход через .. .
+		if (text.empty() || resolved.has_root_path() || text.find_first_of(":*?\"<>|") != std::string::npos) return {};
+		for (const auto& part : resolved) if (part == "..") return {};
+		resolved = std::filesystem::path(std::u8string(resourceDirectory.begin(), resourceDirectory.end())) / resolved;
+	}
+	// Абсолютные служебные ресурсы движка сохраняют прежнее поведение.
 	if (!projectDirectory.empty() && !resolved.is_absolute()) {
 		if (resolved.has_root_path()) return {};
 		resolved = std::filesystem::path(std::u8string(projectDirectory.begin(), projectDirectory.end())) / resolved;
 	}
-	const auto text = resolved.lexically_normal().generic_u8string();
-	return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+	const auto utf8 = resolved.lexically_normal().generic_u8string();
+	return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+}
+
+std::string ResourceManager::ResourcePath(const std::string& path) const
+{
+	if (path.empty()) return {};
+	const auto resolved = ResolvePath(path), root = ResolvePath(resourceDirectory);
+	if (resolved.empty() || root.empty()) return {};
+	std::error_code error;
+	const auto target = std::filesystem::absolute(std::filesystem::path(std::u8string(resolved.begin(), resolved.end())), error).lexically_normal();
+	if (error) return {};
+	const auto base = std::filesystem::absolute(std::filesystem::path(std::u8string(root.begin(), root.end())), error).lexically_normal();
+	if (error) return {};
+	const auto relative = target.lexically_relative(base);
+	if (relative.empty() || relative == "." || relative.has_root_path()) return {};
+	for (const auto& part : relative) if (part == "..") return {};
+	const auto utf8 = relative.generic_u8string();
+	const std::string result = "res://" + std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+	return ResolvePath(result).empty() ? std::string{} : result;
 }
 
 namespace {
@@ -129,14 +157,29 @@ namespace {
 
 bool MeshResource::SupportsExtension(const std::string& extension)
 {
+	std::string lower = extension;
+	for (char& c : lower) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+	// Исходник Blender конвертируется редактором, а не устаревшим импортёром Assimp.
+	if (lower == ".blend" || lower == "blend") return false;
 	Assimp::Importer importer;
-	return !extension.empty() && importer.IsExtensionSupported(extension);
+	return !lower.empty() && importer.IsExtensionSupported(lower);
+}
+
+bool MeshResource::ValidateFile(const std::string& path, std::string& error)
+{
+	MeshResource resource;
+	const bool loaded = resource.load(path);
+	error = resource.loadError;
+	return loaded;
 }
 
 bool MeshResource::load(const std::string& path)
 {
 	std::wstring wide;
 	if (!WidePath(path, wide, loadError)) return false;
+	std::wstring extension = std::filesystem::path(wide).extension().wstring();
+	for (wchar_t& c : extension) if (c >= L'A' && c <= L'Z') c += L'a' - L'A';
+	if (extension == L".blend") return Fail(loadError, "Import the .blend file in Content Browser and use the resulting .glb mesh");
 	// Importer владеет временной сценой и освобождает её после копирования геометрии.
 	Assimp::Importer importer;
 	// Отдельная обработка экземпляров корректирует обход граней при зеркальном масштабе.
@@ -211,7 +254,7 @@ bool MaterialData::Validate(std::string& error) const
 		const auto& path = this->*field.path;
 		if (path.empty()) continue;
 		std::wstring wide;
-		if (!WidePath(path, wide, error)) return false;
+		if (!WidePath(path.starts_with("res://") ? path.substr(6) : path, wide, error)) return false;
 		const std::filesystem::path relative(wide);
 		if (relative.has_root_path() || wide.find_first_of(L":*?\"<>|") != std::wstring::npos)
 			return Fail(error, std::string(field.name) + ": expected a path relative to the resource root");
@@ -272,6 +315,16 @@ bool MaterialData::Load(const std::string& path, std::string& error)
 		if (path.empty()) return Fail(error, std::string(map.name) + ": use null instead of an empty path");
 	}
 	if (!loaded.Validate(error)) return false;
+	// Старые карты были относительны корню ресурсов, а не файлу материала.
+	for (const auto& map : materialMapFields) {
+		auto& reference = loaded.*map.path;
+		std::replace(reference.begin(), reference.end(), '\\', '/');
+		if (!reference.empty()) {
+			if (!reference.starts_with("res://")) reference = "res://" + reference;
+			reference = ResourceManager().ResourcePath(reference);
+			if (reference.empty()) return Fail(error, "Invalid texture resource path");
+		}
+	}
 	*this = std::move(loaded);
 	return true;
 }
@@ -290,7 +343,10 @@ bool MaterialData::Save(const std::string& path, std::string& error) const
 	writer.Key("render_state"); writer.String(renderState.c_str());
 	writer.Key("sampler"); writer.String(sampler.c_str());
 	for (const auto& map : materialMapFields) {
-		const auto& texturePath = this->*map.path;
+		const auto& source = this->*map.path;
+		const auto texturePath = source.empty() ? std::string{} : ResourceManager().ResourcePath(
+			source.starts_with("res://") ? source : "res://" + source);
+		if (!source.empty() && texturePath.empty()) return Fail(error, "Invalid texture resource path");
 		if (texturePath.empty() && !map.writeNull) continue;
 		writer.Key(map.name);
 		if (texturePath.empty()) writer.Null();
@@ -348,16 +404,11 @@ bool MaterialResource::Build(MaterialData options, std::string& error)
 	if (!data.diffuse.empty() || !data.normal.empty() || !data.ao.empty()) {
 		if (!resources || resources->GetResourceDirectory().empty())
 			return Fail(error, "Resource manager and resource directory are required for material textures");
-		// Ссылки материала считаются от res, независимо от расположения самого JSON.
-		std::wstring root;
-		if (!WidePath(resources->GetResourceDirectory(), root, error)) return false;
+		// Новые карты используют URI; старые строки по-прежнему считаются от корня ресурсов.
 		const auto loadMap = [&](const std::string& path, const char* slot, bool linear, TextureResource*& result) {
 			if (path.empty()) return true;
-			std::wstring relative;
-			if (!WidePath(path, relative, error)) return false;
-			const auto texturePath = (std::filesystem::path(root) / relative).generic_u8string();
-			auto* texture = resources->load<TextureResource>(
-				std::string(reinterpret_cast<const char*>(texturePath.data()), texturePath.size()), device);
+			const auto reference = path.starts_with("res://") ? path : "res://" + path;
+			auto* texture = resources->load<TextureResource>(reference, device);
 			if (!texture) return Fail(error, std::string(slot) + ": " + resources->GetLastError());
 
 			D3D11_SHADER_RESOURCE_VIEW_DESC view{};

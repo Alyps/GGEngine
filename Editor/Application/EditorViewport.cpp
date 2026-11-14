@@ -336,10 +336,8 @@ void Editor::DrawObjectDropTarget(const ImVec2& minimum, const ImVec2& maximum, 
 	std::string lower = path;
 	for (char& c : lower) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
 	if (!lower.ends_with(".object.json") || path.find('\0') != std::string::npos) return;
-	// Контент-браузер передаёт только пути внутри проекта, не абсолютные имена файлов.
-	const auto relative = EditorFiles::DiskPath(path);
-	if (relative.has_root_path()) return;
-	for (const auto& part : relative) if (part == "..") return;
+	// Проверяем URI тем же менеджером, который затем загрузит объект.
+	if (game.getResourceManager().ResourcePath(path).empty()) return;
 	if (!ImGui::BeginDragDropTargetCustom(ImRect(minimum, maximum), ImGui::GetID("Object asset drop"))) return;
 	if (ImGui::AcceptDragDropPayload("GG_RESOURCE_PATH")) {
 		DXVector3 position = DXVector3::Zero;
