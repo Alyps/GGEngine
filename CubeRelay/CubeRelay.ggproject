@@ -1,6 +1,6 @@
 {
-  "format_version": 1,
-  "name": "Cube Relay",
-  "resource_directory": "res",
-  "startup_scene": "res://Scenes/Main.level.json"
+    "format_version": 1,
+    "name": "Cube Relay",
+    "resource_directory": "res",
+    "startup_scene": "res://Scenes/Main.level.json"
 }
