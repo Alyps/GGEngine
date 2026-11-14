@@ -1,0 +1,6 @@
+{
+  "format_version": 1,
+  "name": "Reactor Lab",
+  "resource_directory": "res",
+  "startup_scene": "res://Scenes/Main.level.json"
+}

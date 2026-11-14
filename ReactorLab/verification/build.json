@@ -1,0 +1,8 @@
+{
+  "executable": "Runtime/Game.exe",
+  "source": "out/build/x64-release/Game/Game.exe",
+  "sha256": "d2e389365eb1a7b7508800b59c717300e1b8040df7eb28218bf2bc2f29d34b3c",
+  "size": 8601088,
+  "date": "2026-11-14",
+  "engine_source_modified": false
+}

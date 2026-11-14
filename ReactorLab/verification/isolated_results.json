@@ -1,0 +1,44 @@
+[
+  {
+    "name": "CheckTimer",
+    "complete": true,
+    "exit_code": null,
+    "log": "[Lua] BEGIN Timer\n[Lua] PASS timer initial stopped\n[Lua] PASS timer invalid interval rejected\n[Lua] PASS timer start\n[Lua] PASS timer one-shot expires\n[Lua] PASS timer repeats\n[Lua] PASS timer stop\n[Lua] PASS timer restart\n[Lua] CHECK COMPLETE passes=7 failures=0\n"
+  },
+  {
+    "name": "CheckDelegates",
+    "complete": true,
+    "exit_code": null,
+    "log": "[Lua] BEGIN Delegates\n[Lua] PASS payload identity nil arity\n[Lua] PASS emit live\n[Lua] PASS disconnect idempotent\n[Lua] PASS disconnected skipped\n[Lua] PASS recursive emission\n[Lua] PASS disconnect during emission\n[Lua] PASS new subscription deferred\n[Lua] PASS new subscription next emission\n[Lua] CHECK COMPLETE passes=8 failures=0\n"
+  },
+  {
+    "name": "CheckTrigger",
+    "complete": true,
+    "exit_code": null,
+    "log": "[Lua] BEGIN Trigger\n[Lua] PASS trigger initial enabled\n[Lua] PASS trigger serialized size\n[Lua] PASS trigger disabled\n[Lua] PASS trigger reenabled\n[Lua] PASS trigger resize\n[Lua] PASS trigger invalid size rejected\n[Lua] CHECK COMPLETE passes=6 failures=0\n"
+  },
+  {
+    "name": "ReproTimerEvent",
+    "complete": false,
+    "exit_code": 3221226505,
+    "log": "[Lua] BEFORE timer.timeout GETTER\n"
+  },
+  {
+    "name": "ReproTriggerEvent",
+    "complete": false,
+    "exit_code": 3221226505,
+    "log": "[Lua] BEFORE trigger.body_entered GETTER\n"
+  },
+  {
+    "name": "ReproInstance",
+    "complete": false,
+    "exit_code": 3221226505,
+    "log": "[Lua] BEFORE LuaScript.instance GETTER\n"
+  },
+  {
+    "name": "CheckAI",
+    "complete": true,
+    "exit_code": null,
+    "log": "[Lua] BEGIN UtilityAI\n[Lua] PASS AI resource load\n[Lua] PASS AI float default\n[Lua] PASS AI int setter\n[Lua] PASS AI type mismatch\n[Lua] PASS AI unknown parameter\n[Lua] PASS AI snapshot isolated\n[Lua] CHECK AI ENTER\t\n[Lua] PASS AI first action\n[Lua] CHECK AI EXIT\tinterrupted\n[Lua] CHECK AI ENTER\t\n[Lua] PASS AI switches action\n[Lua] CHECK AI EXIT\tdisabled\n[Lua] PASS AI disabled exits\n[Lua] CHECK AI ENTER\t\n[Lua] PASS AI reenabled\n[Lua] PASS AI no callback error\n[Lua] CHECK COMPLETE passes=11 failures=0\n"
+  }
+]

@@ -1,0 +1,35 @@
+{
+  "parameters": [
+    {
+      "name": "Score",
+      "type": "float",
+      "default": 0
+    },
+    {
+      "name": "Count",
+      "type": "int",
+      "default": 0
+    }
+  ],
+  "interval": 0.1,
+  "switch_threshold": 0.05,
+  "minimum_duration": 0.2,
+  "actions": [
+    {
+      "name": "Low",
+      "script": "res://AI/check.action.lua",
+      "curves": [
+        "res://AI/check_low.curve.json",
+        null
+      ]
+    },
+    {
+      "name": "High",
+      "script": "res://AI/check.action.lua",
+      "curves": [
+        "res://AI/check_high.curve.json",
+        null
+      ]
+    }
+  ]
+}

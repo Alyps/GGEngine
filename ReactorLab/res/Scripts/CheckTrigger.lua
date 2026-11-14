@@ -1,0 +1,12 @@
+local W=require("res.Scripts.World")
+return {on_init=function(s)
+ print("BEGIN Trigger")
+ local t=s.object:get_component(ComponentType.BoxTrigger)
+ W.check("trigger initial enabled",t.enabled)
+ W.check("trigger serialized size",t.size.x==2 and t.size.y==2 and t.size.z==2)
+ t.enabled=false;W.check("trigger disabled",not t.enabled)
+ t.enabled=true;W.check("trigger reenabled",t.enabled)
+ t.size=Vector3.new(3,4,5);W.check("trigger resize",t.size.x==3 and t.size.y==4 and t.size.z==5)
+ t.size=Vector3.new(-1,4,5);W.check("trigger invalid size rejected",t.size.x==3)
+ print("CHECK COMPLETE passes="..W.passes.." failures="..W.failures)
+end}

@@ -1,0 +1,5 @@
+Lua 5.4 syntax: 33 files PASS
+JSON and resource references: 124 references PASS
+Scene transform structure and AI curve dimensions: PASS
+Runtime: 32 assertions PASS in 4 isolated scenes; 3 getter crash reproducers confirmed.
+Full game and integrated tests: BLOCKED (see TEST_REPORT.md)

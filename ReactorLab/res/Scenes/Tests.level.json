@@ -1,0 +1,293 @@
+{
+  "asset_type": "Level",
+  "version": 1,
+  "objects": [
+    {
+      "asset_type": "GameObject",
+      "version": 1,
+      "components": [],
+      "transform_tree": {
+        "name": "Camera",
+        "position": [
+          0,
+          0,
+          23
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "inherit_position": true,
+        "inherit_rotation": true,
+        "inherit_scale": true,
+        "components": [
+          {
+            "type": "GameCamera",
+            "vertical_fov": 0.66,
+            "near_plane": 0.1,
+            "far_plane": 100
+          }
+        ],
+        "children": []
+      }
+    },
+    {
+      "asset_type": "GameObject",
+      "version": 1,
+      "components": [],
+      "transform_tree": {
+        "name": "KeyLight",
+        "position": [
+          0,
+          0,
+          8
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "inherit_position": true,
+        "inherit_rotation": true,
+        "inherit_scale": true,
+        "components": [
+          {
+            "type": "DirectionalLightComponent",
+            "color": [
+              1,
+              1,
+              1
+            ],
+            "intensity": 0.9,
+            "enabled": true
+          }
+        ],
+        "children": []
+      }
+    },
+    {
+      "asset_type": "GameObject",
+      "version": 1,
+      "components": [],
+      "transform_tree": {
+        "name": "TestBody",
+        "position": [
+          44,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "inherit_position": true,
+        "inherit_rotation": true,
+        "inherit_scale": true,
+        "components": [
+          {
+            "type": "KinematicRigidBodyComponent",
+            "enabled": true
+          },
+          {
+            "type": "BoxColliderComponent",
+            "size": [
+              0.65,
+              0.65,
+              0.65
+            ],
+            "enabled": true,
+            "affects_navmesh": false,
+            "material": {
+              "static_friction": 0.5,
+              "dynamic_friction": 0.5,
+              "restitution": 0
+            }
+          },
+          {
+            "type": "BoxColliderComponent",
+            "size": [
+              0.4,
+              0.4,
+              0.4
+            ],
+            "enabled": true,
+            "affects_navmesh": false,
+            "material": {
+              "static_friction": 0.5,
+              "dynamic_friction": 0.5,
+              "restitution": 0
+            }
+          },
+          {
+            "type": "LuaScriptComponent",
+            "script_path": "res://Scripts/TestBody.lua"
+          }
+        ],
+        "children": []
+      }
+    },
+    {
+      "asset_type": "GameObject",
+      "version": 1,
+      "components": [],
+      "transform_tree": {
+        "name": "TestZone",
+        "position": [
+          40,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "inherit_position": true,
+        "inherit_rotation": true,
+        "inherit_scale": true,
+        "components": [
+          {
+            "type": "BoxTriggerComponent",
+            "size": [
+              2,
+              2,
+              2
+            ],
+            "enabled": true
+          },
+          {
+            "type": "LuaScriptComponent",
+            "script_path": "res://Scripts/TestZone.lua"
+          }
+        ],
+        "children": []
+      }
+    },
+    {
+      "asset_type": "GameObject",
+      "version": 1,
+      "components": [
+        {
+          "type": "UtilityAIComponent",
+          "table_path": "res://AI/drone.utilityai.json",
+          "enabled": true
+        }
+      ],
+      "transform_tree": {
+        "name": "TestDrone",
+        "position": [
+          30,
+          -3.5,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "inherit_position": true,
+        "inherit_rotation": true,
+        "inherit_scale": true,
+        "components": [
+          {
+            "type": "KinematicRigidBodyComponent",
+            "enabled": true
+          },
+          {
+            "type": "BoxColliderComponent",
+            "size": [
+              0.65,
+              0.65,
+              0.65
+            ],
+            "enabled": true,
+            "affects_navmesh": false,
+            "material": {
+              "static_friction": 0.5,
+              "dynamic_friction": 0.5,
+              "restitution": 0
+            }
+          },
+          {
+            "type": "LuaScriptComponent",
+            "script_path": "res://Scripts/TestDrone.lua"
+          }
+        ],
+        "children": []
+      }
+    },
+    {
+      "asset_type": "GameObject",
+      "version": 1,
+      "components": [
+        {
+          "type": "TimerComponent",
+          "wait_time": 0.15,
+          "repeat": false,
+          "autostart": true
+        }
+      ],
+      "transform_tree": {
+        "name": "Tests",
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "inherit_position": true,
+        "inherit_rotation": true,
+        "inherit_scale": true,
+        "components": [
+          {
+            "type": "LuaScriptComponent",
+            "script_path": "res://Scripts/Tests.lua"
+          }
+        ],
+        "children": []
+      }
+    }
+  ]
+}

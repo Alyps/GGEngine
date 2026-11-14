@@ -1,0 +1,85 @@
+{
+  "asset_type": "Level",
+  "version": 1,
+  "objects": [
+    {
+      "asset_type": "GameObject",
+      "version": 1,
+      "components": [],
+      "transform_tree": {
+        "name": "Camera",
+        "position": [
+          0,
+          0,
+          23
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "inherit_position": true,
+        "inherit_rotation": true,
+        "inherit_scale": true,
+        "components": [
+          {
+            "type": "GameCamera",
+            "vertical_fov": 0.66,
+            "near_plane": 0.1,
+            "far_plane": 100
+          }
+        ],
+        "children": []
+      }
+    },
+    {
+      "asset_type": "GameObject",
+      "version": 1,
+      "components": [],
+      "transform_tree": {
+        "name": "CheckTrigger",
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "inherit_position": true,
+        "inherit_rotation": true,
+        "inherit_scale": true,
+        "children": [],
+        "components": [
+          {
+            "type": "BoxTriggerComponent",
+            "size": [
+              2,
+              2,
+              2
+            ],
+            "enabled": true
+          },
+          {
+            "type": "LuaScriptComponent",
+            "script_path": "res://Scripts/CheckTrigger.lua"
+          }
+        ]
+      }
+    }
+  ]
+}
