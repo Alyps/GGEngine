@@ -10,15 +10,20 @@ function M.on_ready(self)
     local game = W.get("game")
     game.changed:connect(self, function(s, kind)
         if kind == "restart" then
+            s.body.linear_velocity = Vector3.zero()
             s.transform.position = Vector3.new(-8, -4, 0)
             s.cooldown, s.route = 0, 1
         end
     end)
+    game.finished:connect(self, function(s)
+        s.body.linear_velocity = Vector3.zero()
+    end)
 end
 function M.hit(self)
-    if self.cooldown > 0 then return end
+    local game = W.get("game")
+    if self.cooldown > 0 or not game or game.state ~= "playing" then return end
     self.cooldown = 1.5
-    W.get("game"):damage()
+    game:damage()
 end
 function M.on_update(self, dt)
     self.cooldown = math.max(0, self.cooldown - dt)

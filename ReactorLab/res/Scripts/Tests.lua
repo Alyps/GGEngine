@@ -108,8 +108,25 @@ function M.on_update(self, dt)
         W.check("AI enabled resumes",self.ai.current_action == "Patrol")
         W.check("AI callbacks have no errors",self.ai.last_error == "")
         W.check("timer remains stopped",self.hits == 5)
-        print("TEST COMPLETE passes=" .. W.passes .. " failures=" .. W.failures)
-        self.done = true
+        -- At the dock, a nearby player must not pull an undercharged drone away.
+        local drone = W.get("drone")
+        drone.body.linear_velocity = Vector3.zero()
+        drone.transform.position = Vector3.new(0, -3.5, 0)
+        self.ai:set_float("Distance", 1)
+        self.ai:set_float("Energy", 29)
+        self.rechargeStarted = t
+        self.step = 8
+    elseif self.step == 8 or self.step == 9 then
+        local energy = self.ai:get_float("Energy")
+        self.fullyCharged = self.fullyCharged or energy == 100
+        if self.step == 8 and t - self.rechargeStarted >= 1 then
+            W.check("AI keeps charging near a player",self.ai.current_action == "Recharge" and energy > 30 and energy < 100)
+            self.step = 9
+        elseif self.step == 9 and t - self.rechargeStarted >= 3.5 then
+            W.check("AI resumes pursuit after a full charge",self.fullyCharged and self.ai.current_action == "Chase")
+            print("TEST COMPLETE passes=" .. W.passes .. " failures=" .. W.failures)
+            self.done = true
+        end
     end
 end
 return M

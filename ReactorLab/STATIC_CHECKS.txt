@@ -1,5 +1,7 @@
-Lua 5.4 syntax: 33 files PASS
-JSON and resource references: 124 references PASS
-Scene transform structure and AI curve dimensions: PASS
-Runtime: 32 assertions PASS in 4 isolated scenes; 3 getter crash reproducers confirmed.
-Full game and integrated tests: BLOCKED (see TEST_REPORT.md)
+ReactorLab QA, 2026-11-14
+JSON: 38 files parsed
+Resources: 124 res:// references resolved
+Lua modules: 29 require references resolved
+PowerShell test runner syntax: PASS
+Runtime: 72 assertions PASS in 8 test scenes, Autoplay GAME WIN
+See TEST_REPORT.md for scope and build details.

@@ -100,8 +100,9 @@ const char* NavAgentStateName(NavAgentState state)
 	}
 }
 
-// Копия углов текущего пути с индексами от 1.
-sol::table NavAgentPath(sol::this_state state, const NavAgentComponent& agent)
+// У getter-свойств sol2 первый аргумент определяет тип self.
+// Возвращаем копию углов текущего пути с индексами от 1.
+sol::table NavAgentPath(const NavAgentComponent& agent, sol::this_state state)
 {
 	sol::state_view lua(state);
 	const auto& path = agent.getPath();
@@ -247,14 +248,14 @@ void BindComponents(lua_State* L)
 		"autostart", sol::property(&TimerComponent::isAutostart, &TimerComponent::setAutostart),
 		"running", sol::property(&TimerComponent::isRunning),
 		"time_left", sol::property(&TimerComponent::getTimeLeft),
-		"timeout", sol::property([](sol::this_state state, TimerComponent& timer) {
+		"timeout", sol::property([](TimerComponent& timer, sol::this_state state) {
 			timer.PushTimeout(state);
 			return sol::stack::pop<sol::object>(state);
 		}));
 
 	// instance возвращает именно self компонента; свойство нельзя переназначить.
 	lua.new_usertype<LuaScriptComponent>("LuaScript", sol::no_constructor,
-		"instance", sol::property([](sol::this_state state, const LuaScriptComponent& component) {
+		"instance", sol::property([](const LuaScriptComponent& component, sol::this_state state) {
 			component.PushInstance(state);
 			return sol::stack::pop<sol::object>(state);
 		}));
@@ -331,11 +332,11 @@ void BindComponents(lua_State* L)
 			[](BoxTriggerComponent& c, const DXVector3& size) { c.setSize(size); }),
 		"enabled", sol::property([](const BoxTriggerComponent& c) { return c.getTriggerItem().enabled; },
 			[](BoxTriggerComponent& c, bool enabled) { c.getTriggerItem().enabled = enabled; }),
-		"body_entered", sol::property([](sol::this_state state, BoxTriggerComponent& c) {
+		"body_entered", sol::property([](BoxTriggerComponent& c, sol::this_state state) {
 			c.PushEvent(state, true);
 			return sol::stack::pop<sol::object>(state);
 		}),
-		"body_exited", sol::property([](sol::this_state state, BoxTriggerComponent& c) {
+		"body_exited", sol::property([](BoxTriggerComponent& c, sol::this_state state) {
 			c.PushEvent(state, false);
 			return sol::stack::pop<sol::object>(state);
 		}));
