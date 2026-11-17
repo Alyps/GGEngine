@@ -14,6 +14,7 @@ public:
     std::string TakeTextureToOpen() { std::string result; result.swap(textureToOpen); return result; }
     std::string TakeMaterialToOpen() { std::string result; result.swap(materialToOpen); return result; }
     std::string TakeUtilityAssetToOpen() { std::string result; result.swap(utilityAssetToOpen); return result; }
+    void RequestModelImport(const std::string& source = {}) { importRequested = true; importInitialSource = source; }
     void RefreshFiles() { if (!root.empty()) Refresh(); }
 
 private:
@@ -53,6 +54,10 @@ private:
     char importSource[4096]{};
     std::string importFolder;
     std::string importStatus;
+    std::string importInitialSource;
+    char importDestination[4096]{}, importName[256]{};
+    bool importRequested = false, importObject = true;
+    int importMesh = -1;
 
     std::string root;
     std::string projectRoot;

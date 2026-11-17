@@ -349,6 +349,7 @@ void Editor::DrawDockspace()
 					projectError = "Cannot open project folder.";
 			}
 			ImGui::Separator();
+			if (ImGui::MenuItem("Import 3D Model...", nullptr, false, !project.filePath.empty())) contentBrowser.RequestModelImport();
 			if (ImGui::MenuItem("Exit")) RequestClose();
 			ImGui::EndMenu();
 		}

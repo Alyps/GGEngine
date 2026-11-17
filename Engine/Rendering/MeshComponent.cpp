@@ -11,7 +11,7 @@ MeshComponent::MeshComponent(bool usePresetMaterial)
 MeshComponent::MeshComponent(MeshData<TexturedVertexType> data)
     : meshData(std::move(data)) {}
 
-MeshComponent::MeshComponent(const MeshResource& resource)
+MeshComponent::MeshComponent(const MeshDataResource& resource)
     : meshResource(&resource), usePresetMaterial(true) {}
 
 MeshComponent::MeshComponent(std::string meshPath, std::string materialPath)
@@ -101,7 +101,7 @@ void MeshComponent::initRenderItem(Game& game)
     ID3D11Device* device = game.getRenderServer().Device();
     if (fileMesh) {
         // Не сохраняем старую геометрию при ошибке нового пути.
-        meshResource = meshPath.empty() ? nullptr : resources.load<MeshResource>(meshPath);
+        meshResource = meshPath.empty() ? nullptr : resources.load<MeshDataResource>(meshPath);
         if (!meshPath.empty() && !meshResource) meshError = resources.GetLastError();
     }
     MaterialResource* materialResource = nullptr;

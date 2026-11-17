@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <atomic>
 
 class Resource {
 friend class ResourceManager;
@@ -95,18 +96,19 @@ public:
 
 };
 
-// Менеджер владеет ресурсом, ресурс — CPU-геометрией; компоненты только заимствуют её.
-class MeshResource final : public Resource {
+// Файл .mesh хранит MeshData<TexturedVertexType>; менеджер владеет ресурсом и его CPU-данными.
+class MeshDataResource final : public Resource {
 friend class ResourceManager;
 private:
 	MeshData<TexturedVertexType> meshData;
-	MeshResource() = default;
+	MeshDataResource() = default;
 	bool load(const std::string& path) override;
 public:
 	const MeshData<TexturedVertexType>& GetMeshData() const { return meshData; }
 	static bool SupportsExtension(const std::string& extension);
-	// Проверка импорта использует тот же загрузчик, не добавляя ресурс в кеш.
-	static bool ValidateFile(const std::string& path, std::string& error);
+	// Сохранение принимает обычный файловый путь UTF-8 и не меняет кеш менеджера.
+	static bool Save(const std::string& path, const MeshData<TexturedVertexType>& data, std::string& error);
+	bool Save(const std::string& path, std::string& error) const { return Save(path, meshData, error); }
 };
 
 // Карты используют res:// от корня ресурсов; пустые слоты необязательны.
@@ -126,6 +128,40 @@ struct MaterialData {
 	// При ошибке чтения исходное описание остаётся неизменным.
 	bool Load(const std::string& path, std::string& error);
 	bool Save(const std::string& path, std::string& error) const;
+};
+
+// Промежуточная сцена импортёра владеет всеми копиями CPU-данных; это не runtime-ресурс.
+struct ImportedModel {
+	struct Mesh { std::string name; MeshData<TexturedVertexType> data; unsigned material = 0; };
+	struct Texture {
+        std::string name, source, error, replacement;
+        std::vector<uint8_t> png;
+        // Замена проходит ту же обработку цвета/каналов, что исходная текстура.
+        DirectX::XMFLOAT4 factor{ 1, 1, 1, 1 };
+        bool color = false, ao = false;
+    };
+	struct Material {
+		std::string name;
+		MaterialData data;
+		int diffuse = -1, normal = -1, ao = -1;
+		// Непустой путь заменяет генерацию материала существующим ресурсом.
+		std::string existingPath;
+	};
+	struct Node {
+		std::string name;
+		int parent = -1;
+		DirectX::XMFLOAT3 position{}, scale{ 1, 1, 1 };
+		DirectX::XMFLOAT4 rotation{ 0, 0, 0, 1 };
+		std::vector<unsigned> meshes;
+	};
+	std::vector<Mesh> meshes;
+	std::vector<Texture> textures;
+	std::vector<Material> materials;
+	std::vector<Node> nodes;
+	std::vector<std::string> warnings;
+	// Вызывается рабочим потоком с инициализированным COM; Blender обрабатывает редактор.
+	bool Read(const std::string& path, const std::atomic<bool>& cancel, std::string& error);
+    bool ReplaceTexture(size_t index, const std::string& path, const std::atomic<bool>& cancel, std::string& error);
 };
 
 // Менеджер владеет ресурсом; материал заимствует его шейдер и состояние.

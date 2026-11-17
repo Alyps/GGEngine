@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string_view>
+#include <functional>
 #include <windows.h>
 #include <shellapi.h>
 
@@ -41,6 +42,7 @@ namespace {
         if (lower.ends_with(".level.json")) return "[Scene]";
         const auto dot = lower.find_last_of('.');
         const std::string extension = dot == std::string::npos ? "" : lower.substr(dot);
+        if (extension == ".mesh") return "[Mesh]";
         if (extension == ".lua") return "[Lua]";
         if (extension == ".png" || extension == ".jpg" || extension == ".jpeg"
             || extension == ".bmp" || extension == ".tga" || extension == ".dds" || extension == ".hdr") return "[Image]";
@@ -211,7 +213,7 @@ void ContentBrowser::Refresh()
         const bool link = (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
         // Узнаём форматы у той же библиотеки, которая будет загружать ресурс.
         entries.push_back({ Utf8Path(path.filename()), directory, link,
-            !directory && !link && MeshResource::SupportsExtension(LowerAscii(Utf8Path(path.extension()))) });
+            !directory && !link && MeshDataResource::SupportsExtension(LowerAscii(Utf8Path(path.extension()))) });
         if (!directory && !link) {
             std::error_code sizeError;
             entries.back().bytes = fs::file_size(path, sizeError);
@@ -406,7 +408,7 @@ void ContentBrowser::DrawDeleteDialog()
 
 void ContentBrowser::DrawCreateMenu(DrawRequests& requests)
 {
-    if (ImGui::MenuItem("Import model...", nullptr, false, !modelImport.Busy())) requests.importModel = true;
+    if (ImGui::MenuItem("Import 3D Model...", nullptr, false, !modelImport.Busy())) requests.importModel = true;
     ImGui::Separator();
     if (ImGui::MenuItem("Folder")) { createType = CreateType::Folder; requests.create = true; }
     ImGui::Separator();
@@ -554,8 +556,10 @@ size_t ContentBrowser::DrawFileList(float footerHeight, DrawRequests& requests)
                     const bool utilityAsset = UtilityAssetLabel(LowerAscii(entry.name)) != nullptr;
                     const bool canOpen = !entry.link && (entry.directory || category == 1 || category == 2 || category == 4 || category == 5 || utilityAsset);
                     if (ImGui::MenuItem("Open", "Enter", false, canOpen)) Activate(entry, requests.directory);
-                    if (!entry.directory && !entry.link && LowerAscii(Utf8Path(DiskPath(entry.name).extension())) == ".blend"
-                        && ImGui::MenuItem("Import as GLB...", nullptr, false, !modelImport.Busy())) {
+                    if (!entry.directory && !entry.link && (LowerAscii(Utf8Path(DiskPath(entry.name).extension())) == ".blend" ||
+                        LowerAscii(Utf8Path(DiskPath(entry.name).extension())) == ".glb" ||
+                        LowerAscii(Utf8Path(DiskPath(entry.name).extension())) == ".fbx")
+                        && ImGui::MenuItem("Import 3D Model...", nullptr, false, !modelImport.Busy())) {
                         selected = path; requests.importModel = true;
                     }
                     if (!entry.directory && !entry.link && (category == 4 || category == 5)) {
@@ -612,13 +616,10 @@ void ContentBrowser::ApplyFileActions(DrawRequests& requests)
     if (requests.create) { entryName[0] = '\0'; actionError.clear(); ImGui::OpenPopup("Create resource"); }
     if (requests.remove) { pendingDelete = selected; actionError.clear(); ImGui::OpenPopup("Delete entry"); }
     if (requests.importModel) {
-        importSource[0] = '\0'; importFolder = current; importStatus.clear();
-        // Для выбранного Blender-исходника сразу подставляем путь в диалог.
-        if (LowerAscii(Utf8Path(DiskPath(selected).extension())) == ".blend")
-            snprintf(importSource, sizeof(importSource), "%s", selected.c_str());
-        ImGui::OpenPopup("Import model");
+        const auto extension = LowerAscii(Utf8Path(DiskPath(selected).extension()));
+        RequestModelImport(extension == ".blend" || extension == ".glb" || extension == ".fbx" ? selected : "");
     }
-    DrawCreateDialog(); DrawDeleteDialog(); DrawImportDialog();
+    DrawCreateDialog(); DrawDeleteDialog();
     if (!requests.directory.empty()) Navigate(requests.directory);
     else if (requests.refresh) Refresh();
 }
@@ -628,11 +629,12 @@ void ContentBrowser::Draw(bool& open)
     // Опрос продолжается при скрытой панели; запуск Blender не блокирует кадры редактора.
     std::string imported, importError;
     if (modelImport.Poll(imported, importError)) {
-        importStatus = imported.empty() ? importError : "Imported: " + imported;
+        importStatus = !importError.empty() ? importError : !imported.empty() ? "Imported: " + imported :
+            modelImport.Ready() ? "Resources ready. Review the results below." : "";
         if (!imported.empty()) { Refresh(); selected = imported; }
     }
     focused = false;
-    if (!open) { wasOpen = false; return; }
+    if (!open) { wasOpen = false; DrawImportDialog(); return; }
     if (root.empty()) {
         if (ImGui::Begin("Content Browser", &open)) ImGui::TextDisabled("Create or open a project from the File menu.");
         ImGui::End(); return;
@@ -659,49 +661,192 @@ void ContentBrowser::Draw(bool& open)
         }
     }
     ImGui::End();
+    DrawImportDialog();
 }
+
 
 void ContentBrowser::DrawImportDialog()
 {
-    ImGui::SetNextWindowSize(ImVec2(620, 0), ImGuiCond_Appearing);
-    if (!ImGui::BeginPopupModal("Import model", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    // Путь Blender сохраняется между импортами и переключениями проекта в этой сессии.
+    if (importRequested) {
+        importRequested = false;
+        if (!modelImport.Busy()) {
+            modelImport.Reset();
+            importFolder = current.empty() ? root : current;
+            snprintf(importDestination, sizeof(importDestination), "%s", importFolder.c_str());
+            snprintf(importSource, sizeof(importSource), "%s", importInitialSource.c_str());
+            snprintf(importName, sizeof(importName), "%s", Utf8Path(DiskPath(importSource).stem()).c_str());
+            importStatus.clear(); importMesh = -1; importObject = true;
+        }
+        ImGui::OpenPopup("Import 3D Model");
+    }
+    ImGui::SetNextWindowSize(ImVec2(880, 730), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Import 3D Model", nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
     static char blender[4096] = "blender.exe";
-    ImGui::TextWrapped("Import static geometry (.blend / .glb) into: %s", importFolder.c_str());
-    ImGui::TextWrapped("Meshes are merged. Materials, textures, animation and object hierarchy are not imported.");
+    ImGui::TextWrapped("Import static .glb, .fbx or .blend models into mesh, material and texture resources.");
     ImGui::BeginDisabled(modelImport.Busy());
-    ImGui::SetNextItemWidth(480);
-    ImGui::InputText("Source", importSource, sizeof(importSource));
-    if (ImGui::Button("Choose model...")) {
+    bool changed = false;
+    ImGui::SetNextItemWidth(-150);
+    changed |= ImGui::InputText("Source", importSource, sizeof(importSource));
+    ImGui::SameLine();
+    if (ImGui::Button("Choose...##source")) {
         std::string path;
         if (EditorFiles::PickModelImportPath(GetActiveWindow(), false, path, importStatus)) {
             if (path.size() >= sizeof(importSource)) importStatus = "The selected path is too long.";
-            else snprintf(importSource, sizeof(importSource), "%s", path.c_str());
+            else {
+                snprintf(importSource, sizeof(importSource), "%s", path.c_str());
+                snprintf(importName, sizeof(importName), "%s", Utf8Path(DiskPath(path).stem()).c_str());
+                changed = true;
+            }
         }
     }
-    const bool blend = LowerAscii(Utf8Path(DiskPath(importSource).extension())) == ".blend";
-    if (blend) {
-        ImGui::SetNextItemWidth(480);
-        ImGui::InputText("Blender", blender, sizeof(blender));
-        if (ImGui::Button("Choose blender.exe...")) {
+    ImGui::SetNextItemWidth(-150);
+    changed |= ImGui::InputText("Destination", importDestination, sizeof(importDestination));
+    ImGui::SameLine();
+    if (ImGui::Button("Choose...##folder")) {
+        std::string path;
+        if (EditorFiles::PickProjectPath(GetActiveWindow(), true, path, importStatus)) {
+            if (path.size() >= sizeof(importDestination)) importStatus = "The selected path is too long.";
+            else { snprintf(importDestination, sizeof(importDestination), "%s", path.c_str()); changed = true; }
+        }
+    }
+    ImGui::InputText("Model name", importName, sizeof(importName));
+    ImGui::Checkbox("Create model object (.object.json)", &importObject);
+    if (LowerAscii(Utf8Path(DiskPath(importSource).extension())) == ".blend") {
+        changed |= ImGui::InputText("Blender", blender, sizeof(blender));
+        ImGui::SameLine();
+        if (ImGui::Button("Choose...##blender")) {
             std::string path;
             if (EditorFiles::PickModelImportPath(GetActiveWindow(), true, path, importStatus)) {
                 if (path.size() >= sizeof(blender)) importStatus = "The selected path is too long.";
-                else snprintf(blender, sizeof(blender), "%s", path.c_str());
+                else { snprintf(blender, sizeof(blender), "%s", path.c_str()); changed = true; }
             }
         }
-        ImGui::TextWrapped("Blender is required only for import. The game loads the resulting GLB.");
     }
+    // Любое изменение источника/каталога отменяет устаревший результат анализа.
+    if (changed) { modelImport.Reset(); importStatus.clear(); importMesh = -1; }
+    if (ImGui::Button("Analyze")) {
+        importFolder = importDestination;
+        importMesh = -1;
+        if (!importName[0]) snprintf(importName, sizeof(importName), "%s", Utf8Path(DiskPath(importSource).stem()).c_str());
+        if (modelImport.Start(importSource, importFolder, blender, root, importStatus)) importStatus.clear();
+    }
+    ImGui::EndDisabled();
+
+    if (auto* model = modelImport.Data()) {
+        ImGui::Separator();
+        size_t missingTextures = 0;
+        for (const auto& texture : model->textures) if (texture.png.empty()) ++missingTextures;
+        ImGui::Text("Meshes: %zu | Materials: %zu | Textures: %zu | Unavailable: %zu",
+            model->meshes.size(), model->materials.size(), model->textures.size(), missingTextures);
+        if (ImGui::BeginTable("Model analysis", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
+            ImGui::TableNextColumn();
+            ImGui::BeginChild("Model hierarchy", ImVec2(0, 210), true);
+            std::function<void(int)> drawNode = [&](int index) {
+                const auto& node = model->nodes[index];
+                ImGui::PushID(index);
+                if (ImGui::TreeNodeEx("Node", ImGuiTreeNodeFlags_DefaultOpen, "%s", node.name.c_str())) {
+                    for (unsigned meshIndex : node.meshes) {
+                        ImGui::PushID(static_cast<int>(meshIndex));
+                        const auto& mesh = model->meshes[meshIndex];
+                        const auto flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
+                            ImGuiTreeNodeFlags_SpanAvailWidth | (importMesh == static_cast<int>(meshIndex) ? ImGuiTreeNodeFlags_Selected : 0);
+                        ImGui::TreeNodeEx("Mesh", flags, "%s -> %s", mesh.name.c_str(), model->materials[mesh.material].name.c_str());
+                        if (ImGui::IsItemClicked()) importMesh = static_cast<int>(meshIndex);
+                        ImGui::PopID();
+                    }
+                    for (size_t i = 0; i < model->nodes.size(); ++i) if (model->nodes[i].parent == index) drawNode(static_cast<int>(i));
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            };
+            for (size_t i = 0; i < model->nodes.size(); ++i) if (model->nodes[i].parent < 0) drawNode(static_cast<int>(i));
+            ImGui::EndChild();
+            ImGui::TableNextColumn();
+            if (importMesh >= 0 && static_cast<size_t>(importMesh) < model->meshes.size()) {
+                const auto& mesh = model->meshes[importMesh];
+                ImGui::TextWrapped("Mesh: %s", mesh.name.c_str());
+                ImGui::Text("Vertices: %zu", mesh.data.vertices.size());
+                ImGui::Text("Triangles: %zu", mesh.data.indices.size() / 3);
+                ImGui::TextWrapped("Material: %s", model->materials[mesh.material].name.c_str());
+                ImGui::TextWrapped("Output: Meshes/%s", EditorFiles::ModelImport::ResourceFileName(false, importMesh, mesh.name).c_str());
+            } else ImGui::TextWrapped("Select a mesh to inspect its geometry and material.");
+            ImGui::EndTable();
+        }
+        if (ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::BeginChild("Material mapping", ImVec2(0, 135), true);
+            for (size_t i = 0; i < model->materials.size(); ++i) {
+                auto& material = model->materials[i];
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::TextUnformatted(material.name.c_str());
+                ImGui::SameLine();
+                if (ImGui::Button("Use existing...")) {
+                    std::string path;
+                    if (EditorFiles::PickModelImportPath(GetActiveWindow(), false, path, importStatus, true)) material.existingPath = path;
+                }
+                ImGui::SameLine();
+                if (!material.existingPath.empty()) {
+                    if (ImGui::Button("Create new")) material.existingPath.clear();
+                    ImGui::TextWrapped("%s", material.existingPath.c_str());
+                } else ImGui::TextWrapped("Create %s", EditorFiles::ModelImport::ResourceFileName(true, i, material.name).c_str());
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+        }
+        // Ошибки привязаны к ресурсу, поэтому общая текстура заменяется сразу во всех её слотах.
+        bool hasTextureIssues = false;
+        for (const auto& texture : model->textures)
+            if (!texture.error.empty() || !texture.replacement.empty()) hasTextureIssues = true;
+        if (hasTextureIssues && ImGui::CollapsingHeader("Texture problems / replacements", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextWrapped("Unresolved textures are optional: Import will leave their material slots empty.");
+            ImGui::BeginChild("Texture dependencies", ImVec2(0, 170), true);
+            for (size_t i = 0; i < model->textures.size(); ++i) {
+                const auto& texture = model->textures[i];
+                if (texture.error.empty() && texture.replacement.empty()) continue;
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::TextWrapped("Source: %s", texture.source.c_str());
+                for (const auto& material : model->materials) {
+                    const auto showSlot = [&](int index, const char* slot) {
+                        if (index == static_cast<int>(i))
+                            ImGui::TextWrapped("Material: %s | Slot: %s%s", material.name.c_str(), slot,
+                                material.existingPath.empty() ? "" : " (using existing material)");
+                    };
+                    showSlot(material.diffuse, "Diffuse"); showSlot(material.normal, "Normal"); showSlot(material.ao, "AO");
+                }
+                if (!texture.error.empty()) ImGui::TextWrapped("Warning: %s", texture.error.c_str());
+                else ImGui::TextWrapped("Resolved: %s", texture.replacement.c_str());
+                bool started = false;
+                if (ImGui::Button("Choose replacement...")) {
+                    std::string path;
+                    if (EditorFiles::PickModelImportPath(GetActiveWindow(), false, path, importStatus, false, true))
+                        started = modelImport.ReplaceTexture(i, path, importStatus);
+                }
+                ImGui::Separator();
+                ImGui::PopID();
+                // С момента запуска потока UI больше не читает изменяемые данные модели.
+                if (started) break;
+            }
+            ImGui::EndChild();
+        }
+        if (!model->warnings.empty() && ImGui::CollapsingHeader("Warnings", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::BeginChild("Import warnings", ImVec2(0, 95), true);
+            for (const auto& warning : model->warnings) ImGui::TextWrapped("%s", warning.c_str());
+            ImGui::EndChild();
+        }
+    }
+    ImGui::Separator();
+    ImGui::BeginDisabled(!modelImport.Ready());
     if (ImGui::Button("Import")) {
-        // Папка фиксируется при открытии диалога и проверяется ещё раз перед запуском.
-        if (current != importFolder || !CheckDirectory()) importStatus = "Destination folder is unavailable. Reopen the import dialog.";
-        else if (modelImport.Start(importSource, importFolder, blender, importStatus)) importStatus = "Importing model...";
+        if (modelImport.Publish(importName, importObject, importStatus)) importStatus.clear();
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (modelImport.Busy()) {
         if (ImGui::Button("Cancel import")) modelImport.Cancel();
-    } else if (ImGui::Button("Close")) ImGui::CloseCurrentPopup();
+        ImGui::SameLine(); ImGui::TextUnformatted(modelImport.Stage());
+    } else if (ImGui::Button("Close")) {
+        modelImport.Reset();
+        ImGui::CloseCurrentPopup();
+    }
     if (!importStatus.empty()) ImGui::TextWrapped("%s", importStatus.c_str());
     ImGui::EndPopup();
 }

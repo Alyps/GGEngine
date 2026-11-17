@@ -2272,7 +2272,7 @@ void Editor::DrawMeshInspector(MeshComponent& mesh)
 			const auto dot = lower.find_last_of('.');
 			const auto slash = lower.find_last_of("/\\");
 			return dot != std::string::npos && (slash == std::string::npos || dot > slash)
-				&& MeshResource::SupportsExtension(lower.substr(dot));
+				&& MeshDataResource::SupportsExtension(lower.substr(dot));
 		};
 		auto apply = [&](std::string value) {
 			// Завершаем ввод, чтобы ImGui не восстановил прежний текст после drop или отказа.
@@ -2286,7 +2286,7 @@ void Editor::DrawMeshInspector(MeshComponent& mesh)
 			if (!supported(value)) {
 				// Неподходящий формат не заменяет путь компонента или видимое значение.
 				text = current;
-				inputError = isMesh ? "Unsupported mesh format." : "Expected a .material.json file.";
+				inputError = isMesh ? "Expected a .mesh resource. Use File > Import 3D Model for .glb, .fbx or .blend." : "Expected a .material.json file.";
 				return;
 			}
 			checkSceneDirty = true;

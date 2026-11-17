@@ -13,7 +13,7 @@ private:
     GeometryPreset geometryPreset = GeometryPreset::None;
     MeshData<TexturedVertexType> meshData;
     // Ресурс менеджера той же игры живёт дольше компонента.
-    const MeshResource* meshResource = nullptr;
+    const MeshDataResource* meshResource = nullptr;
     bool usePresetMaterial = false;
     bool fileMesh = false;
     std::string meshPath, materialPath;
@@ -27,7 +27,7 @@ public:
     // Куб со стандартным материалом из JSON вместо CreateSimple.
     explicit MeshComponent(bool usePresetMaterial);
     explicit MeshComponent(MeshData<TexturedVertexType> data);
-    explicit MeshComponent(const MeshResource& resource);
+    explicit MeshComponent(const MeshDataResource& resource);
     MeshComponent(std::string meshPath, std::string materialPath);
     void Init(Game& game) override;
     void Shutdown(Game& game) override;
