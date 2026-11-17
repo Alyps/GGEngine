@@ -83,7 +83,7 @@ private:
 	void ApplyTreeAction();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
 	// Порядок совпадает с подписями меню; виды начиная с Collider доступны только на корне.
-	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, NavMeshVolume, Timer, Collider, StaticBody, DynamicBody, KinematicBody, CharacterMovement, NavAgent, BoxTrigger, UtilityAI };
+	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, AudioSource, NavMeshVolume, Timer, Collider, StaticBody, DynamicBody, KinematicBody, CharacterMovement, NavAgent, BoxTrigger, UtilityAI };
 	struct TreeAction {
 		TreeOperation operation = TreeOperation::None;
 		TransformNode* node = nullptr;
@@ -282,6 +282,7 @@ private:
 	float textureZoom = 100.0f;
 	int textureBackground = 0;
 	void DrawMeshInspector(MeshComponent& mesh);
+	void DrawAudioInspector(AudioSourceComponent& audio);
 	void DrawUtilityComponentInspector(UtilityAIComponent& component);
 	enum class TransformField { Position, Rotation, Scale };
 	static constexpr float MinimumScale = 0.001f;

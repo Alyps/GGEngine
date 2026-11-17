@@ -44,6 +44,7 @@ namespace {
         const std::string extension = dot == std::string::npos ? "" : lower.substr(dot);
         if (extension == ".mesh") return "[Mesh]";
         if (extension == ".lua") return "[Lua]";
+        if (extension == ".wav") return "[Sound]";
         if (extension == ".png" || extension == ".jpg" || extension == ".jpeg"
             || extension == ".bmp" || extension == ".tga" || extension == ".dds" || extension == ".hdr") return "[Image]";
         if (extension == ".blend") return "[Blender source]";

@@ -124,7 +124,7 @@ bool Project::Create(const std::string& parent, const std::string& name, Project
     std::vector<fs::path> copied;
     const std::string resourceDirectory = source ? source->resourceDirectory : "res";
     bool complete = true;
-    for (const char* folder : {"res", "res/Scenes", "res/Models", "res/Materials", "res/Textures", "res/Scripts"}) {
+    for (const char* folder : {"res", "res/Scenes", "res/Models", "res/Materials", "res/Textures", "res/Scripts", "res/Audio"}) {
         const fs::path directory = root / folder;
         if (!fs::create_directory(directory, ec)) { complete = false; error = "Cannot create resource folder: " + ec.message(); break; }
         created.push_back(directory);

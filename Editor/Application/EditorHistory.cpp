@@ -224,6 +224,7 @@ bool Editor::ApplyProperties(const HistoryEntry& entry, const std::string& text)
 			return true;
 		}
 		if (auto* mesh = dynamic_cast<MeshComponent*>(component)) return mesh->ApplyDescription(json, documentError);
+		if (auto* audio = dynamic_cast<AudioSourceComponent*>(component)) return audio->ApplyDescription(json, documentError);
 		if (auto* ai = dynamic_cast<UtilityAIComponent*>(component)) {
 			std::string path;
 			bool enabled;

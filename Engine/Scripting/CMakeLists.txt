@@ -10,6 +10,7 @@ target_sources(${engine_target} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/ScriptBindingsComponents.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/LuaScriptComponent.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/UtilityAIComponent.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/AudioSourceComponent.cpp"
 )
 
 # Шаблоны sol2 в этом файле превышают лимит секций обычного объектного файла MSVC.

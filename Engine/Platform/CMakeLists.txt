@@ -11,4 +11,6 @@ endif()
 target_sources(${engine_target} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/Window.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/InputDevice.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/AudioServer.cpp"
 )
+target_link_libraries(${engine_target} PRIVATE xaudio2 ole32)
