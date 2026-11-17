@@ -437,8 +437,20 @@ namespace EditorFiles {
                     auto* node = parent->add_child(name, source.position, source.rotation, source.scale);
                     if (!node) return Fail(task.error, "Cannot allocate imported transform node.");
                     nodes.push_back(node);
-                    for (unsigned index : source.meshes) {
-                        if (!node->create_component<MeshComponent>(meshPaths[index], materialPaths[task.model.meshes[index].material]))
+                }
+                // Сначала построена исходная иерархия, чтобы имена мешей не переименовывали её узлы.
+                for (size_t i = 0; i < task.model.nodes.size(); ++i) {
+                    for (unsigned index : task.model.nodes[i].meshes) {
+                        if (task.cancel) return Fail(task.error, "Import cancelled.");
+                        const auto& mesh = task.model.meshes[index];
+                        std::string name = mesh.name.empty() ? "Mesh" : mesh.name;
+                        const std::string baseName = name;
+                        size_t suffix = 1;
+                        while (nodes[i]->find_child(name)) name = baseName + "_" + std::to_string(suffix++);
+                        // Identity-transform наследует позу исходного узла; каждый экземпляр меша получает свою ветку.
+                        auto* meshNode = nodes[i]->add_child(name);
+                        if (!meshNode) return Fail(task.error, "Cannot allocate mesh transform node.");
+                        if (!meshNode->create_component<MeshComponent>(meshPaths[index], materialPaths[mesh.material]))
                             return Fail(task.error, "Cannot allocate imported mesh component.");
                     }
                 }
