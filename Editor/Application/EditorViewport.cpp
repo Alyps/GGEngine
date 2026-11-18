@@ -239,7 +239,11 @@ void Editor::DrawViewport()
 			if (auto* movement = GetCameraMovement()) {
 				const auto delta = ImGui::GetIO().MouseDelta;
 				movement->setRotationInput(DirectX::SimpleMath::Vector2(delta.x, delta.y));
-				const auto modifiers = settings.Get(EditorAction::Navigate).modifiers;
+				// Shift/Ctrl меняют скорость и не блокируют назначенные клавиши движения.
+				const auto& io = ImGui::GetIO();
+				movement->speedMultiplier = 1.5f * (io.KeyShift ? 3.0f : 1.0f) * (io.KeyCtrl ? 0.5f : 1.0f);
+				const auto modifiers = settings.Get(EditorAction::Navigate).modifiers
+					| (io.KeyMods & (ImGuiMod_Shift | ImGuiMod_Ctrl));
 				// Компонент получает направление по значению, без зависимости движка от ImGui.
 				movement->setMovementInput(DXVector3(
 					float(settings.Held(EditorAction::Right, modifiers)) - float(settings.Held(EditorAction::Left, modifiers)),

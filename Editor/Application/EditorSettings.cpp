@@ -78,7 +78,7 @@ std::string EditorSettings::ViewportHints(bool navigating) const
 {
     if (navigating) return Label(Action::Navigate) + ": look | " + Label(Action::Forward) + "/" + Label(Action::Backward)
         + ": forward/back | " + Label(Action::Left) + "/" + Label(Action::Right) + ": left/right | "
-        + Label(Action::Down) + "/" + Label(Action::Up) + ": down/up";
+        + Label(Action::Down) + "/" + Label(Action::Up) + ": down/up | Shift: speed x3 | Ctrl: speed x0.5";
     return "LMB: select | " + SelectionLabel() + ": toggle | " + Label(Action::Navigate)
         + ": hold for camera | " + Label(Action::ContextMenu) + ": menu";
 }

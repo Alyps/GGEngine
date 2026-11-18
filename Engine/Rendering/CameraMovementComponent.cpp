@@ -60,7 +60,7 @@ void CameraMovementComponent::Update(Game& game, double deltaTime)
 
     // Кватернион переводит движение в систему родителя без углов Эйлера.
     direction = DXVector3::Transform(direction, orientation);
-    transformNode->move(direction * (speed * static_cast<float>(deltaTime)));
+    transformNode->move(direction * (speed * speedMultiplier * static_cast<float>(deltaTime)));
 }
 
 rapidjson::Value CameraMovementComponent::Serialize(rapidjson::Document::AllocatorType& allocator, std::string& error) const
