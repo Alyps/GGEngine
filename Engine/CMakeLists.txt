@@ -5,6 +5,8 @@ function(add_engine_variant engine_target build_definition)
     target_compile_definitions(${engine_target} PUBLIC ${build_definition}=1 UNICODE _UNICODE)
     target_link_libraries(${engine_target} PUBLIC DirectXTK DirectXTex)
     target_link_libraries(${engine_target} PRIVATE Jolt)
+    # RmlUi доступен внутри движка; приложения получают зависимость при линковке.
+    target_link_libraries(${engine_target} PRIVATE RmlUi::Core)
     # Detour (загрузка навмеша и поиск пути) нужен обоим вариантам; Recast и отладочная
     # отрисовка используются только генератором навмеша в редакторе.
     target_link_libraries(${engine_target} PRIVATE Detour)
@@ -22,7 +24,7 @@ function(add_engine_variant engine_target build_definition)
     target_compile_features(${engine_target} PUBLIC cxx_std_20)
 
     # У вариантов отдельные каталоги объектных файлов, но общие цели зависимостей.
-    foreach(subsystem Core Level Transform Platform Rendering Physics Navigation Scripting Resources)
+    foreach(subsystem Core Level Transform Platform Rendering Physics Navigation Scripting Resources UI)
         add_subdirectory("${subsystem}" "${engine_target}/${subsystem}")
     endforeach()
 endfunction()

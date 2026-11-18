@@ -78,6 +78,37 @@ function(add_navigation)
 endfunction()
 add_navigation()
 
+# Игровой UI подключается к обоим вариантам движка; настройки ограничены функцией.
+function(add_game_ui)
+	set(BUILD_SHARED_LIBS OFF)
+	# FreeType собираем без дополнительных внешних библиотек для форматов шрифтов.
+	foreach(dependency ZLIB BZIP2 PNG HARFBUZZ BROTLI)
+		set(FT_DISABLE_${dependency} ON CACHE BOOL "" FORCE)
+	endforeach()
+	FetchContent_Declare(freetype
+		GIT_REPOSITORY https://github.com/freetype/freetype.git
+		GIT_TAG VER-2-14-1
+		GIT_SHALLOW TRUE)
+	FetchContent_MakeAvailable(freetype)
+	# RmlUi ожидает стандартное имя цели FreeType, даже при сборке из исходников.
+	if(NOT TARGET Freetype::Freetype)
+		add_library(Freetype::Freetype ALIAS freetype)
+	endif()
+	set(CMAKE_DISABLE_FIND_PACKAGE_Freetype TRUE)
+
+	# На первом этапе нужны ядро и шрифты, без примеров, тестов и плагинов.
+	set(RMLUI_FONT_ENGINE freetype CACHE STRING "" FORCE)
+	foreach(option SAMPLES TESTS SHELL LUA_BINDINGS LOTTIE_PLUGIN SVG_PLUGIN HARFBUZZ_SAMPLE TRACY_PROFILING)
+		set(RMLUI_${option} OFF CACHE BOOL "" FORCE)
+	endforeach()
+	FetchContent_Declare(rmlui
+		GIT_REPOSITORY https://github.com/mikke89/RmlUi.git
+		GIT_TAG 6.3
+		GIT_SHALLOW TRUE)
+	FetchContent_MakeAvailable(rmlui)
+endfunction()
+add_game_ui()
+
 FetchContent_Declare(
 	DirectXTK
 	GIT_REPOSITORY https://github.com/microsoft/DirectXTK.git

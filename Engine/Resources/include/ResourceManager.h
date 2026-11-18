@@ -26,6 +26,18 @@ public:
 
 struct MaterialData;
 
+// Представление .rml в памяти: отдельного файла-обёртки нет.
+class UIDocumentResource final : public Resource {
+    friend class ResourceManager;
+    std::string text, sourcePath;
+    UIDocumentResource() = default;
+    bool load(const std::string& path) override;
+public:
+    const std::string& GetText() const { return text; }
+    const std::string& GetPath() const { return sourcePath; }
+    bool Reload(std::string& error);
+};
+
 class ResourceManager {
 private:
 	std::unordered_map<std::string, Resource*> resources;

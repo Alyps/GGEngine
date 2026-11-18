@@ -617,6 +617,10 @@ public:
 
 	// Очищает кадр, рисует список по порядку и вызывает Present.
 	void DrawAll();
+	// Раздельный проход позволяет Game нарисовать UI перед Present.
+	void DrawMainScene() { DrawScene(rtv.Get(), dsv.Get(), mainViewport); }
+	ID3D11RenderTargetView* MainTarget() const { return rtv.Get(); }
+	const D3D11_VIEWPORT& MainViewport() const { return mainViewport; }
 
 	// RenderItem принадлежит вызывающему коду и должен жить, пока зарегистрирован.
 	void addItem(RenderItem& item);

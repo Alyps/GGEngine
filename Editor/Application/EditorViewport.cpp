@@ -270,6 +270,7 @@ void Editor::DrawViewport()
 			ID3D11ShaderResourceView* empty = nullptr;
 			game.getRenderServer().Context()->PSSetShaderResources(0, 1, &empty);
 			game.getRenderServer().DrawScene(colorTarget, depthTarget, viewport);
+			game.getUIServer().Draw(colorTarget, static_cast<int>(viewport.Width), static_cast<int>(viewport.Height));
 		} else {
 			navigating = false;
 			ImGui::TextDisabled("Viewport unavailable");

@@ -228,6 +228,7 @@ self.transform.rotation = rotation
 | `ComponentType.PointLight` | `PointLight` |
 | `ComponentType.LuaScript` | `LuaScript` |
 | `ComponentType.Timer` | `Timer` |
+| `ComponentType.UIDocument` | `UIDocument` |
 | `ComponentType.BoxTrigger` | `BoxTrigger` |
 | `ComponentType.BoxCollider` | `BoxCollider` |
 | `ComponentType.DynamicRigidBody` | `DynamicRigidBody` |
@@ -937,3 +938,97 @@ return {
 
 Синхронизация здоровья/боезапаса с другими игровыми компонентами выполняется игровыми
 скриптами. Система не ищет цели, не строит маршруты и не содержит UI.
+
+## Игровой UI: UIDocument
+
+Добавьте объекту `UIDocumentComponent` с документом RML. Получайте компонент в
+`on_ready`: `self.object:get_component(ComponentType.UIDocument)` (первый на объекте).
+Элементы адресуются строковым `id` из RML; указатели на элементы в Lua не выдаются.
+
+| API | Назначение |
+| --- | --- |
+| `ui.visible = true` | Показать весь документ; `false` скрывает его |
+| `ui.order = 10` | Целочисленный порядок отрисовки документа |
+| `ui:has_element(id)` | Проверить наличие элемента |
+| `ui:set_text(id, text)` | Заменить содержимое обычным текстом, экранируя RML; вложенные элементы удаляются |
+| `ui:set_style(id, property, value)` | Установить RCSS-свойство, например `"width", "75%"` |
+| `ui:set_class(id, name, enabled)` | Включить/выключить один класс |
+| `ui:set_element_visible(id, visible)` | Изменить `visibility`, сохранив место в раскладке |
+| `ui:reload()` | Перечитать RML и стили, сбросив изменения элементов из Lua |
+| `ui.clicked:connect(self, callback)` | Подписаться на `callback(self, id)` |
+
+Методы возвращают `ok, error`: при успехе `true, ""`, при ошибке `false` и описание.
+Отсутствующий элемент также возвращает ошибку. Некорректные типы при присваивании
+`visible`/`order` игнорируются. Чтобы убрать элемент вместе с занимаемым местом,
+используйте `set_style(id, "display", "none")`.
+
+`clicked` передаёт id ближайшего элемента с непустым id, начиная с цели клика.
+События доставляются перед обновлением уровня, вне обработки RmlUi: callback может
+скрывать документ и вызывать `reload()`. При reload подписки сохраняются, а ранее
+поставленные в очередь клики старого документа отбрасываются. Удаление компонента
+отключает подписки; отключение/удаление скрипта отключает его подписки автоматически.
+Ссылка на компонент заимствованная: после удаления пользоваться ею нельзя.
+
+В игре подключены движение мыши, три кнопки и колесо. Нажатия, начатые на UI,
+и соответствующие отпускания не поступают игровому вводу; движение над UI также
+не передаётся как движение игровой камеры. Для неинтерактивного HUD задавайте
+`pointer-events: none`, а кнопкам — `pointer-events: auto`. Полноэкранный фон с
+`pointer-events: auto` тоже перехватывает мышь. Ввод текста с клавиатуры и навигация
+геймпадом пока не подключены. В редакторе UI отображается без взаимодействия.
+
+Пример RML для HP bar и кнопки лечения (путь документа назначается в инспекторе):
+
+```html
+<rml>
+<head>
+    <title>Health HUD</title>
+    <style>
+        body { margin: 0px; width: 100%; height: 100%; pointer-events: none; }
+        #panel { position: absolute; left: 24px; top: 24px; width: 240px; }
+        #hp-track { width: 240px; height: 24px; background-color: #303030; }
+        #hp-fill { width: 100%; height: 100%; background-color: #40c060; }
+        #hp-fill.low { background-color: #e04040; }
+        #hp-label { color: white; font-size: 18px; }
+        #heal { pointer-events: auto; margin-top: 12px; padding: 8px;
+                background-color: #306090; color: white; }
+    </style>
+</head>
+<body>
+    <div id="panel">
+        <div id="hp-track"><div id="hp-fill"></div></div>
+        <div id="hp-label">100 / 100</div>
+        <button id="heal">Heal +10</button>
+    </div>
+</body>
+</rml>
+```
+
+Lua-скрипт на том же объекте:
+
+```lua
+local M = {}
+
+function M.set_health(self, health)
+    self.health = math.max(0, math.min(self.max_health, health))
+    local percent = self.health / self.max_health * 100
+    local ok, err = self.ui:set_style("hp-fill", "width", tostring(percent) .. "%")
+    if not ok then print(err) end
+    self.ui:set_text("hp-label", tostring(self.health) .. " / " .. tostring(self.max_health))
+    self.ui:set_class("hp-fill", "low", percent <= 25)
+end
+
+function M.on_ready(self)
+    self.ui = self.object:get_component(ComponentType.UIDocument)
+    if not self.ui then return end
+    self.max_health = 100
+    M.set_health(self, 60)
+    self.ui.clicked:connect(self, function(self, id)
+        if id == "heal" then M.set_health(self, self.health + 10) end
+    end)
+end
+
+return M
+```
+
+При уроне игровая логика вызывает `set_health` с новым значением. Постоянно менять
+ширину в `on_update` не требуется: обновляйте UI при изменении здоровья.

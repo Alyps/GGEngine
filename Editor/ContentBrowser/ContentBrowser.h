@@ -41,7 +41,7 @@ private:
     void Activate(const Entry& entry, std::string& directory);
     void OpenFolder(const std::string& path);
     std::string ResourcePath(const std::string& path) const;
-    enum class CreateType { Folder, Scene, MeshObject, Object, Material, LuaScript, UtilityTable, UtilityCurve, UtilityAction };
+    enum class CreateType { Folder, Scene, MeshObject, Object, Material, LuaScript, UtilityTable, UtilityCurve, UtilityAction, UIDocument };
     void CreateEntry();
     bool PrepareEntryName(std::string& name);
     bool BuildEntryContents(std::string& contents);

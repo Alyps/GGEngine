@@ -40,10 +40,11 @@ private:
 	// Документы сцены и объекта: загрузка, сохранение и отложенные действия.
 	void ApplyDocumentActions();
 	void ContinuePendingAction();
+	void ExportGame();
 	bool SaveScene(Project& destination, std::string& error);
 	bool CaptureScene(std::string& snapshot, std::string& error) const;
 	void RefreshSceneDirty();
-	enum class PendingAction { None, Close, OpenProject, NewProject, OpenObject, ReturnScene, OpenScene, Play };
+	enum class PendingAction { None, Close, OpenProject, NewProject, OpenObject, ReturnScene, OpenScene, Play, Export };
 	PendingAction pendingAction = PendingAction::None;
 	bool checkPendingAction = false, proceedPendingAction = false;
 	bool showUnsavedDialog = false, closeUnsavedDialog = false;
@@ -83,7 +84,7 @@ private:
 	void ApplyTreeAction();
 	enum class TreeOperation { None, Add, Rename, Remove, Reparent, MoveComponent, AddComponent, RemoveComponent, Inheritance };
 	// Порядок совпадает с подписями меню; виды начиная с Collider доступны только на корне.
-	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, NavMeshVolume, Timer, Collider, StaticBody, DynamicBody, KinematicBody, CharacterMovement, NavAgent, BoxTrigger, UtilityAI };
+	enum class ComponentKind { Mesh, DirectionalLight, PointLight, GameCamera, LuaScript, NavMeshVolume, Timer, Collider, StaticBody, DynamicBody, KinematicBody, CharacterMovement, NavAgent, BoxTrigger, UtilityAI, UIDocument };
 	struct TreeAction {
 		TreeOperation operation = TreeOperation::None;
 		TransformNode* node = nullptr;

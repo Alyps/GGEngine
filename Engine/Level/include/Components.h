@@ -12,6 +12,7 @@
 #include "PhysicsComponents.h"
 #include "NavMeshVolumeComponent.h"
 #include "NavAgentComponent.h"
+#include "UIDocumentComponent.h"
 #include "Delegates.h"
 
 class ScriptServer;

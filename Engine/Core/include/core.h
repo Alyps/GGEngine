@@ -14,6 +14,7 @@
 #include "ResourceManager.h"
 #include "PhysicsServer.h"
 #include "NavigationServer.h"
+#include "UIServer.h"
 
 class Game;
 
@@ -78,6 +79,7 @@ public:
 
 	RenderServer& getRenderServer() noexcept { return *renderServer; }
 	const RenderServer& getRenderServer() const noexcept { return *renderServer; }
+	UIServer& getUIServer() noexcept { return *uiServer; }
 
 	ScriptServer& getScriptServer() noexcept { return *scriptServer; }
 	const ScriptServer& getScriptServer() const noexcept { return *scriptServer; }
@@ -144,6 +146,8 @@ private:
 	ResourceManager* resourceManager = nullptr;
 	// Состояние Lua живёт до освобождения всех компонентов уровня.
 	ScriptServer* scriptServer = nullptr;
+	// Освобождается после компонентов уровня и до ресурсов и устройства DX11.
+	UIServer* uiServer = nullptr;
 
 
 

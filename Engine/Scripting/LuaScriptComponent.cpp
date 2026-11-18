@@ -221,6 +221,29 @@ void ScriptServer::EmitNativeEvent(const void* owner, const char* name, GameObje
     }
 }
 
+void ScriptServer::EmitNativeEvent(const void* owner, const char* name, const std::string& value)
+{
+    if (!getState()) return;
+    sol::state_view lua(getState());
+    sol::table lifecycle = lua.registry()[delegateLifecycleKey];
+    sol::protected_function emit = lifecycle["native_emit"];
+    auto result = emit(sol::lightuserdata_value(const_cast<void*>(owner)), name, value);
+    if (!result.valid()) {
+        sol::error error = result;
+        std::cout << "[Lua] Native delegate: " << error.what() << std::endl;
+    }
+}
+
+void UIDocumentComponent::PushClicked(lua_State* state)
+{
+    Game* ownerGame = getOwner() ? getOwner()->getGame() : nullptr;
+    if (!ownerGame || ownerGame->isEditorMode() || isPendingDestroy() || getOwner()->isPendingDestroy()
+        || ownerGame->getScriptServer().getState() != state) { lua_pushnil(state); return; }
+    // Событие принадлежит компоненту и не меняется при перезагрузке RML.
+    eventServer = &ownerGame->getScriptServer();
+    eventServer->PushNativeEvent(this, "clicked");
+}
+
 void BoxTriggerComponent::PushEvent(lua_State* state, bool entered)
 {
     Game* game = getOwner() ? getOwner()->getGame() : nullptr;

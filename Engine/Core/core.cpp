@@ -13,6 +13,8 @@ Game::Game(std::wstring windowTitle, long clientWidth, long clientHeight)
 	renderServer = new RenderServer();
 	renderServer->Init(*window);
 	resourceManager = new ResourceManager();
+	uiServer = new UIServer(*this);
+	windowContext.uiServer = uiServer;
 	// Ошибка создания Lua не прерывает запуск: скриптовые компоненты сообщат о ней сами.
 	scriptServer = new ScriptServer();
 	scriptServer->Init();
@@ -24,6 +26,8 @@ Game::~Game() noexcept
 	// Уровень освобождается первым: его LuaScriptComponent используют состояние Lua.
 	delete currentLevel;
 	physicsServer.Shutdown();
+	windowContext.uiServer = nullptr;
+	delete uiServer;
 	// Навмеш и его отладочная геометрия освобождаются, пока жив RenderServer.
 	navigationServer.Shutdown();
 	delete scriptServer;
@@ -70,6 +74,8 @@ bool Game::replaceLevel(Level* level, const std::string& projectDirectory, const
 	// Shutdown компонентов использует старые серверы и кеш до их освобождения.
 	delete currentLevel;
 	currentLevel = nullptr;
+	// Удаляем кеши RmlUi до замены ресурсов и открытия нового проекта.
+	uiServer->Shutdown();
 	physicsServer.Shutdown();
 	// Объёмы уже сняты компонентами; навмеш новой сцены загрузят её объёмы.
 	navigationServer.Shutdown();
@@ -92,6 +98,8 @@ void Game::BeginFrame()
 
 void Game::Update()
 {
+	// Lua вызывается после оконных сообщений, вне обхода элементов RmlUi.
+	uiServer->DispatchClicks();
 	if (initialized && currentLevel)
 		currentLevel->Update(timeManager.get_deltaTime());
 }
@@ -140,7 +148,10 @@ int Game::Run()
 			return 1;
 		}
 		Update();
-		renderServer->DrawAll();
+		renderServer->DrawMainScene();
+		const auto& viewport = renderServer->MainViewport();
+		uiServer->Draw(renderServer->MainTarget(), static_cast<int>(viewport.Width), static_cast<int>(viewport.Height));
+		renderServer->Present();
 		EndFrame();
 	}
 }

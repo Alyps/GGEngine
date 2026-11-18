@@ -5,6 +5,152 @@
 #include <rapidjson/stringbuffer.h>
 using EditorFiles::DiskPath;
 using EditorFiles::PickProjectPath;
+
+void Editor::ExportGame()
+{
+	namespace fs = std::filesystem;
+	documentError.clear();
+	if (project.startupScene.empty()) { documentError = "Save a startup scene before exporting."; return; }
+	// Имя проекта становится единственной новой подпапкой выбранного каталога.
+	if (project.name.empty() || project.name == "." || project.name == ".."
+		|| project.name.find_first_of("/\\:<>\"|?*") != std::string::npos
+		|| project.name.back() == '.' || project.name.back() == ' ') {
+		documentError = "Project name cannot be used as an export folder name."; return;
+	}
+	std::wstring module(32768, L'\0');
+	const DWORD length = GetModuleFileNameW(nullptr, module.data(), static_cast<DWORD>(module.size()));
+	if (!length || length >= module.size()) { documentError = "Cannot locate Editor.exe."; return; }
+	module.resize(length);
+	const auto editorFolder = fs::path(module).parent_path();
+	std::error_code ec;
+	auto executable = editorFolder / L"Game.exe";
+	if (!fs::is_regular_file(executable, ec)) executable = editorFolder.parent_path() / L"Game" / L"Game.exe";
+	if (!fs::is_regular_file(executable, ec)) { documentError = "Build Game before exporting: Game.exe is missing."; return; }
+	// Сохраняем исходный корень ресурсов, чтобы старые относительные ссылки тоже работали.
+	const auto resourceFolder = DiskPath(project.resourceDirectory).lexically_normal();
+	if (resourceFolder.empty() || resourceFolder == "." || resourceFolder.has_root_path()) {
+		documentError = "Export requires a resource subfolder inside the project."; return;
+	}
+	for (const auto& part : resourceFolder) if (part == "..") { documentError = "Invalid resource directory."; return; }
+	const auto firstFolder = resourceFolder.begin()->native();
+	if (_wcsicmp(firstFolder.c_str(), L"StandartResources") == 0 || _wcsicmp(firstFolder.c_str(), L"Game.exe") == 0
+		|| _wcsicmp(firstFolder.c_str(), L"game.json") == 0) {
+		documentError = "Resource directory conflicts with exported game files."; return;
+	}
+	ResourceManager paths(project.Root());
+	paths.SetResourceDirectory(project.resourceDirectory);
+	const auto scene = paths.ResourcePath(project.startupScene);
+	if (scene.empty() || !fs::is_regular_file(DiskPath(paths.ResolvePath(scene)), ec)) {
+		documentError = "Startup scene is missing from the project resources."; return;
+	}
+	const auto standard = fs::canonical(DiskPath(game.getResourceManager().GetStandardResourceDirectory()), ec);
+	if (ec) { documentError = "Cannot locate standard resources: " + ec.message(); return; }
+	const auto resources = fs::canonical(DiskPath(project.ResourceRoot()), ec);
+	if (ec) { documentError = "Cannot locate project resources: " + ec.message(); return; }
+	std::string parent;
+	if (!PickProjectPath(game.getWindow().getWindow(), true, parent, documentError)) { game.getTimeManager().reset(); return; }
+	const auto parentFolder = fs::canonical(DiskPath(parent), ec);
+	if (ec) { documentError = "Cannot resolve export directory: " + ec.message(); return; }
+	const auto destination = parentFolder / DiskPath(project.name);
+	// Запрещаем копирование папки внутрь самой себя, включая пути через junction.
+	const auto inside = [](const fs::path& child, const fs::path& root) {
+		std::wstring prefix = root.native();
+		if (!prefix.empty() && prefix.back() != L'\\') prefix += L'\\';
+		return _wcsicmp(child.c_str(), root.c_str()) == 0 || _wcsnicmp(child.c_str(), prefix.c_str(), prefix.size()) == 0;
+	};
+	if (inside(destination, resources) || inside(destination, standard)) {
+		documentError = "Choose an export directory outside the source resources."; return;
+	}
+	if (!fs::create_directory(destination, ec)) {
+		documentError = ec ? "Cannot create export folder: " + ec.message() : "Export folder already exists. Choose another directory.";
+		return;
+	}
+	// Отслеживаем только созданные нами файлы: ошибка не затрагивает чужие данные.
+	std::vector<fs::path> files, directories{ destination };
+	const auto makeDirectories = [&](const fs::path& path) {
+		fs::path current = destination;
+		for (const auto& part : path.lexically_relative(destination)) {
+			if (part == ".") continue;
+			current /= part;
+			if (fs::create_directory(current, ec)) directories.push_back(current);
+			else if (ec) return false;
+		}
+		return true;
+	};
+	const auto copyFile = [&](const fs::path& source, const fs::path& target) {
+		if (!fs::copy_file(source, target, fs::copy_options::none, ec)) return false;
+		files.push_back(target);
+		return true;
+	};
+	const auto copyTree = [&](const fs::path& source, const fs::path& target) {
+		if (!makeDirectories(target)) return false;
+		fs::recursive_directory_iterator iterator(source, ec), end;
+		while (!ec && iterator != end) {
+			const auto path = iterator->path();
+			const DWORD attributes = GetFileAttributesW(path.c_str());
+			// Не следуем ссылкам за пределы экспортируемого набора ресурсов.
+			if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+				documentError = "Cannot export a linked or inaccessible resource: " + EditorFiles::Utf8Path(path); return false;
+			}
+			const auto output = target / path.lexically_relative(source);
+			if (attributes & FILE_ATTRIBUTE_DIRECTORY) { if (!makeDirectories(output)) return false; }
+			else if (!copyFile(path, output)) return false;
+			iterator.increment(ec);
+		}
+		return !ec;
+	};
+	bool complete = copyTree(resources, destination / resourceFolder)
+		&& copyTree(standard, destination / L"StandartResources");
+	// DLL рядом с игровой сборкой переносим вместе с EXE.
+	if (complete) {
+		fs::directory_iterator iterator(executable.parent_path(), ec), end;
+		while (!ec && iterator != end && complete) {
+			const auto path = iterator->path();
+			if (_wcsicmp(path.extension().c_str(), L".dll") == 0) complete = copyFile(path, destination / path.filename());
+			if (complete) iterator.increment(ec);
+		}
+		complete = complete && !ec;
+	}
+	// Editor и Game одной конфигурации используют общий CRT; берём реально загруженные DLL.
+	for (const wchar_t* name : { L"vcruntime140.dll", L"vcruntime140_1.dll", L"msvcp140.dll", L"msvcp140_atomic_wait.dll",
+		L"vcruntime140_threads.dll", L"vcruntime140_threadsd.dll",
+		L"msvcp140_1.dll", L"msvcp140_2.dll", L"msvcp140_codecvt_ids.dll", L"concrt140.dll", L"vcomp140.dll",
+		L"vcruntime140d.dll", L"vcruntime140_1d.dll", L"msvcp140d.dll", L"msvcp140d_atomic_wait.dll",
+		L"msvcp140_1d.dll", L"msvcp140_2d.dll", L"msvcp140d_codecvt_ids.dll", L"concrt140d.dll", L"vcomp140d.dll", L"ucrtbased.dll" }) {
+		if (!complete) break;
+		const HMODULE runtime = GetModuleHandleW(name);
+		if (!runtime) continue;
+		if (fs::exists(destination / name, ec)) continue;
+		std::wstring runtimePath(32768, L'\0');
+		const DWORD size = GetModuleFileNameW(runtime, runtimePath.data(), static_cast<DWORD>(runtimePath.size()));
+		if (!size || size >= runtimePath.size()) { documentError = "Cannot locate runtime DLL."; complete = false; break; }
+		runtimePath.resize(size);
+		complete = copyFile(fs::path(runtimePath), destination / name);
+	}
+	if (complete) {
+		// Манифест использует путь от проекта, а не абсолютный путь исходной машины.
+		const auto scenePath = EditorFiles::Utf8Path(DiskPath(paths.ResolvePath(scene)).lexically_relative(DiskPath(project.Root())));
+		rapidjson::StringBuffer bytes;
+		rapidjson::Writer<rapidjson::StringBuffer> writer(bytes);
+		writer.StartObject();
+		writer.Key("startup_scene"); writer.String(scenePath.c_str());
+		writer.Key("resource_directory"); writer.String(project.resourceDirectory.c_str());
+		writer.Key("standard_resources"); writer.String("StandartResources");
+		writer.EndObject();
+		complete = EditorFiles::WriteJson(destination / L"game.json", bytes, false, documentError);
+		if (complete) files.push_back(destination / L"game.json");
+		// EXE появляется последним, когда все данные уже скопированы.
+		if (complete) complete = copyFile(executable, destination / L"Game.exe");
+	}
+	if (!complete) {
+		if (documentError.empty()) documentError = "Cannot export game: " + ec.message();
+		std::error_code cleanup;
+		for (auto it = files.rbegin(); it != files.rend(); ++it) fs::remove(*it, cleanup);
+		for (auto it = directories.rbegin(); it != directories.rend(); ++it) fs::remove(*it, cleanup);
+	} else documentError = "Game exported to: " + EditorFiles::Utf8Path(destination);
+	game.getTimeManager().reset();
+}
+
 void Editor::QueueProjectOpen(const std::string& file)
 {
 	if (editedObject) { documentError = "Return to Scene before switching projects."; return; }
@@ -56,6 +202,7 @@ void Editor::DrawProjectDialogs()
 		ImGui::BeginDisabled(closeUnsavedDialog);
 		const char* next = pendingAction == PendingAction::Close ? "closing the editor"
 			: pendingAction == PendingAction::Play ? "launching the game"
+			: pendingAction == PendingAction::Export ? "exporting the game"
 			: pendingAction == PendingAction::NewProject ? "creating a new project"
 			: pendingAction == PendingAction::ReturnScene ? "returning to the scene"
 			: pendingAction == PendingAction::OpenScene ? "opening another scene"
@@ -68,7 +215,7 @@ void Editor::DrawProjectDialogs()
 			else requestedSave = true;
 		}
 		ImGui::SameLine();
-		if (pendingAction != PendingAction::Play && ImGui::Button("Don't save")) { proceedPendingAction = true; ImGui::CloseCurrentPopup(); }
+		if (pendingAction != PendingAction::Play && pendingAction != PendingAction::Export && ImGui::Button("Don't save")) { proceedPendingAction = true; ImGui::CloseCurrentPopup(); }
 		ImGui::SameLine();
 		if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
 			pendingAction = PendingAction::None; resumeAfterSave = closeAfterReturn = openSceneAfterReturn = false; ImGui::CloseCurrentPopup();
@@ -147,6 +294,7 @@ void Editor::ContinuePendingAction()
 	pendingAction = PendingAction::None;
 	resumeAfterSave = false;
 	if (action == PendingAction::Close) PostQuitMessage(0);
+	else if (action == PendingAction::Export) ExportGame();
 	else if (action == PendingAction::Play) {
 		// Ищем Game.exe рядом с редактором и в каталоге соседней цели CMake.
 		std::wstring module(32768, L'\0');
@@ -177,7 +325,8 @@ void Editor::ApplyDocumentActions()
 {
 	// Проект/процесс не должен закрыть предпросмотр или запустить игру с несохранёнными настройками.
 	if (checkPendingAction && AssetSettingsDirty() && (pendingAction == PendingAction::Close
-		|| pendingAction == PendingAction::NewProject || pendingAction == PendingAction::OpenProject || pendingAction == PendingAction::Play)) {
+		|| pendingAction == PendingAction::NewProject || pendingAction == PendingAction::OpenProject
+		|| pendingAction == PendingAction::Play || pendingAction == PendingAction::Export)) {
 		checkPendingAction = false;
 		RequestAssetAction(AssetAction::ContinueDocument);
 		return;
@@ -195,8 +344,8 @@ void Editor::ApplyDocumentActions()
 			documentError = "Add a GameCamera to a transform node in this scene before playing.";
 			pendingAction = PendingAction::None;
 		}
-		else if (pendingAction == PendingAction::Play && navBuilder.isRunning()) {
-			documentError = "Wait for the navmesh generation to finish before playing.";
+		else if ((pendingAction == PendingAction::Play || pendingAction == PendingAction::Export) && navBuilder.isRunning()) {
+			documentError = "Wait for the navmesh generation to finish.";
 			pendingAction = PendingAction::None;
 		}
 		else if (game.getLevel() && (sceneDirty || (pendingAction == PendingAction::Play && sceneFile.empty()))) showUnsavedDialog = true;

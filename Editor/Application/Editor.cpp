@@ -350,6 +350,10 @@ void Editor::DrawDockspace()
 			}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Import 3D Model...", nullptr, false, !project.filePath.empty())) contentBrowser.RequestModelImport();
+			if (ImGui::MenuItem("Export Game...", nullptr, false, !project.filePath.empty() && !editedObject)) {
+				pendingAction = PendingAction::Export;
+				checkPendingAction = true;
+			}
 			if (ImGui::MenuItem("Exit")) RequestClose();
 			ImGui::EndMenu();
 		}

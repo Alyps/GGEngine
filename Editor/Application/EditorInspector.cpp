@@ -110,6 +110,31 @@ namespace {
 		}
 	}
 
+	bool UIPathField(const ResourceManager& resources, const char* label, std::string& path, bool font)
+	{
+		// Ручной ввод и drag-and-drop сохраняют тот же res://, что и другие ресурсы.
+		std::vector<char> buffer(path.size() + 4096, '\0');
+		std::copy(path.begin(), path.end(), buffer.begin());
+		bool changed = ImGui::InputTextWithHint(label, font ? ".ttf / .otf (optional)" : ".rml",
+			buffer.data(), buffer.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+		changed = ImGui::IsItemDeactivatedAfterEdit() || changed;
+		if (changed) {
+			path = buffer.data();
+			if (auto reference = ResourceInputPath(resources, path); !reference.empty()) path = std::move(reference);
+		}
+		if (ImGui::BeginDragDropTarget()) {
+			const std::string dropped(DroppedResourcePath());
+			const std::string lower = LowerAssetName(dropped);
+			const bool supported = font ? lower.ends_with(".ttf") || lower.ends_with(".otf") : lower.ends_with(".rml");
+			if (supported && ImGui::AcceptDragDropPayload(ResourcePathPayload)) {
+				if (ImGui::GetActiveID() == ImGui::GetItemID()) ImGui::ClearActiveID();
+				path = dropped; changed = true;
+			}
+			ImGui::EndDragDropTarget();
+		}
+		return changed;
+	}
+
 	void CollectNodes(TransformNode& node, std::vector<TransformNode*>& nodes)
 	{
 		if (node.isPendingDestroy()) return;
@@ -508,6 +533,7 @@ void Editor::ApplyTreeAction()
 		case ComponentKind::CharacterMovement: component = node->create_component<CharacterMovementComponent>(); break;
 		case ComponentKind::NavAgent: component = node->create_component<NavAgentComponent>(); break;
 		case ComponentKind::UtilityAI: component = node->getOwner()->createComponent<UtilityAIComponent>(std::string{}); break;
+		case ComponentKind::UIDocument: component = node->getOwner()->createComponent<UIDocumentComponent>(); break;
 		}
 		changed = component != nullptr;
 		if (!changed) sceneActionError = "Cannot allocate component.";
@@ -1893,7 +1919,7 @@ void Editor::DrawObjectInspector()
 		if (selectedObjects.size() > 1) ImGui::TextDisabled("Component properties: active object");
 		if (ImGui::Button("Add component")) ImGui::OpenPopup("Add component");
 		if (ImGui::BeginPopup("Add component")) {
-			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Nav mesh volume", "Timer", "Box collider", "Static body", "Dynamic body", "Kinematic body", "Character movement", "Nav agent", "Box trigger", "Utility AI" };
+			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Nav mesh volume", "Timer", "Box collider", "Static body", "Dynamic body", "Kinematic body", "Character movement", "Nav agent", "Box trigger", "Utility AI", "UI document" };
 			for (int kind = 0; kind < IM_ARRAYSIZE(labels); ++kind)
 				if (ImGui::MenuItem(labels[kind], nullptr, false, kind < static_cast<int>(ComponentKind::Collider) || !selectedNode->get_parent())) {
 					treeAction = { TreeOperation::AddComponent, selectedNode }; treeAction.kind = static_cast<ComponentKind>(kind);
@@ -1984,6 +2010,31 @@ void Editor::DrawObjectInspector()
 			} else if (dynamic_cast<EditorCamera*>(component)) ImGui::TextUnformatted("Editor camera");
 			else if (dynamic_cast<GameCamera*>(component)) ImGui::TextUnformatted("GameCamera");
 			else if (dynamic_cast<CameraMovementComponent*>(component)) ImGui::TextUnformatted("Camera navigation");
+			else if (auto* ui = dynamic_cast<UIDocumentComponent*>(component)) {
+				auto before = ComponentProperties(*ui);
+				std::string path = ui->GetDocumentPath();
+				bool changed = UIPathField(game.getResourceManager(), "Document", path, false) && path != ui->GetDocumentPath();
+				if (changed) ui->SetDocumentPath(path);
+				TrackComponentProperty(*ui, before, "UI document path", changed);
+				before = ComponentProperties(*ui);
+				path = ui->GetFontPath();
+				changed = UIPathField(game.getResourceManager(), "Font", path, true) && path != ui->GetFontPath();
+				if (changed) ui->SetFontPath(path);
+				TrackComponentProperty(*ui, before, "UI font path", changed);
+				before = ComponentProperties(*ui);
+				bool visible = ui->IsVisible();
+				changed = ImGui::Checkbox("Visible", &visible);
+				if (changed) ui->SetVisible(visible);
+				TrackComponentProperty(*ui, before, "UI visibility", changed);
+				before = ComponentProperties(*ui);
+				int order = ui->GetOrder();
+				changed = ImGui::InputInt("Order", &order);
+				if (changed) ui->SetOrder(order);
+				TrackComponentProperty(*ui, before, "UI order", changed);
+				if (ImGui::Button("Reload RML / styles")) ui->Reload();
+				if (!ui->GetLastError().empty()) ImGui::TextWrapped("%s", ui->GetLastError().c_str());
+				if (!game.getUIServer().GetLastError().empty()) ImGui::TextWrapped("%s", game.getUIServer().GetLastError().c_str());
+			}
 			else if (auto* script = dynamic_cast<LuaScriptComponent*>(component)) {
 				const auto before = ComponentProperties(*script);
 				std::string path = script->getScriptPath();

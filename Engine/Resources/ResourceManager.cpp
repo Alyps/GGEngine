@@ -21,6 +21,34 @@
 // Разбираем заголовки JSON до Windows.h, чтобы макросы min/max не мешали библиотеке.
 #include "ResourceManager.h"
 
+bool UIDocumentResource::load(const std::string& path)
+{
+    const std::filesystem::path file(std::u8string(path.begin(), path.end()));
+    std::string extension = file.extension().string();
+    for (char& c : extension) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    if (extension != ".rml") { loadError = "UI document must be a .rml file"; return false; }
+    std::ifstream input(file, std::ios::binary);
+    if (!input) { loadError = "Cannot open RML file"; return false; }
+    std::string candidate((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    if (input.bad() || candidate.empty()) { loadError = "Cannot read RML file or file is empty"; return false; }
+    // Абсолютный путь нужен RmlUi для относительных ссылок на CSS и картинки.
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(file, error).lexically_normal().generic_u8string();
+    if (error) { loadError = error.message(); return false; }
+    text = std::move(candidate);
+    sourcePath.assign(reinterpret_cast<const char*>(absolute.data()), absolute.size());
+    loadError.clear();
+    return true;
+}
+
+bool UIDocumentResource::Reload(std::string& error)
+{
+    // При отказе остаётся предыдущая успешно прочитанная версия ресурса.
+    const bool result = load(sourcePath);
+    error = loadError;
+    return result;
+}
+
 std::string ResourceManager::ResolvePath(const std::string& path) const
 {
 	if (path.empty() || path.find('\0') != std::string::npos

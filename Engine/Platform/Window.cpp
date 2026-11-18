@@ -4,6 +4,7 @@
 #include "InputDevice.h" 
 #if defined(GG_GAME)
 #include "GameInput.h"
+#include "UIServer.h"
 #endif
 
 
@@ -40,6 +41,9 @@ LRESULT DisplayWindow32::HandleMessage(HWND hwnd, UINT umessage, WPARAM wparam, 
 #endif
 		return 0;
 	case WM_KILLFOCUS:
+#if defined(GG_GAME)
+		if (context->uiServer) context->uiServer->CancelMouse();
+#endif
 		// Отпускание кнопок вне окна может не прийти через Raw Input.
 		if (context->inputDevice) {
 			context->inputDevice->keys->clear();
@@ -53,6 +57,17 @@ LRESULT DisplayWindow32::HandleMessage(HWND hwnd, UINT umessage, WPARAM wparam, 
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		return 0;
+	case WM_CAPTURECHANGED:
+#if defined(GG_GAME)
+		if (context->uiServer && context->uiServer->HasMouseCapture()
+			&& reinterpret_cast<HWND>(lparam) != hwnd) context->uiServer->CancelMouse();
+#endif
+		return 0;
+	case WM_CANCELMODE:
+#if defined(GG_GAME)
+		if (context->uiServer) context->uiServer->CancelMouse();
+#endif
+		return DefWindowProc(hwnd, umessage, wparam, lparam);
 
 	case WM_INPUT:
 	{
@@ -99,6 +114,16 @@ LRESULT DisplayWindow32::HandleMessage(HWND hwnd, UINT umessage, WPARAM wparam, 
 					? static_cast<SHORT>(raw->data.mouse.usButtonData) : 0;
 				args.X = raw->data.mouse.lLastX;
 				args.Y = raw->data.mouse.lLastY;
+
+#if defined(GG_GAME)
+				// UI фильтрует кнопки до обновления игрового состояния ввода.
+				POINT cursor{};
+				if (context->uiServer && GetForegroundWindow() == hwnd
+					&& GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor)
+					&& context->uiServer->ProcessMouse(cursor.x, cursor.y, args.ButtonFlags, args.WheelDelta)) {
+					args.X = 0; args.Y = 0;
+				}
+#endif
 
 				context->inputDevice->OnMouseMove(args);
 			}

@@ -305,6 +305,12 @@ void RenderServer::Init(const DisplayWindow32& target_window)
 		device.ReleaseAndGetAddressOf(),
 		nullptr,
 		context.ReleaseAndGetAddressOf());
+	// Экспортированная Debug-игра работает и без установленного слоя отладки DX11.
+	if (res == DXGI_ERROR_SDK_COMPONENT_MISSING) {
+		res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+			featureLevel, 1, D3D11_SDK_VERSION, &swapDesc, swapChain.ReleaseAndGetAddressOf(),
+			device.ReleaseAndGetAddressOf(), nullptr, context.ReleaseAndGetAddressOf());
+	}
 	if (FAILED(res)) {
 		return;
 	}

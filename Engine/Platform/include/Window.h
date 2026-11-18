@@ -2,10 +2,12 @@
 #include <windows.h>
 
 class InputDevice;
+class UIServer;
 class DisplayWindow32;
 
 struct WindowMessageContext {
 	InputDevice* inputDevice = nullptr;
+	UIServer* uiServer = nullptr; // Заимствован у Game на время жизни окна.
 	DisplayWindow32* window = nullptr;
 };
 

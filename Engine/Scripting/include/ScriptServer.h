@@ -39,5 +39,6 @@ public:
 	void PushNativeEvent(const void* owner, const char* name);
 	void EmitNativeEvent(const void* owner, const char* name);
 	void EmitNativeEvent(const void* owner, const char* name, GameObject* other);
+	void EmitNativeEvent(const void* owner, const char* name, const std::string& value);
 	void RemoveNativeEvents(const void* owner);
 };

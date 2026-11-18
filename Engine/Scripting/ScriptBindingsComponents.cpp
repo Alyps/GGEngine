@@ -7,6 +7,41 @@
 
 namespace {
 
+enum class UICommand { Text, Style, Class, Visible, HasElement, Reload };
+
+std::tuple<bool, std::string> ApplyUICommand(sol::variadic_args args, UICommand command)
+{
+    // Проверяем аргументы до as: sol2 без исключений не должен завершать процесс из-за опечатки Lua.
+    const size_t count = command == UICommand::Reload ? 1 : command == UICommand::HasElement ? 2
+        : command == UICommand::Style || command == UICommand::Class ? 4 : 3;
+    if (args.size() != count || !args[0].is<UIDocumentComponent*>()) return { false, "Invalid UI method arguments." };
+    auto* ui = args[0].as<UIDocumentComponent*>();
+    if (!ui || ui->isPendingDestroy() || !ui->getOwner() || ui->getOwner()->isPendingDestroy())
+        return { false, "UI component is not available." };
+    std::string error;
+    if (command == UICommand::Reload) { const bool ok = ui->ReloadForScript(error); return { ok, error }; }
+    if (!args[1].is<std::string>()) return { false, "Expected a UI element id string." };
+    const auto id = args[1].as<std::string>();
+    bool ok = false;
+    if (command == UICommand::HasElement) ok = ui->HasElement(id, error);
+    else if (command == UICommand::Visible) {
+        if (!args[2].is<bool>()) return { false, "Expected set_element_visible(id, boolean)." };
+        ok = ui->SetElementVisible(id, args[2].as<bool>(), error);
+    } else {
+        if (!args[2].is<std::string>()) return { false, "Expected a string UI value." };
+        const auto value = args[2].as<std::string>();
+        if (command == UICommand::Text) ok = ui->SetText(id, value, error);
+        else if (command == UICommand::Style) {
+            if (!args[3].is<std::string>()) return { false, "Expected set_style(id, property, value)." };
+            ok = ui->SetStyle(id, value, args[3].as<std::string>(), error);
+        } else {
+            if (!args[3].is<bool>()) return { false, "Expected set_class(id, name, boolean)." };
+            ok = ui->SetClass(id, value, args[3].as<bool>(), error);
+        }
+    }
+    return { ok, error };
+}
+
 // Результат Lua: заимствованный объект и строка ошибки (пустая при успехе).
 std::tuple<GameObject*, std::string> CreateLevelObject(sol::variadic_args args)
 {
@@ -181,6 +216,8 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 			if (auto* typed = dynamic_cast<LuaScriptComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "Timer") {
 			if (auto* typed = dynamic_cast<TimerComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "UIDocument") {
+			if (auto* typed = dynamic_cast<UIDocumentComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "UtilityAI") {
 			if (auto* typed = dynamic_cast<UtilityAIComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "BoxCollider") {
@@ -227,7 +264,7 @@ void BindComponents(lua_State* L)
 		"KinematicRigidBody", "KinematicRigidBody", "CharacterMovement", "CharacterMovement",
 		"NavMeshVolume", "NavMeshVolume", "NavAgent", "NavAgent",
 		"Timer", "Timer", "BoxTrigger", "BoxTrigger",
-		"UtilityAI", "UtilityAI"
+		"UtilityAI", "UtilityAI", "UIDocument", "UIDocument"
 #if defined(GG_EDITOR)
 		, "EditorCamera", "EditorCamera", "CameraMovement", "CameraMovement"
 #endif
@@ -237,6 +274,26 @@ void BindComponents(lua_State* L)
 	// Скрываем метатаблицу констант от обычных getmetatable/setmetatable.
 	sol::table componentTypesMeta = componentTypes[sol::metatable_key];
 	componentTypesMeta[sol::meta_function::metatable] = false;
+
+	lua.new_usertype<UIDocumentComponent>("UIDocument", sol::no_constructor,
+		"visible", sol::property(&UIDocumentComponent::IsVisible, [](sol::variadic_args args) {
+			if (args.size() == 2 && args[0].is<UIDocumentComponent*>() && args[1].is<bool>())
+				if (auto* ui = args[0].as<UIDocumentComponent*>(); ui && !ui->isPendingDestroy()) ui->SetVisible(args[1].as<bool>());
+		}),
+		"order", sol::property(&UIDocumentComponent::GetOrder, [](sol::variadic_args args) {
+			if (args.size() == 2 && args[0].is<UIDocumentComponent*>() && args[1].is<int>())
+				if (auto* ui = args[0].as<UIDocumentComponent*>(); ui && !ui->isPendingDestroy()) ui->SetOrder(args[1].as<int>());
+		}),
+		"reload", [](sol::variadic_args args) { return ApplyUICommand(args, UICommand::Reload); },
+		"has_element", [](sol::variadic_args args) { return ApplyUICommand(args, UICommand::HasElement); },
+		"set_text", [](sol::variadic_args args) { return ApplyUICommand(args, UICommand::Text); },
+		"set_style", [](sol::variadic_args args) { return ApplyUICommand(args, UICommand::Style); },
+		"set_class", [](sol::variadic_args args) { return ApplyUICommand(args, UICommand::Class); },
+		"set_element_visible", [](sol::variadic_args args) { return ApplyUICommand(args, UICommand::Visible); },
+		"clicked", sol::property([](sol::this_state state, UIDocumentComponent& ui) {
+			ui.PushClicked(state);
+			return sol::stack::pop<sol::object>(state);
+		}));
 
 	// Источник остаётся у Object; timeout выдаёт только возможность подписки.
 	lua.new_usertype<TimerComponent>("Timer", sol::no_constructor,

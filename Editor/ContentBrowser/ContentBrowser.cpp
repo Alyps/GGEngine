@@ -44,6 +44,9 @@ namespace {
         const std::string extension = dot == std::string::npos ? "" : lower.substr(dot);
         if (extension == ".mesh") return "[Mesh]";
         if (extension == ".lua") return "[Lua]";
+        if (extension == ".rml") return "[UI document]";
+        if (extension == ".rcss") return "[UI styles]";
+        if (extension == ".ttf" || extension == ".otf") return "[Font]";
         if (extension == ".png" || extension == ".jpg" || extension == ".jpeg"
             || extension == ".bmp" || extension == ".tga" || extension == ".dds" || extension == ".hdr") return "[Image]";
         if (extension == ".blend") return "[Blender source]";
@@ -251,7 +254,8 @@ bool ContentBrowser::PrepareEntryName(std::string& name)
         return false;
     }
     // Достраиваем расширение; stone.json также становится stone.material.json.
-    const char* suffix = createType == CreateType::Material ? ".material.json"
+    const char* suffix = createType == CreateType::UIDocument ? ".rml"
+        : createType == CreateType::Material ? ".material.json"
         : createType == CreateType::UtilityTable ? ".utilityai.json"
         : createType == CreateType::UtilityCurve ? ".curve.json"
         : createType == CreateType::UtilityAction ? ".action.lua"
@@ -273,6 +277,14 @@ bool ContentBrowser::PrepareEntryName(std::string& name)
 
 bool ContentBrowser::BuildEntryContents(std::string& contents)
 {
+    if (createType == CreateType::UIDocument) {
+        // Минимальный документ виден сразу после добавления компонента; внешние ассеты не нужны.
+        contents = "<rml>\n<head>\n<title>Game UI</title>\n<style>\n"
+            "body { width: 100%; height: 100%; font-size: 24px; color: #ffffff; }\n"
+            "#panel { position: absolute; top: 24px; left: 24px; padding: 20px; background-color: #202030e0; }\n"
+            "</style>\n</head>\n<body><div id=\"panel\">Game UI</div></body>\n</rml>\n";
+        return true;
+    }
     if (createType == CreateType::UtilityTable) {
         // У новой таблицы ещё нет ссылок на действия и кривые.
         contents = "{\n  \"parameters\": [],\n  \"interval\": 0.2,\n  \"switch_threshold\": 0.05,\n"
@@ -365,6 +377,7 @@ void ContentBrowser::DrawCreateDialog()
         : createType == CreateType::UtilityTable ? "Utility AI table (.utilityai.json)"
         : createType == CreateType::UtilityCurve ? "Utility AI curve (.curve.json)"
         : createType == CreateType::UtilityAction ? "Utility AI action (.action.lua)"
+        : createType == CreateType::UIDocument ? "UI document (.rml)"
         : createType == CreateType::Material ? "Material (.material.json)" : "Lua script (.lua)");
     if (createType == CreateType::MeshObject) ImGui::TextDisabled("Object with a cube mesh component.");
     if (createType == CreateType::Scene) ImGui::TextDisabled("Default demo with camera, lights and primitives. Double-click the file to open.");
@@ -417,6 +430,7 @@ void ContentBrowser::DrawCreateMenu(DrawRequests& requests)
     if (ImGui::MenuItem("Object")) { createType = CreateType::Object; requests.create = true; }
     if (ImGui::MenuItem("Material")) { createType = CreateType::Material; requests.create = true; }
     if (ImGui::MenuItem("Lua script")) { createType = CreateType::LuaScript; requests.create = true; }
+    if (ImGui::MenuItem("UI document")) { createType = CreateType::UIDocument; requests.create = true; }
     if (ImGui::BeginMenu("Utility AI")) {
         if (ImGui::MenuItem("Table")) { createType = CreateType::UtilityTable; requests.create = true; }
         if (ImGui::MenuItem("Curve")) { createType = CreateType::UtilityCurve; requests.create = true; }
