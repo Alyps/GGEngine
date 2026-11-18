@@ -9,6 +9,7 @@
 #include "LightComponent.h"
 #include "LuaScriptComponent.h"
 #include "UtilityAIComponent.h"
+#include "AudioSourceComponent.h"
 #include "PhysicsComponents.h"
 #include "NavMeshVolumeComponent.h"
 #include "NavAgentComponent.h"

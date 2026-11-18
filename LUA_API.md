@@ -227,6 +227,7 @@ self.transform.rotation = rotation
 | `ComponentType.DirectionalLight` | `DirectionalLight` |
 | `ComponentType.PointLight` | `PointLight` |
 | `ComponentType.LuaScript` | `LuaScript` |
+| `ComponentType.AudioSource` | `AudioSource` |
 | `ComponentType.Timer` | `Timer` |
 | `ComponentType.UIDocument` | `UIDocument` |
 | `ComponentType.BoxTrigger` | `BoxTrigger` |
@@ -780,6 +781,33 @@ print("Компонент найден:", self.object:get_component(ComponentTyp
 - [ResourceManager.cpp](Engine/Resources/ResourceManager.cpp) — разрешение путей.
 
 При изменении привязок обновляйте соответствующий раздел этого справочника.
+
+## Звук
+
+`AudioSourceComponent` воспроизводит mono/stereo WAV PCM с глубиной 8, 16, 24 или 32 бита.
+Путь `sound_path` задаётся как `res://Sounds/Click.wav` или обычный путь от проекта.
+Параметры `volume` (0…1), `loop` и `play_on_start` сохраняются в сцене.
+Один компонент воспроизводит один экземпляр звука. Несколько компонентов могут
+независимо проигрывать один файл из общего кеша ресурсов.
+
+```lua
+return {
+    on_ready = function(self)
+        local audio = self.object:get_component(ComponentType.AudioSource)
+        if audio then
+            audio.volume = 0.5
+            if not audio:play() then print(audio.last_error) end
+        end
+    end
+}
+```
+
+`play()` начинает звук заново, а после `pause()` продолжает его с прежней позиции.
+`stop()` сбрасывает воспроизведение. Свойства `playing`, `paused` и `last_error`
+доступны для чтения. `volume`, `loop`, `play_on_start` и `sound_path` доступны для записи.
+Изменение файла или режима зацикливания останавливает текущий звук.
+Автозапуск выполняется в игре; в редакторе звук включается кнопкой `Play sound`.
+После смены сцены её источники останавливаются до освобождения аудиоданных.
 
 ## 14. Utility AI без UI
 

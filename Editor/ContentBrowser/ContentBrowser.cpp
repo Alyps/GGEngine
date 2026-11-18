@@ -47,6 +47,7 @@ namespace {
         if (extension == ".rml") return "[UI document]";
         if (extension == ".rcss") return "[UI styles]";
         if (extension == ".ttf" || extension == ".otf") return "[Font]";
+        if (extension == ".wav") return "[Sound]";
         if (extension == ".png" || extension == ".jpg" || extension == ".jpeg"
             || extension == ".bmp" || extension == ".tga" || extension == ".dds" || extension == ".hdr") return "[Image]";
         if (extension == ".blend") return "[Blender source]";

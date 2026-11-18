@@ -6,4 +6,5 @@ target_include_directories(${engine_target} PUBLIC
 target_sources(${engine_target} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/ResourceManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/UtilityAIResource.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/SoundResource.cpp"
 )

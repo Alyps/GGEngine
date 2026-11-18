@@ -214,6 +214,8 @@ sol::object FindComponent(sol::this_state state, GameObject& object, const std::
 			if (auto* typed = dynamic_cast<PointLightComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "LuaScript") {
 			if (auto* typed = dynamic_cast<LuaScriptComponent*>(component)) return sol::make_object(lua, typed);
+		} else if (name == "AudioSource") {
+			if (auto* typed = dynamic_cast<AudioSourceComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "Timer") {
 			if (auto* typed = dynamic_cast<TimerComponent*>(component)) return sol::make_object(lua, typed);
 		} else if (name == "UIDocument") {
@@ -253,13 +255,14 @@ void BindComponents(lua_State* L)
 {
 	sol::state_view lua(L);
 	BindUtilityAI(L);
+	BindAudioSource(L);
 
 	// Поддерживать ComponentType, FindComponent и Lua-типы синхронно при добавлении/переименовании компонентов.
 	// Строковые константы доступны через ComponentType.PointLight; обычное присваивание запрещено.
 	lua.new_enum<true>("ComponentType",
 		"Mesh", "Mesh", "GameCamera", "GameCamera",
 		"DirectionalLight", "DirectionalLight", "PointLight", "PointLight",
-		"LuaScript", "LuaScript", "BoxCollider", "BoxCollider",
+		"LuaScript", "LuaScript", "AudioSource", "AudioSource", "BoxCollider", "BoxCollider",
 		"DynamicRigidBody", "DynamicRigidBody", "StaticRigidBody", "StaticRigidBody",
 		"KinematicRigidBody", "KinematicRigidBody", "CharacterMovement", "CharacterMovement",
 		"NavMeshVolume", "NavMeshVolume", "NavAgent", "NavAgent",

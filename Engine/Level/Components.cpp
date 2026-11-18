@@ -221,6 +221,7 @@ ComponentFactoryMap::ComponentFactoryMap()
     Register("PointLightComponent", &PointLightComponent::CreateFromJson);
     Register("LuaScriptComponent", &LuaScriptComponent::CreateFromJson);
     Register("UIDocumentComponent", &UIDocumentComponent::CreateFromJson);
+    Register("AudioSourceComponent", &AudioSourceComponent::CreateFromJson);
     Register("TimerComponent", &TimerComponent::CreateFromJson);
     Register("UtilityAIComponent", &UtilityAIComponent::CreateFromJson);
     Register("BoxColliderComponent", &BoxColliderComponent::CreateFromJson);

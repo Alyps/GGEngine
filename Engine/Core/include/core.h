@@ -15,6 +15,7 @@
 #include "PhysicsServer.h"
 #include "NavigationServer.h"
 #include "UIServer.h"
+#include "AudioServer.h"
 
 class Game;
 
@@ -93,6 +94,7 @@ public:
 	// Статический навмеш уровня и запросы пути; загружается объёмами навмеша.
 	NavigationServer& getNavigationServer() noexcept { return navigationServer; }
 	const NavigationServer& getNavigationServer() const noexcept { return navigationServer; }
+	AudioServer& getAudioServer() noexcept { return audioServer; }
 	// Оба приложения выполняют физику после BeginFrame и до Update.
 	bool StepPhysics();
 	// Редактор правит авторские данные; запуск игровых скриптов остаётся режиму игры.
@@ -134,6 +136,8 @@ private:
 	PhysicsServer physicsServer;
 	// Отладочная геометрия системы снимается в ~Game до удаления RenderServer.
 	NavigationServer navigationServer;
+	// Источники звука сцены уничтожаются до выхода из тела ~Game.
+	AudioServer audioServer;
 #if defined(GG_GAME)
 	// Состояние живёт до уничтожения InputDevice, который хранит заимствованный адрес.
 	GameInput gameInput;

@@ -523,6 +523,7 @@ void Editor::ApplyTreeAction()
 		case ComponentKind::PointLight: component = node->create_component<PointLightComponent>(); break;
 		case ComponentKind::GameCamera: component = node->create_component<GameCamera>(); break;
 		case ComponentKind::LuaScript: component = node->create_component<LuaScriptComponent>(std::string{}); break;
+		case ComponentKind::AudioSource: component = node->create_component<AudioSourceComponent>(); break;
 		case ComponentKind::NavMeshVolume: component = node->create_component<NavMeshVolumeComponent>(); break;
 		case ComponentKind::Timer: component = node->getOwner()->createComponent<TimerComponent>(); break;
 		case ComponentKind::Collider: component = node->create_component<BoxColliderComponent>(); break;
@@ -1919,7 +1920,7 @@ void Editor::DrawObjectInspector()
 		if (selectedObjects.size() > 1) ImGui::TextDisabled("Component properties: active object");
 		if (ImGui::Button("Add component")) ImGui::OpenPopup("Add component");
 		if (ImGui::BeginPopup("Add component")) {
-			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Nav mesh volume", "Timer", "Box collider", "Static body", "Dynamic body", "Kinematic body", "Character movement", "Nav agent", "Box trigger", "Utility AI", "UI document" };
+			const char* labels[] = { "Mesh", "Directional light", "Point light", "GameCamera", "Lua Script", "Audio source", "Nav mesh volume", "Timer", "Box collider", "Static body", "Dynamic body", "Kinematic body", "Character movement", "Nav agent", "Box trigger", "Utility AI", "UI document" };
 			for (int kind = 0; kind < IM_ARRAYSIZE(labels); ++kind)
 				if (ImGui::MenuItem(labels[kind], nullptr, false, kind < static_cast<int>(ComponentKind::Collider) || !selectedNode->get_parent())) {
 					treeAction = { TreeOperation::AddComponent, selectedNode }; treeAction.kind = static_cast<ComponentKind>(kind);
@@ -2048,6 +2049,7 @@ void Editor::DrawObjectInspector()
 			else if (auto* mesh = dynamic_cast<MeshComponent*>(component)) {
 				DrawMeshInspector(*mesh);
 			}
+			else if (auto* audio = dynamic_cast<AudioSourceComponent*>(component)) DrawAudioInspector(*audio);
 			else if (auto* volume = dynamic_cast<NavMeshVolumeComponent*>(component)) {
 				DrawNavMeshVolumeInspector(*volume);
 			}
@@ -2299,6 +2301,57 @@ void Editor::DrawUtilityComponentInspector(UtilityAIComponent& component)
 		}
 	}
 	if (!component.GetLastError().empty()) ImGui::TextWrapped("%s", component.GetLastError().c_str());
+}
+
+void Editor::DrawAudioInspector(AudioSourceComponent& audio)
+{
+	auto before = ComponentProperties(audio);
+	std::string path = audio.GetSoundPath();
+	UtilityPathField(game.getResourceManager(), "Sound", ".wav", path, ImGuiInputTextFlags_EnterReturnsTrue);
+	bool changed = path != audio.GetSoundPath();
+	if (changed) {
+		const auto reference = path.empty() ? std::string{} : game.getResourceManager().ResourcePath(path);
+		if (path.empty() || !reference.empty()) {
+			audio.SetSoundPath(reference);
+			sceneActionError.clear();
+		} else { sceneActionError = "Choose a WAV file inside res://."; changed = false; }
+	}
+	TrackComponentProperty(audio, before, "Audio file", changed);
+	if (!audio.GetSoundPath().empty()) {
+		if (ImGui::SmallButton("Clear sound")) {
+			BeginProperty(HistoryKind::Component, Id(&audio), ComponentProperties(audio), "Clear audio file");
+			audio.SetSoundPath({});
+			FinishProperty();
+			checkSceneDirty = true;
+		}
+	}
+	before = ComponentProperties(audio);
+	float volume = audio.GetVolume();
+	changed = ImGui::DragFloat("Volume", &volume, 0.01f, 0, 1, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (changed) changed = audio.SetVolume(volume);
+	TrackComponentProperty(audio, before, "Audio volume", changed);
+	before = ComponentProperties(audio);
+	bool loop = audio.IsLooping();
+	changed = ImGui::Checkbox("Loop", &loop);
+	if (changed) audio.SetLooping(loop);
+	TrackComponentProperty(audio, before, "Audio loop", changed);
+	before = ComponentProperties(audio);
+	bool automatic = audio.GetPlayOnStart();
+	changed = ImGui::Checkbox("Play on start", &automatic);
+	if (changed) audio.SetPlayOnStart(automatic);
+	TrackComponentProperty(audio, before, "Audio autoplay", changed);
+
+	// Прослушивание меняет только состояние воспроизведения, а не историю сцены.
+	ImGui::BeginDisabled(audio.GetSoundPath().empty());
+	if (ImGui::Button(audio.IsPaused() ? "Resume" : "Play sound")) audio.Play();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!audio.IsPlaying());
+	if (ImGui::Button("Pause sound")) audio.Pause();
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	if (ImGui::Button("Stop sound")) audio.Stop();
+	ImGui::EndDisabled();
+	if (!audio.GetLastError().empty()) ImGui::TextWrapped("%s", audio.GetLastError().c_str());
 }
 
 void Editor::DrawMeshInspector(MeshComponent& mesh)
